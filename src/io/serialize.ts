@@ -1,0 +1,61 @@
+import { DEFAULT_LAYER_ID, type DocumentData, type Entity, type Layer, type Point } from '../model/types';
+
+export class FormatError extends Error {}
+
+export function serialize(data: DocumentData): string {
+  return JSON.stringify(data, null, 2);
+}
+
+const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
+const isStr = (v: unknown): v is string => typeof v === 'string' && v.length > 0;
+
+/** Parses and validates a saved drawing. Throws FormatError with a readable message. */
+export function deserialize(text: string): DocumentData {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(text);
+  } catch {
+    throw new FormatError('JSON 형식이 아닙니다.');
+  }
+  const obj = raw as Partial<DocumentData>;
+  if (!obj || obj.format !== 'layout-liner') throw new FormatError('Layout Liner 도면 파일이 아닙니다.');
+  if (obj.version !== 1) throw new FormatError(`지원하지 않는 파일 버전입니다: ${String(obj.version)}`);
+  if (!Array.isArray(obj.points) || !Array.isArray(obj.entities)) throw new FormatError('points/entities 항목이 없습니다.');
+
+  const points: Point[] = obj.points.map((p, i) => {
+    if (!isStr(p?.id) || !isNum(p?.x) || !isNum(p?.y)) throw new FormatError(`잘못된 점 데이터 (#${i})`);
+    return { id: p.id, x: p.x, y: p.y };
+  });
+  const pointIds = new Set(points.map((p) => p.id));
+
+  const layers: Layer[] = Array.isArray(obj.layers) && obj.layers.length > 0
+    ? obj.layers.map((l, i) => {
+        if (!isStr(l?.id)) throw new FormatError(`잘못된 레이어 데이터 (#${i})`);
+        return {
+          id: l.id,
+          name: typeof l.name === 'string' ? l.name : l.id,
+          color: typeof l.color === 'string' ? l.color : '#1f2937',
+          visible: l.visible !== false,
+          locked: l.locked === true,
+        };
+      })
+    : [{ id: DEFAULT_LAYER_ID, name: '0', color: '#1f2937', visible: true, locked: false }];
+  const layerIds = new Set(layers.map((l) => l.id));
+
+  const ref = (id: unknown, i: number) => {
+    if (!isStr(id) || !pointIds.has(id)) throw new FormatError(`엔티티 #${i}가 없는 점을 참조합니다.`);
+    return id;
+  };
+  const entities: Entity[] = obj.entities.map((e, i) => {
+    if (!isStr(e?.id)) throw new FormatError(`잘못된 엔티티 데이터 (#${i})`);
+    const layer = isStr(e.layer) && layerIds.has(e.layer) ? e.layer : layers[0].id;
+    if (e.kind === 'line') return { id: e.id, kind: 'line', p1: ref(e.p1, i), p2: ref(e.p2, i), layer };
+    if (e.kind === 'circle') {
+      if (!isNum(e.radius) || e.radius <= 0) throw new FormatError(`원 #${i}의 반지름이 잘못되었습니다.`);
+      return { id: e.id, kind: 'circle', center: ref(e.center, i), radius: e.radius, layer };
+    }
+    throw new FormatError(`알 수 없는 엔티티 종류 (#${i})`);
+  });
+
+  return { format: 'layout-liner', version: 1, units: 'mm', points, entities, layers };
+}

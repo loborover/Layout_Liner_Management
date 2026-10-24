@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Layout Liner</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <header class="toolbar" role="toolbar" aria-label="도구">
+      <div class="group">
+        <button data-tool="select" title="선택 (V)">선택</button>
+        <button data-tool="line" title="선 (L)">선</button>
+        <button data-tool="rect" title="사각형 (R)">사각형</button>
+        <button data-tool="circle" title="원 (C)">원</button>
+      </div>
+      <div class="group">
+        <button data-action="undo" title="실행 취소 (Ctrl+Z)">취소</button>
+        <button data-action="redo" title="다시 실행 (Ctrl+Y)">다시</button>
+        <button data-action="fit" title="전체 보기 (F)">전체 보기</button>
+      </div>
+      <div class="group">
+        <button data-action="new" title="새 도면">새로</button>
+        <button data-action="open" title="열기 (Ctrl+O)">열기</button>
+        <button data-action="save" title="저장 (Ctrl+S)">저장</button>
+        <input id="file-input" type="file" accept=".json,application/json" hidden />
+      </div>
+      <div class="group">
+        <label><input id="grid-snap" type="checkbox" checked /> 그리드 스냅 (F9)</label>
+        <label>
+          단위
+          <select id="unit">
+            <option value="mm">mm</option>
+            <option value="m">m</option>
+          </select>
+        </label>
+      </div>
+    </header>
+    <main class="stage">
+      <canvas id="canvas"></canvas>
+    </main>
+    <footer class="statusbar">
+      <span id="status-hint"></span>
+      <span class="spacer"></span>
+      <span id="status-info"></span>
+      <span id="status-pos"></span>
+    </footer>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
