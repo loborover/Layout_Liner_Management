@@ -74,6 +74,14 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
 });
 
 // ---- bridge (WebSocket) and HTTP JSON-RPC on 127.0.0.1 ----
+
+/**
+ * Browsers send an Origin header; only pages served from localhost (or LAYOUT_LINER_ALLOW_ORIGIN) may call us.
+ * Non-browser clients (MCP hosts, curl, scripts) send none and are allowed: they already run on this machine.
+ */
+const allowedOrigin = (origin?: string) =>
+  !origin || /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/.test(origin) || process.env.LAYOUT_LINER_ALLOW_ORIGIN === origin;
+
 if (!flag('--no-bridge')) {
   const http = createServer((req, res) => {
     if (req.method === 'GET' && (req.url === '/' || req.url === '/status')) {
@@ -83,6 +91,14 @@ if (!flag('--no-bridge')) {
     }
     if (req.method !== 'POST' || req.url !== '/rpc') {
       res.writeHead(404).end();
+      return;
+    }
+    // A page on another origin could otherwise POST here (a "simple" cross-origin request needs no preflight) and
+    // edit or overwrite the drawing. Refuse foreign origins, and require a JSON content type so that browsers must
+    // preflight, which this server never approves (it sends no CORS headers).
+    if (!allowedOrigin(req.headers.origin) || !/^application\/json\b/i.test(req.headers['content-type'] ?? '')) {
+      res.writeHead(403, { 'content-type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32600, message: '허용되지 않은 요청입니다: localhost 출처에서 Content-Type: application/json으로 보내십시오.' } }));
       return;
     }
     let body = '';
@@ -108,10 +124,9 @@ if (!flag('--no-bridge')) {
       res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' }).end(JSON.stringify(await reply()));
     });
   });
-  // Browsers send an Origin header; only pages served from localhost may drive the bridge.
   const wss = new WebSocketServer({
     server: http,
-    verifyClient: ({ origin }: { origin?: string }) => !origin || /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/.test(origin) || process.env.LAYOUT_LINER_ALLOW_ORIGIN === origin,
+    verifyClient: ({ origin }: { origin?: string }) => allowedOrigin(origin),
   });
   wss.on('connection', (socket) => {
     router.attach(socket);

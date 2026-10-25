@@ -395,7 +395,8 @@ export class Renderer {
     const ghosts: EquipmentEntity[] = [];
     for (const e of this.sortByOrder(this.index.query(view.worldBounds()))) {
       if (!doc.isVisible(e)) {
-        if (e.kind === 'equipment' && connectedFloors(doc, e).includes(doc.activeFloor)) ghosts.push(e);
+        // A connected stair/ramp/lift from another floor shows as a ghost, unless its own layer is hidden there.
+        if (e.kind === 'equipment' && doc.isLayerShown(e.layer) && connectedFloors(doc, e).includes(doc.activeFloor)) ghosts.push(e);
         continue;
       }
       const layer = doc.layers.get(e.layer);

@@ -6,6 +6,8 @@
 import { dimensionGeometry } from '../geom/dimension';
 import type { Box } from '../geom/vec';
 import type { DocumentModel } from '../model/document';
+import { StrokeGeometry } from '../model/strokes';
+import { planSymbol } from '../model/symbols';
 import { COLORS } from '../view/renderer';
 
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
@@ -28,6 +30,8 @@ export function drawingSvg(doc: DocumentModel): string | null {
   const y = (v: number) => n(-v);
 
   const parts: string[] = [];
+  const strokes = new StrokeGeometry(doc);
+  const pts = (cs: { x: number; y: number }[]) => cs.map((c) => `${n(c.x)},${y(c.y)}`).join(' ');
   const u = doc.underlay;
   if (u?.visible) {
     parts.push(
@@ -41,23 +45,33 @@ export function drawingSvg(doc: DocumentModel): string | null {
     for (const e of doc.entities.values()) {
       if (e.layer !== layer.id) continue;
       if (e.kind === 'shape') {
-        const pts = doc.shapePolygon(e).map((c) => `${n(c.x)},${y(c.y)}`).join(' ');
-        shapes.push(`<polygon points="${pts}" fill="${e.fill ?? layer.color}" fill-opacity="${e.fill ? 0.35 : 0.08}" stroke="none"/>`);
+        shapes.push(`<polygon points="${pts(doc.shapePolygon(e))}" fill="${e.fill ?? layer.color}" fill-opacity="${e.fill ? 0.35 : 0.08}" stroke="none"/>`);
       } else if (e.kind === 'line') {
         const a = doc.point(e.p1);
         const b = doc.point(e.p2);
-        shapes.push(`<line x1="${n(a.x)}" y1="${y(a.y)}" x2="${n(b.x)}" y2="${y(b.y)}"/>`);
+        // Same as the canvas: a styled line is its band (wall thickness) filled in the line colour, over the reference line.
+        const band = strokes.band(e.id);
+        if (band) shapes.push(`<polygon points="${pts(band)}" fill="${e.stroke?.color ?? layer.color}" fill-opacity="0.85"/>`);
+        const own = e.stroke?.color ? ` stroke="${e.stroke.color}"` : '';
+        shapes.push(`<line x1="${n(a.x)}" y1="${y(a.y)}" x2="${n(b.x)}" y2="${y(b.y)}"${own}/>`);
       } else if (e.kind === 'circle') {
         const c = doc.point(e.center);
         shapes.push(`<circle cx="${n(c.x)}" cy="${y(c.y)}" r="${n(e.radius)}"/>`);
       } else if (e.kind === 'equipment') {
-        const pts = doc.cornersOf(e).map((c) => `${n(c.x)},${y(c.y)}`).join(' ');
-        shapes.push(`<polygon points="${pts}" fill="${layer.color}" fill-opacity="0.08"/>`);
+        // Plan symbol shared with the canvas: round columns, stair treads, ramp and lift marks.
+        const sym = planSymbol(doc, e);
         const type = doc.equipmentTypes.get(e.type);
         const at = doc.point(e.at);
+        const opacity = sym.solid ? 0.6 : 0.08;
+        if (sym.outline === 'circle') {
+          shapes.push(`<circle cx="${n(at.x)}" cy="${y(at.y)}" r="${n((type?.width ?? 0) / 2)}" fill="${layer.color}" fill-opacity="${opacity}"/>`);
+        } else shapes.push(`<polygon points="${pts(doc.cornersOf(e))}" fill="${layer.color}" fill-opacity="${opacity}"/>`);
+        if (sym.segments.length > 0) {
+          shapes.push(`<path d="${sym.segments.map(([p, q]) => `M${n(p.x)} ${y(p.y)}L${n(q.x)} ${y(q.y)}`).join('')}"/>`);
+        }
         const fs = Math.min(textSize, Math.min(type?.width ?? 0, type?.depth ?? 0) / 4);
         if (fs > 0) {
-          const lines = [e.tag, type?.name ?? ''].filter(Boolean);
+          const lines = [e.tag, type?.name ?? '', sym.note ?? ''].filter(Boolean);
           lines.forEach((t, i) => {
             const dy = (i - (lines.length - 1) / 2) * fs * 1.2;
             labels.push(`<text x="${n(at.x)}" y="${n(-at.y + dy)}" font-size="${n(fs)}">${esc(t)}</text>`);

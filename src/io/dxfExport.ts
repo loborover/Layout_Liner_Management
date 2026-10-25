@@ -6,11 +6,14 @@
 import { dimensionGeometry } from '../geom/dimension';
 import type { Vec2 } from '../geom/vec';
 import type { DocumentModel } from '../model/document';
+import { StrokeGeometry } from '../model/strokes';
+import { planSymbol } from '../model/symbols';
 
 /**
  * Writes the drawing as ASCII DXF R12 (AC1009), which every CAD program reads, in millimetres.
- * Lines and circles map directly; equipment becomes a closed polyline with its tag as text; dimensions
- * become their lines and a text, since R12 dimension entities need block geometry of their own.
+ * Lines and circles map directly; a styled line adds its band as a closed polyline in its colour; equipment and
+ * structural presets become their plan symbol (src/model/symbols.ts) with the tag as text; dimensions become their
+ * lines and a text, since R12 dimension entities need block geometry of their own.
  */
 export function writeDxf(doc: DocumentModel): string {
   const out: (string | number)[] = [];
@@ -51,9 +54,30 @@ export function writeDxf(doc: DocumentModel): string {
 
   pair(0, 'SECTION');
   pair(2, 'ENTITIES');
-  const line = (a: Vec2, b: Vec2, layer: string) => {
+  const strokes = new StrokeGeometry(doc);
+  /** Entity colour (ACI) overriding the layer's, when an object has its own. */
+  const color = (hex?: string) => {
+    if (hex) pair(62, nearestAci(hex));
+  };
+  const polyline = (pts: Vec2[], layer: string, hex?: string) => {
+    pair(0, 'POLYLINE');
+    pair(8, layer);
+    color(hex);
+    pair(66, 1);
+    pair(70, 1); // closed
+    for (const c of pts) {
+      pair(0, 'VERTEX');
+      pair(8, layer);
+      pair(10, c.x);
+      pair(20, c.y);
+    }
+    pair(0, 'SEQEND');
+    pair(8, layer);
+  };
+  const line = (a: Vec2, b: Vec2, layer: string, hex?: string) => {
     pair(0, 'LINE');
     pair(8, layer);
+    color(hex);
     pair(10, a.x);
     pair(20, a.y);
     pair(11, b.x);
@@ -77,8 +101,11 @@ export function writeDxf(doc: DocumentModel): string {
     const layer = layerName.get(e.layer) ?? '0';
     // A shape's outline is its lines, which are written themselves; R12 has no filled face to add.
     if (e.kind === 'shape') continue;
-    if (e.kind === 'line') line(doc.point(e.p1), doc.point(e.p2), layer);
-    else if (e.kind === 'circle') {
+    if (e.kind === 'line') {
+      line(doc.point(e.p1), doc.point(e.p2), layer, e.stroke?.color);
+      const band = strokes.band(e.id);
+      if (band) polyline(band, layer, e.stroke?.color);
+    } else if (e.kind === 'circle') {
       const c = doc.point(e.center);
       pair(0, 'CIRCLE');
       pair(8, layer);
@@ -86,20 +113,17 @@ export function writeDxf(doc: DocumentModel): string {
       pair(20, c.y);
       pair(40, e.radius);
     } else if (e.kind === 'equipment') {
-      const corners = doc.cornersOf(e);
-      pair(0, 'POLYLINE');
-      pair(8, layer);
-      pair(66, 1);
-      pair(70, 1); // closed
-      for (const c of corners) {
-        pair(0, 'VERTEX');
+      const sym = planSymbol(doc, e);
+      const type = doc.equipmentTypes.get(e.type);
+      if (sym.outline === 'circle') {
+        const c = doc.point(e.at);
+        pair(0, 'CIRCLE');
         pair(8, layer);
         pair(10, c.x);
         pair(20, c.y);
-      }
-      pair(0, 'SEQEND');
-      pair(8, layer);
-      const type = doc.equipmentTypes.get(e.type);
+        pair(40, (type?.width ?? 0) / 2);
+      } else polyline(doc.cornersOf(e), layer);
+      for (const [p, q] of sym.segments) line(p, q, layer);
       const size = Math.min(type?.width ?? 0, type?.depth ?? 0);
       const label = [e.tag, type?.name].filter(Boolean).join(' ');
       if (label && size > 0) text(doc.point(e.at), Math.min(size / 6, 250), label, layer);

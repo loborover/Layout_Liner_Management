@@ -65,6 +65,8 @@ curl -s http://127.0.0.1:7820/rpc -H 'content-type: application/json' \
 curl -s http://127.0.0.1:7820/status   # 편집 대상과 연결 상태
 ```
 
+요청에는 `Content-Type: application/json`이 필요합니다. 브라우저에서 보낸 요청은 `localhost`/`127.0.0.1` 출처(또는 환경 변수 `LAYOUT_LINER_ALLOW_ORIGIN`에 지정한 출처)만 받고, 그 밖의 출처는 403으로 거부합니다. 다른 웹 페이지가 도면을 몰래 바꾸거나 덮어쓰지 못하게 하기 위해서입니다.
+
 응답은 `{"jsonrpc":"2.0","id":1,"result":…}` 또는 `{"jsonrpc":"2.0","id":1,"error":{"code":…,"message":"…"}}`입니다. 라우팅은 MCP와 같습니다.
 
 ## 4. 브리지 프로토콜 (참고)

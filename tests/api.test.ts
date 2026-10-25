@@ -48,6 +48,32 @@ describe('editing API', () => {
     }
   });
 
+  it('refuses an explicit layer that is not on the active floor', () => {
+    const { api, doc } = setup();
+    const other = dispatch(api, 'addFloor', { name: '2층' }) as { floor: string; layer: string };
+    expect(doc.activeFloor).not.toBe(other.floor);
+    expect(() => dispatch(api, 'addCircle', { center: [0, 0], radius: 100, layer: other.layer })).toThrow('setActiveFloor');
+    expect(doc.entities.size).toBe(0);
+  });
+
+  it('exports wall bands and preset symbols to SVG and DXF', () => {
+    const { api, doc } = setup();
+    dispatch(api, 'addRectangle', { x: 0, y: 0, width: 4000, height: 3000 });
+    const lines = [...doc.entities.values()].filter((e) => e.kind === 'line').map((e) => e.id);
+    dispatch(api, 'setStroke', { ids: lines, stroke: { width: 200, align: 'inside', color: '#ff0000' } });
+    dispatch(api, 'placeEquipment', { type: 'st-column-round', x: 1000, y: 1000 });
+    dispatch(api, 'placeEquipment', { type: 'st-stair', x: 3000, y: 1500 });
+    const { svg } = dispatch(api, 'exportSvg', {}) as { svg: string };
+    expect(svg.match(/fill="#ff0000"/g)?.length).toBe(4); // one band per wall
+    expect(svg).toContain('<circle'); // round column
+    expect(svg).toContain('UP'); // stair note
+    const { dxf } = dispatch(api, 'exportDxf', {}) as { dxf: string };
+    // 4 wall bands + stair footprint as closed polylines, the round column as a circle, stair treads as lines.
+    expect(dxf.match(/^POLYLINE$/gm)?.length).toBe(5);
+    expect(dxf.match(/^CIRCLE$/gm)?.length).toBe(1);
+    expect(dxf.match(/^LINE$/gm)!.length).toBeGreaterThan(4 + 10);
+  });
+
   it('docs/API-METHODS.md is up to date (npm run docs:api)', () => {
     expect(readFileSync(new URL('../docs/API-METHODS.md', import.meta.url), 'utf8')).toBe(apiReference());
   });

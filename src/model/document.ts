@@ -245,9 +245,15 @@ export class DocumentModel {
   isLayerVisible(id: Id): boolean {
     const layer = this.layers.get(id);
     if (!layer) return true;
-    if (layer.floor !== this.activeFloor || !layer.visible) return false;
+    return layer.floor === this.activeFloor && this.isLayerShown(id);
+  }
+
+  /** Whether a layer and its folder are switched on, whatever floor is active (cross-floor ghosts use this). */
+  isLayerShown(id: Id): boolean {
+    const layer = this.layers.get(id);
+    if (!layer) return true;
     const folder = layer.folder ? this.folders.get(layer.folder) : undefined;
-    return !folder || folder.visible;
+    return layer.visible && (!folder || folder.visible);
   }
 
   /** Whether a layer accepts edits: visible and neither it nor its folder locked. */

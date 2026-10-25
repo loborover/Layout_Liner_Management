@@ -228,3 +228,16 @@ describe('structural presets', () => {
     expect(connectedFloors(doc, doc.entities.get('l') as never)).toEqual(['floor-1', 'f2']);
   });
 });
+
+describe('cross-floor visibility', () => {
+  it('a hidden layer stays hidden from other floors', () => {
+    const doc = new DocumentModel();
+    const layer = doc.layers.values().next().value!;
+    expect(doc.isLayerShown(layer.id)).toBe(true);
+    doc.activeFloor = 'elsewhere';
+    expect(doc.isLayerVisible(layer.id)).toBe(false);
+    expect(doc.isLayerShown(layer.id)).toBe(true);
+    layer.visible = false;
+    expect(doc.isLayerShown(layer.id)).toBe(false);
+  });
+});

@@ -569,7 +569,11 @@ export class EditorApi {
   private layer(id?: Id): Id {
     const { doc } = this;
     if (id !== undefined) {
-      if (!doc.layers.has(id)) throw new ApiError(`레이어가 없습니다: ${id}`);
+      const layer = doc.layers.get(id);
+      if (!layer) throw new ApiError(`레이어가 없습니다: ${id}`);
+      if (layer.floor !== doc.activeFloor) {
+        throw new ApiError(`레이어 ${layer.name}은(는) 현재 층이 아닌 층에 있습니다. 먼저 setActiveFloor로 그 층(${layer.floor})을 고르십시오.`);
+      }
       return id;
     }
     const current = this.options.currentLayer?.();
