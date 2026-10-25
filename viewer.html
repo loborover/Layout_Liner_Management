@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Layout Liner 모니터링</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <!--
+    Monitoring viewer app (read-only). Loads a drawing made in the editor and colours bound objects from live
+    server values. URL parameters (all optional):
+      drawing=<url of a .json drawing>  source=<ws://… | http://… | mock>  interval=<ms for polling>
+      config=<url of a viewer config JSON>  floor=<floor id>
+    See docs/VIEWER.md. Code: src/viewer/main.ts.
+  -->
+  <body class="mode-view viewer-app">
+    <header class="quickbar" role="toolbar" aria-label="모니터링 도구">
+      <span class="brand">Layout Liner 모니터링</span>
+      <div class="group">
+        <button data-action="open" title="도면 파일(.json) 열기">도면 열기</button>
+        <button data-action="fit" title="전체 보기 (F)">전체 보기</button>
+        <label>층 <select id="floor-select"></select></label>
+      </div>
+      <div class="group">
+        <label title="ws://… (WebSocket), http(s)://… (REST 폴링) 또는 mock">데이터 <input id="source-url" type="text" size="28" placeholder="ws://서버:포트/경로 또는 https://…/values" /></label>
+        <label title="REST 폴링 주기 (ms)">주기 <input id="source-interval" type="number" min="250" step="250" value="2000" /></label>
+        <button data-action="connect">연결</button>
+        <button data-action="mock" title="서버 없이 모의 값으로 시험">모의 데이터</button>
+      </div>
+      <span class="spacer"></span>
+      <span id="source-state" class="pill">연결 안 됨</span>
+    </header>
+    <div class="workspace">
+      <main class="stage">
+        <canvas id="canvas"></canvas>
+        <div id="inspector" class="inspector" hidden></div>
+      </main>
+      <aside class="sidebar" data-state="normal" aria-label="모니터링 목록">
+        <div class="sidepanel">
+          <section data-section="watch" class="active">
+            <header><h2>모니터링 대상</h2><span id="counts" class="muted"></span></header>
+            <ul id="watch-list" class="list watch"></ul>
+            <p id="watch-empty" class="muted">모니터링 키가 지정된 객체가 없습니다. 편집기의 속성 패널에서 객체에 "모니터링 키"를 지정하십시오.</p>
+          </section>
+        </div>
+        <nav class="rail" aria-label="사이드바 아이콘">
+          <button data-rail="watch" data-icon="pulse" title="모니터링 대상"></button>
+          <span class="spacer"></span>
+          <button data-action="sidebar-max" data-icon="maximize" title="최대화 (넓게)"></button>
+          <button data-action="sidebar-min" data-icon="minimize" title="최소화 (아이콘만)"></button>
+        </nav>
+      </aside>
+    </div>
+    <input id="file-input" type="file" accept=".json,application/json" hidden />
+    <footer class="statusbar">
+      <span id="status-mode">모니터링 뷰어</span>
+      <span id="status-hint"></span>
+      <span id="status-msg" role="status"></span>
+      <span class="spacer"></span>
+      <span id="status-info"></span>
+      <span id="app-version"></span>
+    </footer>
+    <script type="module" src="/src/viewer/main.ts"></script>
+  </body>
+</html>

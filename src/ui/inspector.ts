@@ -12,6 +12,8 @@ import { type DisplayUnit, formatArea, formatLength } from '../view/format';
 import type { LiveValue } from './host';
 
 /** Title and rows describing an entity. */
+const STATUS_LABELS: Record<string, string> = { ok: '정상', warn: '주의', alarm: '경보', offline: '수신 없음' };
+
 export function describe(doc: DocumentModel, e: Entity, unit: DisplayUnit): { title: string; rows: [string, string, boolean?][] } {
   const rows: [string, string, boolean?][] = [];
   const layer = doc.layers.get(e.layer);
@@ -21,7 +23,7 @@ export function describe(doc: DocumentModel, e: Entity, unit: DisplayUnit): { ti
     const type = doc.equipmentTypes.get(e.type);
     const cat = categoryOf(type);
     title = [e.tag, e.name || type?.name].filter(Boolean).join(' ');
-    rows.push(['종류', `${CATEGORY_LABELS[cat]}${type ? ` · ${type.name}` : ''}`]);
+    rows.push(['구분', `${CATEGORY_LABELS[cat]}${type ? ` · ${type.name}` : ''}`]);
     if (type) rows.push(['크기', `${formatLength(type.width, unit)} × ${formatLength(type.depth, unit)}`]);
     for (const def of PROP_DEFS[cat]) {
       if (def.key.startsWith('max') || def.key.startsWith('min')) continue;
@@ -78,7 +80,7 @@ export function fillInspector(card: HTMLElement, doc: DocumentModel, e: Entity, 
     add('모니터링 키', e.binding);
     if (live) {
       add('값', `${String(live.value)}${live.unit ? ` ${live.unit}` : ''}`);
-      if (live.status) add('상태', live.status, live.status !== 'ok');
+      if (live.status) add('상태', STATUS_LABELS[live.status] ?? live.status, live.status !== 'ok');
       add('수신', new Date(live.at).toLocaleTimeString());
     } else add('값', '수신 대기');
   }

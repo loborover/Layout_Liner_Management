@@ -665,3 +665,72 @@ button.wide {
     display: none;
   }
 }
+
+/* Monitoring viewer app (viewer.html). */
+body.viewer-app {
+  grid-template-rows: auto 1fr auto;
+}
+
+.pill {
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: #475569;
+  color: #f8fafc;
+  font-size: 12px;
+}
+
+.pill.live {
+  background: #16a34a;
+}
+
+.pill.error {
+  background: #dc2626;
+}
+
+.pill.connecting {
+  background: #d97706;
+}
+
+.quickbar input[type='text'],
+.quickbar input[type='number'] {
+  background: #334155;
+  color: #f8fafc;
+  border: 1px solid #475569;
+  border-radius: 4px;
+  padding: 2px 6px;
+}
+
+.list.watch li {
+  display: grid;
+  grid-template-columns: 10px 1fr auto;
+  gap: 6px;
+  align-items: center;
+  padding: 4px 6px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.list.watch li:hover {
+  background: var(--bg-soft);
+}
+
+.list.watch li.selected {
+  background: var(--accent-soft);
+}
+
+.list.watch .dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+.list.watch .val {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.list.watch .sub {
+  grid-column: 2 / -1;
+  font-size: 11px;
+  color: var(--muted);
+}

@@ -57,7 +57,7 @@ export const PROP_DEFS: Record<StructureCategory, PropDef[]> = {
     { key: 'minWidth', label: '검토: 최소 폭', kind: 'number', unit: 'mm', default: 1200, min: 0 },
   ],
   lift: [
-    { key: 'liftKind', label: '종류', kind: 'select', options: { passenger: '승객용', freight: '화물용', car: '자동차용', dumbwaiter: '소형화물용' }, default: 'freight' },
+    { key: 'liftKind', label: '용도', kind: 'select', options: { passenger: '승객용', freight: '화물용', car: '자동차용', dumbwaiter: '소형화물용' }, default: 'freight' },
     { key: 'capacity', label: '적재 하중', kind: 'number', unit: 'kg', default: 1000, min: 0 },
     { key: 'speed', label: '속도', kind: 'number', unit: 'm/s', default: 1, min: 0 },
     { key: 'floors', label: '운행 층', kind: 'floors', default: '' },

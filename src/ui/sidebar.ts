@@ -7,20 +7,30 @@
  */
 
 export type SidebarState = 'collapsed' | 'normal' | 'wide';
-const STORE = 'layout-liner:sidebar';
+
+export interface SidebarOptions {
+  /** Section shown first. Default 'tree'. */
+  section?: string;
+  /** localStorage key; pages with different sections use different keys. */
+  store?: string;
+}
 
 export class Sidebar {
-  private section = 'tree';
+  private section: string;
+  private readonly store: string;
   /** Width to return to when a collapsed bar is reopened from the rail. */
   private lastOpen: SidebarState = 'normal';
 
   constructor(
     private readonly root: HTMLElement,
     private readonly onResize: () => void,
+    opts: SidebarOptions = {},
   ) {
+    this.section = opts.section ?? 'tree';
+    this.store = opts.store ?? 'layout-liner:sidebar';
     try {
-      const saved = JSON.parse(localStorage.getItem(STORE) ?? '{}') as { state?: SidebarState; section?: string };
-      if (saved.section) this.section = saved.section;
+      const saved = JSON.parse(localStorage.getItem(this.store) ?? '{}') as { state?: SidebarState; section?: string };
+      if (saved.section && root.querySelector(`[data-section="${saved.section}"]`)) this.section = saved.section;
       if (saved.state) this.root.dataset.state = saved.state;
     } catch {
       // ignore
@@ -61,7 +71,7 @@ export class Sidebar {
       b.setAttribute('aria-pressed', String(on));
     });
     try {
-      localStorage.setItem(STORE, JSON.stringify({ state: this.state, section }));
+      localStorage.setItem(this.store, JSON.stringify({ state: this.state, section }));
     } catch {
       // ignore
     }
