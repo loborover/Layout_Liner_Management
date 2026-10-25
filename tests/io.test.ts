@@ -101,6 +101,25 @@ describe('DXF import into the drawing', () => {
     expect(doc.layers.size).toBe(1);
   });
 
+  it('merges endpoints within tolerance across cell boundaries, but keeps lines on separate layers', () => {
+    const doc = new DocumentModel();
+    const d = parseDxf(
+      dxf(
+        ...section(
+          'ENTITIES',
+          0, 'LINE', 8, 'A', 10, -5, 20, 0, 11, 0.0049, 21, 0,
+          0, 'LINE', 8, 'A', 10, 0.0051, 20, 0, 11, 5, 21, 0,
+          0, 'LINE', 8, 'B', 10, -5, 20, 0, 11, 0.0049, 21, 0,
+        ),
+        0, 'EOF',
+      ),
+    );
+    const r = importDxf(doc, d, 1)!;
+    new History(doc).execute(r.command);
+    expect(doc.points.size).toBe(3);
+    expect(r.lines).toBe(3);
+  });
+
   it('applies a unit the user gives for unitless files', () => {
     const doc = new DocumentModel();
     const d = parseDxf(dxf(...section('ENTITIES', 0, 'LINE', 8, '0', 10, 0, 20, 0, 11, 2, 21, 0), 0, 'EOF'));
@@ -147,6 +166,7 @@ describe('exports', () => {
 
   it('writes an SVG in millimetres with hidden layers left out', () => {
     const doc = plan();
+    doc.addEntities([{ id: 'far', kind: 'circle', center: 'c', radius: 90000, layer: 'l2' }]);
     doc.layers.get('l2')!.visible = false;
     const svg = drawingSvg(doc)!;
     expect(svg).toMatch(/viewBox="[-\d.]+ [-\d.]+ [\d.]+ [\d.]+" width="[\d.]+mm"/);
@@ -154,6 +174,22 @@ describe('exports', () => {
     expect(svg).not.toContain('<circle');
     expect(svg).toContain('>5000</text>');
     expect(drawingSvg(new DocumentModel())).toBeNull();
+    // Hidden geometry far away doesn't stretch the page.
+    const width = Number(/viewBox="\S+ \S+ (\S+)/.exec(svg)![1]);
+    expect(width).toBeLessThan(6000);
+  });
+
+  it('exports drawings with more entities than a function call can take as arguments', () => {
+    const doc = new DocumentModel();
+    const points = [];
+    const entities = [];
+    for (let i = 0; i < 300000; i++) {
+      points.push({ id: `p${i}`, x: i, y: 0 });
+      entities.push({ id: `c${i}`, kind: 'circle' as const, center: `p${i}`, radius: 1, layer: 'layer-0' });
+    }
+    doc.addPoints(points);
+    doc.addEntities(entities);
+    expect(drawingSvg(doc)).toContain('<circle');
   });
 });
 
