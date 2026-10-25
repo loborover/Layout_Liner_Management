@@ -1,3 +1,10 @@
+/**
+ * @file service.ts
+ *
+ * High-level constraint operations used by the app and tools: adding constraints (validated by a trial solve),
+ * driving dimensions, constrained drags and the degrees-of-freedom status. Produces undoable commands.
+ * Related: src/constraints/solver.ts (planegcs wrapper), src/model/commands.ts.
+ */
 import {
   AddConstraints,
   Batch,

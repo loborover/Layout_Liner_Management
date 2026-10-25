@@ -1,3 +1,10 @@
+/**
+ * @file components.ts
+ *
+ * Splits constrained geometry into independent clusters (connected components over shared points and
+ * constraint references) so the solver only works on what a change can affect.
+ * Related: src/constraints/service.ts, src/constraints/solver.ts.
+ */
 import type { DocumentModel } from '../model/document';
 import type { Id } from '../model/types';
 

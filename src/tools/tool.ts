@@ -1,3 +1,9 @@
+/**
+ * @file tool.ts
+ *
+ * Tool interface and the ToolContext services every tool receives. A tool turns pointer/keyboard input into
+ * commands and draws its own preview overlay.
+ */
 import type { Vec2 } from '../geom/vec';
 import type { ConstraintService } from '../constraints/service';
 import type { History } from '../model/commands';

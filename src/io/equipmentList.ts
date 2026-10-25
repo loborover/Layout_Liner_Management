@@ -1,3 +1,8 @@
+/**
+ * @file equipmentList.ts
+ *
+ * Equipment schedule export: one row per placed equipment, as UTF-8 CSV with BOM so Excel opens it directly.
+ */
 import type { DocumentModel } from '../model/document';
 
 const HEADER = ['번호', '설비명', '폭(mm)', '깊이(mm)', 'X(mm)', 'Y(mm)', '회전(°)', '레이어'];

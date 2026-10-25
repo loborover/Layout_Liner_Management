@@ -1,3 +1,9 @@
+/**
+ * @file dxf.ts
+ *
+ * Minimal ASCII DXF reader: LINE, LWPOLYLINE/POLYLINE (with bulges), CIRCLE, ARC, INSERT of blocks, LAYER table
+ * and $INSUNITS. Produces a neutral DxfDrawing; src/io/dxfImport.ts turns it into document items.
+ */
 import type { Vec2 } from '../geom/vec';
 
 /**

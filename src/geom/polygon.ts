@@ -1,3 +1,8 @@
+/**
+ * @file polygon.ts
+ *
+ * Pure polygon measures (signed area, perimeter) used by the area tool and shapes.
+ */
 import type { Vec2 } from './vec';
 
 /** Signed area of a polygon (positive when counter-clockwise), shoelace formula. */

@@ -1,3 +1,9 @@
+/**
+ * @file main.ts
+ *
+ * Browser entry point of the editor page (index.html). Creates the App and exposes it on `window` for
+ * debugging and for scripted/AI control (see docs/API.md).
+ */
 import { App } from './app';
 import { showVersion } from './ui/version';
 

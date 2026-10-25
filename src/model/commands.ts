@@ -1,3 +1,11 @@
+/**
+ * @file commands.ts
+ *
+ * Command pattern for undo/redo. Every user-visible document edit is a Command applied through History, so it
+ * can be undone. Commands store what they need to revert (snapshots or before/after values).
+ * Rule: tools, UI and the API never mutate the document directly except for live previews later recorded with
+ * `History.record`.
+ */
 import type { Vec2 } from '../geom/vec';
 import type { DocumentModel } from './document';
 import type { Constraint, Entity, EquipmentType, Id, Layer, Point, Underlay } from './types';

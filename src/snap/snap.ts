@@ -1,3 +1,9 @@
+/**
+ * @file snap.ts
+ *
+ * Snap engine: object snaps (endpoint, midpoint, centre, quadrant, intersection, perpendicular), polar/ortho
+ * tracking and grid snapping. Given a raw cursor position it returns the snapped point and why.
+ */
 import { type Vec2, add, closestOnSegment, dist, dot, scale, sub } from '../geom/vec';
 import type { DocumentModel } from '../model/document';
 import type { SpatialIndex } from '../model/spatial';

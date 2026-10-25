@@ -1,3 +1,9 @@
+/**
+ * @file equipment.ts
+ *
+ * Equipment/structure placement tool: previews the footprint at the cursor, R rotates, click places with an
+ * auto-numbered tag.
+ */
 import { equipmentCorners } from '../geom/equipment';
 import type { Vec2 } from '../geom/vec';
 import { AddItems } from '../model/commands';

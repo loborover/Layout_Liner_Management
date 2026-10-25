@@ -1,3 +1,9 @@
+/**
+ * @file spatial.ts
+ *
+ * R-tree (rbush) over entity bounding boxes for viewport culling, picking and window selection. Rebuilt lazily
+ * when the document revision changes.
+ */
 import RBush from 'rbush';
 import {
   type Box,

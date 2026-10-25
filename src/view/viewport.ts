@@ -1,3 +1,8 @@
+/**
+ * @file viewport.ts
+ *
+ * World (mm, Y up) <-> screen (CSS px, Y down) transform, zoom/pan and adaptive grid spacing.
+ */
 import type { Box, Vec2 } from '../geom/vec';
 
 export const MIN_SCALE = 1e-4; // px per mm (≈ 10 km across a screen)

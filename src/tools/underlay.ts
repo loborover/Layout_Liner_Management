@@ -1,3 +1,8 @@
+/**
+ * @file underlay.ts
+ *
+ * Underlay calibration tool: two clicks and a known distance set the image scale, then a click moves it.
+ */
 import { type Vec2, dist } from '../geom/vec';
 import { SetUnderlay } from '../model/commands';
 import { formatLength } from '../view/format';

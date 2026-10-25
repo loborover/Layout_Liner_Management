@@ -1,3 +1,8 @@
+/**
+ * @file svg.ts
+ *
+ * Exports visible layers as an SVG in millimetres; also used for printing.
+ */
 import { dimensionGeometry } from '../geom/dimension';
 import type { Box } from '../geom/vec';
 import type { DocumentModel } from '../model/document';

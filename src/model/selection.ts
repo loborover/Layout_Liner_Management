@@ -1,3 +1,8 @@
+/**
+ * @file selection.ts
+ *
+ * Set of selected entity ids with change notification. View state, not part of the document or undo.
+ */
 import type { Id } from './types';
 
 export class Selection {

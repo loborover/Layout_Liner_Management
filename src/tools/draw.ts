@@ -1,3 +1,8 @@
+/**
+ * @file draw.ts
+ *
+ * Drawing tools: chained line, rectangle, circle and aligned dimension. Each click produces an AddItems command.
+ */
 import { offsetThrough } from '../geom/dimension';
 import { type Vec2, angleDeg, dist } from '../geom/vec';
 import { AddItems } from '../model/commands';

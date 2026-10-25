@@ -1,3 +1,8 @@
+/**
+ * @file format.ts
+ *
+ * Display formatting of lengths, angles and areas in the chosen unit.
+ */
 export type DisplayUnit = 'mm' | 'm';
 
 /** Formats a length given in mm for display. */

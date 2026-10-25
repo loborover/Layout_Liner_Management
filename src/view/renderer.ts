@@ -1,3 +1,9 @@
+/**
+ * @file renderer.ts
+ *
+ * Canvas 2D renderer. Draws grid, underlay and entities, batching strokes by style for speed, plus selection,
+ * constraint badges and tool overlays through the Painter helper.
+ */
 import { dimensionGeometry } from '../geom/dimension';
 import type { Vec2 } from '../geom/vec';
 import { SNAP_LABELS, type SnapResult } from '../snap/snap';

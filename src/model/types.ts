@@ -1,3 +1,9 @@
+/**
+ * @file types.ts
+ *
+ * Document data types: the persisted schema of a drawing. Changing anything here usually also needs
+ * src/io/serialize.ts (validation/migration), docs/DATA_MODEL.md and tests/serialize.test.ts.
+ */
 export type Id = string;
 
 /** Shared vertex. Entities reference points by id so that connected geometry moves together. */

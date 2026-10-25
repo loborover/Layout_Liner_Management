@@ -1,3 +1,8 @@
+/**
+ * @file ids.ts
+ *
+ * Id generation for points, entities, layers and other document records.
+ */
 import type { Id } from './types';
 
 let counter = 0;

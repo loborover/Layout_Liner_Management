@@ -1,3 +1,11 @@
+/**
+ * @file app.ts
+ *
+ * Editor application shell. Owns the document, history, selection, viewport, spatial index, snap engine,
+ * constraint service and tools, and wires them to the DOM (canvas events, toolbar buttons, keyboard shortcuts,
+ * side panel, status bar, autosave). Start here to find where a user action enters the system.
+ * Related: src/tools/* (pointer interaction), src/model/commands.ts (every undoable edit), src/view/renderer.ts.
+ */
 import type { Vec2 } from './geom/vec';
 import { FormatError, deserialize, serialize } from './io/serialize';
 import { hasConstraints } from './constraints/components';

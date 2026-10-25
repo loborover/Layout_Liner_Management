@@ -1,3 +1,10 @@
+/**
+ * @file document.ts
+ *
+ * In-memory document (the single source of truth for a drawing): points, entities, constraints, layer tree,
+ * equipment/structure library and underlay. Provides queries (bbox, point ids, extents) and change notification.
+ * It is DOM-free so it also runs in Node (tests, MCP server).
+ */
 import { dimensionGeometry } from '../geom/dimension';
 import { equipmentCorners } from '../geom/equipment';
 import type { Box, Vec2 } from '../geom/vec';

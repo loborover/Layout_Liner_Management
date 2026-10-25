@@ -1,3 +1,8 @@
+/**
+ * @file edit.ts
+ *
+ * Higher-level editing operations that build commands: array copy, rotation, move to layer, equipment tag numbering.
+ */
 import type { Vec2 } from '../geom/vec';
 import {
   AddConstraints,

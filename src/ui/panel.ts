@@ -1,3 +1,8 @@
+/**
+ * @file panel.ts
+ *
+ * Side panel widgets (layers, equipment library). Rebuilt only when what it shows changes.
+ */
 import type { History } from '../model/commands';
 import { SetEquipmentTypes, SetLayers } from '../model/commands';
 import type { DocumentModel } from '../model/document';

@@ -1,3 +1,9 @@
+/**
+ * @file serialize.ts
+ *
+ * Drawing file format (JSON) save/load. `deserialize` validates every field and upgrades older files, so it is
+ * the single gate for untrusted input (files, autosave, API/MCP loads). See docs/DATA_MODEL.md.
+ */
 import {
   type Constraint,
   type ConstraintKind,

@@ -1,3 +1,10 @@
+/**
+ * @file solver.ts
+ *
+ * Thin wrapper around planegcs (FreeCAD's sketch solver compiled to WebAssembly, LGPL-2.1). Translates the
+ * document's points/lines/circles/constraints into planegcs primitives, solves and reads results back.
+ * The WASM module is loaded lazily on first use so drawings without constraints never download it.
+ */
 import type { GcsWrapper } from '@salusoft89/planegcs';
 import type { DocumentModel } from '../model/document';
 import type { Id } from '../model/types';

@@ -1,3 +1,8 @@
+/**
+ * @file vec.ts
+ *
+ * 2D vector and axis-aligned box helpers shared by every module. World units are millimetres, Y up.
+ */
 export interface Vec2 {
   x: number;
   y: number;

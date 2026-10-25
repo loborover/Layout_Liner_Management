@@ -1,3 +1,9 @@
+/**
+ * @file dxfImport.ts
+ *
+ * Converts a parsed DxfDrawing into points/entities/layers as one undoable command, merging coincident endpoints
+ * into shared points.
+ */
 import { AddItems, Batch, type Command, SetLayers } from '../model/commands';
 import type { DocumentModel } from '../model/document';
 import { newId } from '../model/ids';

@@ -1,3 +1,8 @@
+/**
+ * @file dxfExport.ts
+ *
+ * Writes the document as ASCII DXF R12 (mm) so it opens in AutoCAD and other CAD tools.
+ */
 import { dimensionGeometry } from '../geom/dimension';
 import type { Vec2 } from '../geom/vec';
 import type { DocumentModel } from '../model/document';
