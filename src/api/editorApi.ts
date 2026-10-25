@@ -24,11 +24,13 @@ import {
   RemoveEntities,
   SetEquipmentTypes,
   SetLayerTree,
+  SetPoints,
   UpdateEntities,
   captureLayerTree,
 } from '../model/commands';
 import { type DocumentModel, cloneEntity } from '../model/document';
 import { arrayOffsets, copyItems, makeShapes, nextTag, type ReorderMove, reorderItems, rotateItems } from '../model/edit';
+import { heightOf } from '../model/heights';
 import { newId } from '../model/ids';
 import { CATEGORY_LABELS, PROP_DEFS, categoryOf, cleanProps, presetInfo } from '../model/presets';
 import type { DocumentData, Entity, EquipmentType, Floor, Folder, Id, Layer, LineEntity, Point, ShapeEntity, StructureCategory } from '../model/types';
@@ -120,9 +122,9 @@ export class EditorApi {
     const { doc } = this;
     const at = (id: Id) => {
       const pt = doc.point(id);
-      return { x: pt.x, y: pt.y };
+      return { id, x: pt.x, y: pt.y, z: pt.z ?? 0 };
     };
-    const base = { ...cloneEntity(e), floor: doc.floorOf(e) };
+    const base = { ...cloneEntity(e), floor: doc.floorOf(e), ...(e.kind !== 'dimension' ? { effectiveHeight: heightOf(doc, e) } : {}) };
     switch (e.kind) {
       case 'line':
         return { ...base, start: at(e.p1), end: at(e.p2), length: dist(doc.point(e.p1), doc.point(e.p2)) };
@@ -137,6 +139,29 @@ export class EditorApi {
         return { ...base, position: at(e.at), typeName: type?.name, category: categoryOf(type), corners: doc.cornersOf(e), checks: presetInfo(doc, e) };
       }
     }
+  }
+
+  /**
+   * Moves a point (vertex) to an exact X, Y and/or Z; everything built on it follows. Points of constrained
+   * geometry can only change Z here (X/Y would break the constraints; use the editor or remove them first).
+   */
+  setPoint(p: { id: Id; x?: number; y?: number; z?: number }) {
+    const { doc } = this;
+    const pt = doc.points.get(p.id);
+    if (!pt) throw new ApiError(`점이 없습니다: ${p.id}. getEntity 결과의 start/end/position 등에 있는 id를 쓰십시오.`);
+    if (!doc.isPointEditable(p.id)) throw new ApiError('잠겼거나 보이지 않는(다른 층) 객체의 점입니다.');
+    const to = {
+      x: p.x === undefined ? pt.x : this.num(p.x, 'x'),
+      y: p.y === undefined ? pt.y : this.num(p.y, 'y'),
+      z: p.z === undefined ? (pt.z ?? 0) : this.num(p.z, 'z'),
+    };
+    const movesXY = to.x !== pt.x || to.y !== pt.y;
+    if (movesXY && doc.constraintsOn([p.id, ...doc.pointUsers(p.id).map((e) => e.id)]).length > 0) {
+      throw new ApiError('구속된 형상의 점입니다. X/Y는 편집기에서 옮기거나 구속을 먼저 해제하십시오(Z는 바꿀 수 있습니다).');
+    }
+    const before = SetPoints.capture(doc, [p.id]);
+    this.history.execute(new SetPoints('좌표 변경', before, new Map([[p.id, { x: to.x, y: to.y, ...(to.z ? { z: to.z } : {}) }]])));
+    return { id: p.id, ...to, attached: doc.pointUsers(p.id).map((e) => e.id) };
   }
 
   // ---------- drawing ----------
@@ -252,9 +277,19 @@ export class EditorApi {
     rotation?: number;
     radius?: number;
     props?: Record<string, unknown> | null;
+    height?: number | null;
   }) {
     const e = this.entity(p.id);
     const c = cloneEntity(e);
+    if (p.height !== undefined) {
+      if (c.kind === 'dimension') throw new ApiError('치수에는 높이가 없습니다.');
+      if (p.height === null) delete c.height;
+      else {
+        const h = this.num(p.height, 'height');
+        if (h < 0) throw new ApiError('height는 0 이상이어야 합니다.');
+        c.height = h;
+      }
+    }
     if (p.name !== undefined) {
       if (p.name) c.name = String(p.name);
       else delete c.name;

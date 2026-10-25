@@ -183,6 +183,35 @@ export class DocumentModel {
     return [e.p1, e.p2];
   }
 
+  private usersRev = -1;
+  private users = new Map<Id, Entity[]>();
+
+  /** Entities that reference a point (lines, shapes, dimensions, circles, equipment), cached per revision. */
+  pointUsers(id: Id): Entity[] {
+    if (this.usersRev !== this.rev) {
+      this.users.clear();
+      for (const e of this.entities.values()) {
+        for (const pid of this.pointIdsOf(e)) {
+          let list = this.users.get(pid);
+          if (!list) this.users.set(pid, (list = []));
+          list.push(e);
+        }
+      }
+      this.usersRev = this.rev;
+    }
+    return this.users.get(id) ?? [];
+  }
+
+  /** Whether a point can be selected and edited: some editable entity uses it. */
+  isPointEditable(id: Id): boolean {
+    return this.pointUsers(id).some((e) => this.isEditable(e));
+  }
+
+  /** Whether a point is shown: some visible entity uses it. */
+  isPointVisible(id: Id): boolean {
+    return this.pointUsers(id).some((e) => this.isVisible(e));
+  }
+
   /** Footprint corners of a piece of equipment, counter-clockwise from its front-left. */
   cornersOf(e: EquipmentEntity): Vec2[] {
     const t = this.equipmentTypes.get(e.type);
@@ -276,7 +305,7 @@ export class DocumentModel {
   toData(): DocumentData {
     return {
       format: 'layout-liner',
-      version: 2,
+      version: 3,
       units: 'mm',
       points: [...this.points.values()].map((p) => ({ ...p })),
       entities: [...this.entities.values()].map(cloneEntity),

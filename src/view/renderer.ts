@@ -167,6 +167,20 @@ export class Painter {
     ctx.stroke();
   }
 
+  /** Vertex grip: a square, filled when the point is selected. */
+  vertex(p: Vec2, color: string, filled: boolean): void {
+    const { ctx } = this;
+    const s = this.view.toScreen(p);
+    const h = filled ? 5 : 4.5;
+    ctx.beginPath();
+    ctx.rect(s.x - h, s.y - h, h * 2, h * 2);
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = color;
+    ctx.fillStyle = filled ? color : COLORS.background;
+    ctx.fill();
+    ctx.stroke();
+  }
+
   /** Small square marker at a world point. */
   marker(p: Vec2, color: string, sizePx = 6): void {
     const s = this.view.toScreen(p);
@@ -420,10 +434,16 @@ export class Renderer {
     const painter = new Painter(ctx, view);
     if (!state.clean) {
       for (const id of this.selection.values()) {
+        if (doc.points.has(id)) {
+          if (doc.isPointVisible(id)) painter.vertex(doc.point(id), COLORS.selected, true);
+          continue;
+        }
         const e = doc.entities.get(id);
         if (!e) continue;
         for (const pid of doc.pointIdsOf(e)) painter.marker(doc.point(pid), COLORS.selected);
       }
+      // A hovered vertex shows as a grip: clicking it selects the point itself.
+      if (state.hover && doc.points.has(state.hover) && !this.selection.has(state.hover)) painter.vertex(doc.point(state.hover), COLORS.hover, false);
     }
     state.overlay?.(painter);
     if (state.snap) painter.snap(state.snap);

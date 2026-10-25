@@ -74,6 +74,27 @@ describe('editing API', () => {
     expect(dxf.match(/^LINE$/gm)!.length).toBeGreaterThan(4 + 10);
   });
 
+  it('moves a vertex in X, Y, Z and sets 3D heights, round-tripping through the file', () => {
+    const { api, doc, history } = setup();
+    dispatch(api, 'addRectangle', { x: 0, y: 0, width: 4000, height: 3000 });
+    const line = [...doc.entities.values()].find((e) => e.kind === 'line')!;
+    const info = dispatch(api, 'getEntity', { id: line.id }) as { start: { id: string; z: number }; effectiveHeight: number };
+    expect(info.start.z).toBe(0);
+    expect(info.effectiveHeight).toBe(0); // a plain line is flat
+    dispatch(api, 'setPoint', { id: info.start.id, z: 300 });
+    dispatch(api, 'updateEntity', { id: line.id, height: 2500 });
+    expect(doc.point(info.start.id).z).toBe(300);
+    const saved = dispatch(api, 'getDocument', {}) as { version: number; points: { z?: number }[]; entities: { height?: number }[] };
+    expect(saved.version).toBe(3);
+    const reloaded = setup();
+    dispatch(reloaded.api, 'loadDocument', { data: saved });
+    expect(reloaded.doc.point(info.start.id).z).toBe(300);
+    expect((reloaded.doc.entities.get(line.id) as { height?: number }).height).toBe(2500);
+    history.undo();
+    history.undo();
+    expect(doc.point(info.start.id).z).toBeUndefined();
+  });
+
   it('docs/API-METHODS.md is up to date (npm run docs:api)', () => {
     expect(readFileSync(new URL('../docs/API-METHODS.md', import.meta.url), 'utf8')).toBe(apiReference());
   });

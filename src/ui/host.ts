@@ -40,6 +40,8 @@ export interface UiHost {
   zoomTo: (ids: Id[]) => void;
   /** Live value of a binding key, if a data source provides one. */
   live: (binding: string) => LiveValue | undefined;
+  /** Moves a point to an exact X, Y, Z (through the constraint solver when its geometry is constrained). */
+  setPoint: (id: Id, to: { x: number; y: number; z?: number }) => void;
   notify: (text: string) => void;
   ask: (question: string, initial: string) => string | null;
   confirm: (question: string) => boolean;

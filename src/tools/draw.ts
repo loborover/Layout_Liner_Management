@@ -6,6 +6,7 @@
 import { offsetThrough } from '../geom/dimension';
 import { type Vec2, angleDeg, dist } from '../geom/vec';
 import { AddItems, Batch } from '../model/commands';
+import { linePath } from '../model/edit';
 import { newId } from '../model/ids';
 import { type Id, type LineEntity, type Point, type ShapeEntity } from '../model/types';
 import { formatAngle, formatLength } from '../view/format';
@@ -35,11 +36,14 @@ function shapeOf(ctx: ToolContext, points: Id[], lines: Id[]): ShapeEntity {
 
 /**
  * Chained line tool: each click adds a segment joined to the previous one. Closing the chain on its first point
- * also creates a shape (face) over the loop, in the same undo step.
+ * also creates a shape (face) over the loop, in the same undo step. With Ctrl held, the cursor snaps only to
+ * existing points of visible objects, and a segment that ends on an existing point which closes a loop with
+ * existing lines (not only the chain's own start) also makes that loop a shape.
  */
 export class LineTool implements Tool {
   readonly id = 'line';
-  readonly hint = '클릭: 점 추가(연속 선) · 기존 끝점 클릭: 연결 · 시작점 클릭: 닫기 · Shift: 수평/수직 · 우클릭/Esc: 종료';
+  readonly hint =
+    '클릭: 점 추가(연속 선) · 기존 끝점 클릭: 연결 · 시작점 클릭: 닫기 · Ctrl: 기존 점에만 스냅, 닫히면 도형 · Shift: 수평/수직 · 우클릭/Esc: 종료';
   readonly cursor = 'crosshair';
   /** Start of the current segment. Not yet in the document when `pending` is true. */
   private start: Point | null = null;
@@ -86,7 +90,18 @@ export class LineTool implements Tool {
       );
       this.reset();
     } else {
-      this.ctx.history.execute(new AddItems(newPoints, [seg]));
+      const add = new AddItems(newPoints, [seg]);
+      // Ctrl onto an existing point: if that closes a loop through existing lines, fill it as a shape.
+      const loop = p.ctrl && existing && !this.pending ? this.loopThrough(this.start.id, existing.id) : null;
+      if (loop) {
+        const shape = shapeOf(this.ctx, [this.start.id, ...loop.points], [seg.id, ...loop.edges]);
+        this.ctx.history.execute(new Batch('도형 그리기', [add, new AddItems([], [shape])]));
+        this.ctx.notify(`닫힌 선으로 ${shape.name}을(를) 만들었습니다.`);
+        this.reset();
+        this.ctx.requestRender();
+        return;
+      }
+      this.ctx.history.execute(add);
       this.chainPoints.push(end.id);
       this.start = doc.point(end.id);
       this.pending = false;
@@ -123,6 +138,16 @@ export class LineTool implements Tool {
     p.line(this.start, this.cursorPos, COLORS.preview, 1.5, DASH);
     const unit = this.ctx.unit();
     p.label(this.cursorPos, `${formatLength(dist(this.start, this.cursorPos), unit)} · ${formatAngle(angleDeg(this.start, this.cursorPos))}`);
+  }
+
+  /**
+   * Loop closed by a new segment start → end: the shortest chain of existing editable lines from end back to start.
+   * Returns it as points (from end) and edges. The new segment is in no shape yet, so the loop is never a duplicate.
+   */
+  private loopThrough(start: Id, end: Id): { points: Id[]; edges: Id[] } | null {
+    const { doc } = this.ctx;
+    const path = linePath(doc, end, start, (e) => doc.isEditable(e));
+    return path && path.edges.length >= 2 ? path : null;
   }
 
   private reset(): void {

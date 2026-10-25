@@ -38,6 +38,11 @@ export interface SnapQuery {
   ortho?: boolean;
   /** Entities to ignore (e.g. those being moved). */
   exclude?: ReadonlySet<Id>;
+  /**
+   * Ctrl held: snap only to existing points of visible objects (line ends, shape corners, circle centres), even
+   * when object snap is off, and never to the grid or tracking, so the new geometry connects to them.
+   */
+  pointsOnly?: boolean;
 }
 
 export const SNAP_LABELS: Record<SnapKind, string> = {
@@ -79,6 +84,7 @@ export class SnapEngine {
    * `tol` is the reach in mm; `gridStep` the current grid spacing in mm.
    */
   snap(raw: Vec2, tol: number, gridStep: number, settings: SnapSettings, q: SnapQuery = {}): SnapResult | null {
+    if (q.pointsOnly) return this.objectSnap(raw, tol * 1.5, q);
     if (settings.object) {
       const hit = this.objectSnap(raw, tol, q);
       if (hit) return hit;
@@ -132,6 +138,7 @@ export class SnapEngine {
     let best: Candidate | null = null;
     let bestD = Infinity;
     for (const c of candidates) {
+      if (q.pointsOnly && !c.pointId) continue;
       const d = dist(c.point, raw);
       if (d > tol) continue;
       if (!best || PRIORITY[c.kind] < PRIORITY[best.kind] || (PRIORITY[c.kind] === PRIORITY[best.kind] && d < bestD)) {

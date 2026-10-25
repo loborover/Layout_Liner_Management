@@ -18,7 +18,7 @@ import { hasConstraints } from './constraints/components';
 import { type ClusterStatus, ConstraintService } from './constraints/service';
 import { Batch, type Command, History, RemoveConstraints, RemoveEntities, SetDimensionValue, SetUnderlay, UpdateEntities } from './model/commands';
 import { DocumentModel, cloneEntity } from './model/document';
-import { arrayOffsets, copyItems, makeShapes, moveToLayer, type ReorderMove, reorderItems, rotateItems } from './model/edit';
+import { arrayOffsets, copyItems, makeShapes, moveToLayer, type ReorderMove, reorderItems, rotateItems, deletionTargets } from './model/edit';
 import { EditorApi } from './api/editorApi';
 import { METHODS, dispatch } from './api/rpc';
 import { BridgeClient } from './api/bridge';
@@ -165,8 +165,10 @@ export class App implements UiHost {
     this.doc.onChange(() => {
       // Hidden or locked geometry can't stay selected: it could otherwise still be moved or deleted.
       this.selection.prune((id) => {
+        const view = this.currentMode === 'view';
+        if (this.doc.points.has(id)) return view ? this.doc.isPointVisible(id) : this.doc.isPointEditable(id);
         const e = this.doc.entities.get(id);
-        return !!e && (this.currentMode === 'view' ? this.doc.isVisible(e) : this.doc.isEditable(e));
+        return !!e && (view ? this.doc.isVisible(e) : this.doc.isEditable(e));
       });
       this.refreshPanels();
       this.refreshInspector();
@@ -208,6 +210,13 @@ export class App implements UiHost {
 
   unit(): DisplayUnit {
     return this.displayUnit;
+  }
+
+  setPoint(id: Id, to: { x: number; y: number; z?: number }): void {
+    if (this.currentMode !== 'edit') return this.notify('뷰어 모드에서는 편집할 수 없습니다.');
+    void this.constraints.setPoint(id, to).then((r) => {
+      if (!r.ok) this.notify(r.message);
+    });
   }
 
   /** Current layer, falling back to the first layer of the active floor (e.g. after undo, opening a file or a floor change). */
@@ -377,11 +386,16 @@ export class App implements UiHost {
     const screen = { x: e.clientX - r.left, y: e.clientY - r.top };
     const raw = this.view.toWorld(screen);
     const q = this.tool.snapQuery?.() ?? {};
+    const ctrl = e.ctrlKey || e.metaKey;
     const snap =
       this.currentMode === 'edit' || this.tool.id.startsWith('measure')
-        ? this.snapper.snap(raw, this.view.pxToMm(SNAP_REACH_PX), gridSpacing(this.view.scale).minor, this.snapSettings, { ...q, ortho: e.shiftKey && !!q.from })
+        ? this.snapper.snap(raw, this.view.pxToMm(SNAP_REACH_PX), gridSpacing(this.view.scale).minor, this.snapSettings, {
+            ...q,
+            ortho: e.shiftKey && !!q.from,
+            pointsOnly: ctrl,
+          })
         : null;
-    return { screen, raw, world: snap?.point ?? raw, snap, button: e.button, shift: e.shiftKey };
+    return { screen, raw, world: snap?.point ?? raw, snap, button: e.button, shift: e.shiftKey, ctrl };
   }
 
   private bindCanvas(): void {
@@ -722,13 +736,18 @@ export class App implements UiHost {
   }
 
   private reorderSelection(move: ReorderMove): void {
-    const cmd = reorderItems(this.doc, this.selection.values(), move);
+    const cmd = reorderItems(this.doc, this.selectedEntities(), move);
     if (!cmd) return this.notify(this.selection.size === 0 ? '순서를 바꿀 객체를 선택하십시오.' : '이미 그 위치입니다.');
     this.history.execute(cmd);
   }
 
+  /** Selected entity ids; selected points (vertices) are left out. */
+  private selectedEntities(): Id[] {
+    return this.selection.values().filter((id) => this.doc.entities.has(id));
+  }
+
   private deleteSelection(): void {
-    const ids = this.selection.values();
+    const ids = deletionTargets(this.doc, this.selection.values());
     if (ids.length === 0) return this.notify('삭제할 객체를 선택하십시오.');
     this.tool.interrupt?.();
     this.selection.clear();
@@ -788,7 +807,7 @@ export class App implements UiHost {
   }
 
   private rotateSelection(): void {
-    const ids = this.selection.values();
+    const ids = this.selectedEntities();
     if (ids.length === 0) return this.notify('회전할 객체를 선택하십시오.');
     const cmd = rotateItems(this.doc, ids, 90);
     if (typeof cmd === 'string') this.notify(cmd);
@@ -797,7 +816,7 @@ export class App implements UiHost {
 
   /** Rectangular array of the selection; the original stays as the first item. */
   private arraySelection(): void {
-    const ids = this.selection.values();
+    const ids = this.selectedEntities();
     if (ids.length === 0) return this.notify('배열 복사할 객체를 선택하십시오.');
     const boxes = ids.flatMap((id) => {
       const e = this.doc.entities.get(id);
@@ -821,7 +840,7 @@ export class App implements UiHost {
   }
 
   private selectionToLayer(): void {
-    const ids = this.selection.values();
+    const ids = this.selectedEntities();
     if (ids.length === 0) return this.notify('현재 레이어로 옮길 객체를 선택하십시오.');
     const target = this.currentLayer();
     if (ids.some((id) => this.doc.floorOf(this.doc.entities.get(id)!) !== this.doc.layers.get(target)?.floor)) {
@@ -981,8 +1000,10 @@ export class App implements UiHost {
         break;
       }
       case 'fixed': {
-        const points = [...new Set(selected.filter((e) => e.kind !== 'dimension').flatMap((e) => this.doc.pointIdsOf(e)))];
-        if (points.length === 0) return this.notify('고정할 선이나 원을 선택하십시오.');
+        // Selected points are fixed themselves; selected geometry fixes all of its points.
+        const picked = this.selection.values().filter((id) => this.doc.points.has(id));
+        const points = [...new Set([...picked, ...selected.filter((e) => e.kind !== 'dimension').flatMap((e) => this.doc.pointIdsOf(e))])];
+        if (points.length === 0) return this.notify('고정할 점, 선이나 원을 선택하십시오.');
         refs = [points];
         break;
       }

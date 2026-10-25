@@ -573,6 +573,26 @@ button.wide {
   font-weight: 600;
 }
 
+/* X, Y, Z inputs of one point on a single row. */
+.props .xyz {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.props .xyz label {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 11px;
+  color: var(--ink-muted);
+}
+
+.props .v .xyz input[type='number'] {
+  width: 100%;
+  min-width: 0;
+}
+
 /* Viewer inspector card shown next to a clicked object. */
 .inspector {
   position: absolute;

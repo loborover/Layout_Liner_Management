@@ -131,7 +131,7 @@ export const METHODS: Record<string, MethodSpec> = {
     run: (api, p) => api.placeEquipment(p as never),
   },
   updateEntity: {
-    description: '객체 속성 변경: name, layer, binding(모니터링 키), stroke(선), fill(도형), tag/rotation/props(설비·구조), radius(원). null은 지움.',
+    description: '객체 속성 변경: name, layer, binding(모니터링 키), stroke(선), fill(도형), tag/rotation/props(설비·구조), radius(원), height(3D 높이 mm). null은 지움.',
     params: obj(
       {
         id: str('객체 id'),
@@ -144,11 +144,18 @@ export const METHODS: Record<string, MethodSpec> = {
         rotation: { type: 'number' },
         radius: { type: 'number' },
         props: { type: ['object', 'null'] },
+        height: { type: ['number', 'null'], minimum: 0, description: '3D 높이(mm). null이면 기본값(벽·구조물은 층고, 설비 1000)' },
       },
       ['id'],
     ),
     mutates: true,
     run: (api, p) => api.updateEntity(p as never),
+  },
+  setPoint: {
+    description: '점(꼭짓점)을 X·Y·Z(mm) 위치로 옮깁니다. 이 점을 쓰는 선·도형·치수가 함께 바뀝니다. Z는 층 바닥 기준 높이. 점 id는 getEntity의 start/end/position/polygon에 있습니다.',
+    params: obj({ id: str('점 id'), x: num('X (mm)'), y: num('Y (mm)'), z: num('Z: 층 바닥 기준 높이 (mm)') }, ['id']),
+    mutates: true,
+    run: (api, p) => api.setPoint(p as never),
   },
   setStroke: {
     description: '선과 도형의 변에 선 양식(벽 두께 등)을 지정합니다. stroke=null이면 지웁니다.',

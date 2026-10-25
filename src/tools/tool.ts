@@ -49,6 +49,8 @@ export interface ToolPointer {
   screen: Vec2;
   button: number;
   shift: boolean;
+  /** Ctrl (⌘ on macOS) held: snap to existing points only, and close loops into shapes (line tool). */
+  ctrl: boolean;
 }
 
 export interface Tool {

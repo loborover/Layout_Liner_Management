@@ -325,7 +325,7 @@ class ViewerApp {
     const r = this.canvas.getBoundingClientRect();
     const screen = { x: e.clientX - r.left, y: e.clientY - r.top };
     const raw = this.view.toWorld(screen);
-    return { screen, raw, world: raw, snap: null, button: e.button, shift: e.shiftKey };
+    return { screen, raw, world: raw, snap: null, button: e.button, shift: e.shiftKey, ctrl: false };
   }
 
   private bind(): void {

@@ -54,7 +54,7 @@ export function copyItems(doc: DocumentModel, entityIds: Id[], offsets: Vec2[]):
     const map = new Map<Id, Id>();
     for (const id of pointIds) {
       const p = doc.point(id);
-      const q = { id: newId('p'), x: p.x + d.x, y: p.y + d.y };
+      const q = { id: newId('p'), x: p.x + d.x, y: p.y + d.y, ...(p.z ? { z: p.z } : {}) };
       map.set(id, q.id);
       points.push(q);
     }
@@ -226,4 +226,69 @@ export function reorderItems(doc: DocumentModel, entityIds: Id[], move: ReorderM
   }
   if (after.every((id, i) => id === before[i])) return null;
   return new ReorderEntities('순서 변경', before, after);
+}
+
+/**
+ * Entities removed when deleting a selection that may contain points (vertices): a selected point takes every
+ * entity built on it with it (its lines, and through RemoveEntities their shapes), like deleting a vertex in CAD.
+ */
+export function deletionTargets(doc: DocumentModel, ids: Iterable<Id>): Id[] {
+  const out = new Set<Id>();
+  for (const id of ids) {
+    if (doc.entities.has(id)) out.add(id);
+    else if (doc.points.has(id)) for (const e of doc.pointUsers(id)) if (doc.isEditable(e)) out.add(e.id);
+  }
+  return [...out];
+}
+
+/**
+ * Shortest chain of existing lines from point `from` to point `to` (by length), for closing a loop with a new
+ * segment `to` → `from`. Only lines `accept` allows are walked (editable lines on the active floor). Returns the
+ * points and lines in walking order (points[0] = from, last point before `to`), or null when they are not connected.
+ */
+export function linePath(doc: DocumentModel, from: Id, to: Id, accept: (e: LineEntity) => boolean): { points: Id[]; edges: Id[] } | null {
+  if (from === to) return null;
+  const adj = new Map<Id, { line: LineEntity; other: Id; len: number }[]>();
+  for (const e of doc.entities.values()) {
+    if (e.kind !== 'line' || !accept(e)) continue;
+    const a = doc.point(e.p1);
+    const b = doc.point(e.p2);
+    const len = Math.hypot(b.x - a.x, b.y - a.y);
+    for (const [p, q] of [
+      [e.p1, e.p2],
+      [e.p2, e.p1],
+    ]) {
+      let list = adj.get(p);
+      if (!list) adj.set(p, (list = []));
+      list.push({ line: e, other: q, len });
+    }
+  }
+  // Dijkstra; drawings are small enough that a linear scan for the next node is fine.
+  const distTo = new Map<Id, number>([[from, 0]]);
+  const prev = new Map<Id, { point: Id; line: Id }>();
+  const done = new Set<Id>();
+  while (true) {
+    let cur: Id | null = null;
+    let best = Infinity;
+    for (const [id, d] of distTo) if (!done.has(id) && d < best) [cur, best] = [id, d];
+    if (cur === null) return null;
+    if (cur === to) break;
+    done.add(cur);
+    for (const { line, other, len } of adj.get(cur) ?? []) {
+      const d = best + len;
+      if (d < (distTo.get(other) ?? Infinity)) {
+        distTo.set(other, d);
+        prev.set(other, { point: cur, line: line.id });
+      }
+    }
+  }
+  const points: Id[] = [];
+  const edges: Id[] = [];
+  for (let at = to; at !== from; ) {
+    const step = prev.get(at)!;
+    edges.unshift(step.line);
+    points.unshift(step.point);
+    at = step.point;
+  }
+  return { points, edges };
 }

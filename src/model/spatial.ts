@@ -77,6 +77,26 @@ export class SpatialIndex {
     return this.pickWhere(p, tol, (e) => this.doc.isEditable(e));
   }
 
+  /**
+   * Nearest point (vertex) within tol of p among editable entities' points: line ends, shape corners, circle
+   * centres, equipment insertion points, dimension feet. Selecting a point edits everything attached to it.
+   */
+  pickPoint(p: Vec2, tol: number): Id | null {
+    let best: Id | null = null;
+    let bestD = tol;
+    for (const e of this.query({ minX: p.x - tol, minY: p.y - tol, maxX: p.x + tol, maxY: p.y + tol })) {
+      if (!this.doc.isEditable(e)) continue;
+      for (const id of this.doc.pointIdsOf(e)) {
+        const d = dist(p, this.doc.point(id));
+        if (d <= bestD) {
+          best = id;
+          bestD = d;
+        }
+      }
+    }
+    return best;
+  }
+
   /** Like pick, but any visible entity, locked or not (viewer mode inspects without editing). */
   pickVisible(p: Vec2, tol: number): Entity | null {
     return this.pickWhere(p, tol, (e) => this.doc.isVisible(e));

@@ -9,6 +9,9 @@ import {
   AddConstraints,
   Batch,
   type Command,
+  MovePoints,
+  type PointPosition,
+  SetPoints,
   type GeometryState,
   type History,
   SetConstraintValue,
@@ -192,6 +195,42 @@ export class ConstraintService {
       return failure(r);
     }
     this.history.record(new Batch('반지름 변경', [change, new SetGeometry('구속 풀이', before, geometryOf(this.doc, cluster))]));
+    return { ok: true };
+  }
+
+  /**
+   * Moves one point to an exact position (property panel, API). X/Y of constrained geometry go through the solver
+   * like a drag, so the constraints still hold; Z never takes part in 2D constraints.
+   */
+  async setPoint(id: Id, to: PointPosition): Promise<Outcome> {
+    const p = this.doc.points.get(id);
+    if (!p) return { ok: false, message: '점이 없습니다.' };
+    if (![to.x, to.y, to.z ?? 0].every(Number.isFinite)) return { ok: false, message: '좌표는 숫자여야 합니다.' };
+    const delta = { x: to.x - p.x, y: to.y - p.y };
+    const steps: Command[] = [];
+    if (delta.x !== 0 || delta.y !== 0) {
+      if (constrainedClusters(this.doc, [id]).length > 0) await this.ensure();
+      const drag = this.beginDrag([id]);
+      if (drag) {
+        if (!drag.update(delta) || Math.hypot(p.x - to.x, p.y - to.y) > 1e-6) {
+          drag.cancel();
+          return { ok: false, message: '구속 조건 때문에 점을 그 위치로 옮길 수 없습니다.' };
+        }
+        steps.push(drag.finish());
+      } else {
+        const move = new MovePoints([id], delta);
+        move.apply(this.doc);
+        steps.push(move);
+      }
+    }
+    if ((to.z ?? 0) !== (p.z ?? 0)) {
+      const before = SetPoints.capture(this.doc, [id]);
+      const after = new Map([[id, { x: p.x, y: p.y, ...(to.z ? { z: to.z } : {}) }]]);
+      const lift = new SetPoints('높이 변경', before, after);
+      lift.apply(this.doc);
+      steps.push(lift);
+    }
+    if (steps.length > 0) this.history.record(new Batch('좌표 변경', steps));
     return { ok: true };
   }
 
