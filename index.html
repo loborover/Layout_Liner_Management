@@ -14,6 +14,11 @@
         <button data-tool="rect" title="사각형 (R)">사각형</button>
         <button data-tool="circle" title="원 (C)">원</button>
         <button data-tool="dimension" title="치수 (D)">치수</button>
+        <button data-tool="equipment" title="설비 배치 (E): 오른쪽 설비 목록에서 종류 선택">설비</button>
+      </div>
+      <div class="group" aria-label="편집 (선택한 객체에 적용)">
+        <button data-action="rotate" title="선택한 객체 90° 회전 (설비만 선택하면 제자리에서 회전)">90° 회전</button>
+        <button data-action="array" title="선택한 객체를 행·열로 배열 복사">배열 복사</button>
       </div>
       <div class="group">
         <button data-tool="measure-distance" title="거리 측정 (M)">거리</button>
@@ -53,9 +58,29 @@
         </label>
       </div>
     </header>
-    <main class="stage">
-      <canvas id="canvas"></canvas>
-    </main>
+    <div class="workspace">
+      <main class="stage">
+        <canvas id="canvas"></canvas>
+      </main>
+      <aside class="panel">
+        <section>
+          <header>
+            <h2>레이어</h2>
+            <button data-action="add-layer" title="레이어 추가">+ 추가</button>
+          </header>
+          <ul id="layer-list" class="list"></ul>
+          <button data-action="to-layer" class="wide" title="선택한 객체를 현재 레이어(●)로 옮깁니다">선택 → 현재 레이어</button>
+        </section>
+        <section>
+          <header>
+            <h2>설비</h2>
+            <button data-action="add-type" title="설비 종류 추가">+ 추가</button>
+          </header>
+          <ul id="type-list" class="list"></ul>
+          <button data-action="export-equipment" class="wide" title="배치된 설비 목록을 CSV(엑셀)로 저장">설비 목록 CSV</button>
+        </section>
+      </aside>
+    </div>
     <footer class="statusbar">
       <span id="status-hint"></span>
       <span id="status-msg" role="status"></span>

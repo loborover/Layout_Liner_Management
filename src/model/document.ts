@@ -1,10 +1,14 @@
 import { dimensionGeometry } from '../geom/dimension';
+import { equipmentCorners } from '../geom/equipment';
 import type { Box, Vec2 } from '../geom/vec';
 import {
   type Constraint,
   DEFAULT_LAYER_ID,
   type DocumentData,
+  DEFAULT_EQUIPMENT_TYPES,
   type Entity,
+  type EquipmentEntity,
+  type EquipmentType,
   type Id,
   type Layer,
   type Point,
@@ -22,6 +26,7 @@ export class DocumentModel {
   readonly entities = new Map<Id, Entity>();
   readonly constraints = new Map<Id, Constraint>();
   readonly layers = new Map<Id, Layer>();
+  readonly equipmentTypes = new Map<Id, EquipmentType>();
   private listeners = new Set<Listener>();
   private revision = 0;
 
@@ -55,6 +60,8 @@ export class DocumentModel {
       visible: true,
       locked: false,
     });
+    this.equipmentTypes.clear();
+    for (const t of DEFAULT_EQUIPMENT_TYPES) this.equipmentTypes.set(t.id, { ...t });
     this.changed();
   }
 
@@ -104,7 +111,15 @@ export class DocumentModel {
 
   /** Point ids an entity depends on. */
   pointIdsOf(e: Entity): Id[] {
-    return e.kind === 'circle' ? [e.center] : [e.p1, e.p2];
+    if (e.kind === 'circle') return [e.center];
+    if (e.kind === 'equipment') return [e.at];
+    return [e.p1, e.p2];
+  }
+
+  /** Footprint corners of a piece of equipment, counter-clockwise from its front-left. */
+  cornersOf(e: EquipmentEntity): Vec2[] {
+    const t = this.equipmentTypes.get(e.type);
+    return equipmentCorners(this.point(e.at), t?.width ?? 0, t?.depth ?? 0, e.rotation);
   }
 
   /** Points no remaining entity references, among the given candidates. */
@@ -131,6 +146,12 @@ export class DocumentModel {
       const { d1, d2 } = dimensionGeometry(a, b, e.offset);
       const xs = [a.x, b.x, d1.x, d2.x];
       const ys = [a.y, b.y, d1.y, d2.y];
+      return { minX: Math.min(...xs), minY: Math.min(...ys), maxX: Math.max(...xs), maxY: Math.max(...ys) };
+    }
+    if (e.kind === 'equipment') {
+      const cs = this.cornersOf(e);
+      const xs = cs.map((c) => c.x);
+      const ys = cs.map((c) => c.y);
       return { minX: Math.min(...xs), minY: Math.min(...ys), maxX: Math.max(...xs), maxY: Math.max(...ys) };
     }
     const c = this.point(e.center);
@@ -167,6 +188,7 @@ export class DocumentModel {
       entities: [...this.entities.values()].map((e) => ({ ...e })),
       constraints: [...this.constraints.values()].map((c) => ({ ...c, refs: [...c.refs] })),
       layers: [...this.layers.values()].map((l) => ({ ...l })),
+      equipmentTypes: [...this.equipmentTypes.values()].map((t) => ({ ...t })),
     };
   }
 
@@ -175,6 +197,8 @@ export class DocumentModel {
     this.entities.clear();
     this.constraints.clear();
     this.layers.clear();
+    this.equipmentTypes.clear();
+    for (const t of data.equipmentTypes) this.equipmentTypes.set(t.id, { ...t });
     for (const l of data.layers) this.layers.set(l.id, { ...l });
     this.addPoints(data.points);
     this.addEntities(data.entities);

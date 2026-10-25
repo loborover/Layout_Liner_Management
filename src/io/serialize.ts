@@ -1,9 +1,11 @@
 import {
   type Constraint,
   type ConstraintKind,
+  DEFAULT_EQUIPMENT_TYPES,
   DEFAULT_LAYER_ID,
   type DocumentData,
   type Entity,
+  type EquipmentType,
   type Layer,
   type Point,
 } from '../model/types';
@@ -52,6 +54,23 @@ export function deserialize(text: string): DocumentData {
     : [{ id: DEFAULT_LAYER_ID, name: '0', color: '#1f2937', visible: true, locked: false }];
   const layerIds = new Set(layers.map((l) => l.id));
 
+  // Drawings saved before equipment existed get the default library.
+  const equipmentTypes: EquipmentType[] = Array.isArray(obj.equipmentTypes)
+    ? obj.equipmentTypes.map((t, i) => {
+        if (!isStr(t?.id) || !isNum(t.width) || !isNum(t.depth) || t.width <= 0 || t.depth <= 0) {
+          throw new FormatError(`잘못된 설비 종류 데이터 (#${i})`);
+        }
+        return {
+          id: t.id,
+          name: typeof t.name === 'string' ? t.name : t.id,
+          width: t.width,
+          depth: t.depth,
+          prefix: typeof t.prefix === 'string' ? t.prefix : '',
+        };
+      })
+    : DEFAULT_EQUIPMENT_TYPES.map((t) => ({ ...t }));
+  const typeIds = new Set(equipmentTypes.map((t) => t.id));
+
   const ref = (id: unknown, i: number) => {
     if (!isStr(id) || !pointIds.has(id)) throw new FormatError(`엔티티 #${i}가 없는 점을 참조합니다.`);
     return id;
@@ -71,6 +90,12 @@ export function deserialize(text: string): DocumentData {
       if (e.value !== undefined) dim.value = e.value;
       return dim;
     }
+    if (e.kind === 'equipment') {
+      if (!isStr(e.type) || !typeIds.has(e.type)) throw new FormatError(`설비 #${i}의 종류가 없습니다.`);
+      if (!isNum(e.rotation)) throw new FormatError(`설비 #${i}의 회전 값이 잘못되었습니다.`);
+      const tag = typeof e.tag === 'string' ? e.tag : '';
+      return { id: e.id, kind: 'equipment', type: e.type, at: ref(e.at, i), rotation: e.rotation, tag, layer };
+    }
     throw new FormatError(`알 수 없는 엔티티 종류 (#${i})`);
   });
 
@@ -88,5 +113,5 @@ export function deserialize(text: string): DocumentData {
     return out;
   });
 
-  return { format: 'layout-liner', version: 1, units: 'mm', points, entities, constraints, layers };
+  return { format: 'layout-liner', version: 1, units: 'mm', points, entities, constraints, layers, equipmentTypes };
 }

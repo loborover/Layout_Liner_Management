@@ -1,6 +1,6 @@
 import { type Vec2, boxFromPoints, dist, sub } from '../geom/vec';
 import { dimensionGeometry } from '../geom/dimension';
-import { Batch, type Command, MovePoints, RemoveEntities, SetDimensionOffsets } from '../model/commands';
+import { Batch, type Command, MovePoints, RemoveEntities, SetDimensionOffsets, UpdateEntities } from '../model/commands';
 import type { Id } from '../model/types';
 import type { ConstrainedDrag } from '../constraints/service';
 import type { SnapQuery } from '../snap/snap';
@@ -27,7 +27,7 @@ const DRAG_THRESHOLD_PX = 4;
 export class SelectTool implements Tool {
   readonly id = 'select';
   readonly hint =
-    '클릭: 선택 · Shift+클릭: 추가/해제 · 드래그: 이동 또는 영역 선택(→ 포함, ← 걸침) · 더블클릭: 치수 값/반지름 입력 · Delete: 삭제';
+    '클릭: 선택 · Shift+클릭: 추가/해제 · 드래그: 이동 또는 영역 선택(→ 포함, ← 걸침) · 더블클릭: 치수 값·반지름·설비 번호 입력 · Delete: 삭제';
   readonly cursor = 'default';
   private state: State = { kind: 'idle' };
 
@@ -112,7 +112,7 @@ export class SelectTool implements Tool {
     ctx.requestRender();
   }
 
-  /** Double-click a dimension to drive it with a value, or a circle to set its radius. */
+  /** Double-click a dimension to drive it with a value, a circle to set its radius, or equipment to renumber it. */
   doubleClick(p: ToolPointer): void {
     const { ctx } = this;
     const hit = ctx.index.pick(p.raw, ctx.pickTolerance());
@@ -135,6 +135,10 @@ export class SelectTool implements Tool {
       void ctx.constraints.setRadius(hit.id, value).then((r) => {
         if (!r.ok) ctx.notify(r.message);
       });
+    } else if (hit?.kind === 'equipment') {
+      const answer = ctx.ask('설비 번호를 입력하십시오.', hit.tag);
+      if (answer === null || answer.trim() === hit.tag) return;
+      ctx.history.execute(new UpdateEntities('설비 번호 변경', [hit], [{ ...hit, tag: answer.trim() }]));
     }
   }
 

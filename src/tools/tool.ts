@@ -18,6 +18,8 @@ export interface ToolContext {
   view: Viewport;
   constraints: ConstraintService;
   unit: () => DisplayUnit;
+  /** Layer new geometry goes on. */
+  layer: () => Id;
   /** Pick tolerance in mm for the current zoom. */
   pickTolerance: () => number;
   setHover: (id: Id | null) => void;

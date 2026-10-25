@@ -23,6 +23,7 @@ function setup() {
     selection,
     view,
     unit: () => 'mm',
+    layer: () => 'layer-0',
     pickTolerance: () => 5,
     setHover: () => {},
     setHint: () => {},
