@@ -1,15 +1,16 @@
 {
   "name": "layout-liner-management",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "공장·건물 평면도 레이아웃을 그리고 설계하는 경량 웹 2D CAD 툴",
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build",
+    "build": "npm run typecheck && vite build",
     "preview": "vite preview",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit && tsc --noEmit -p mcp",
+    "mcp": "tsx mcp/server.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.2",
