@@ -155,7 +155,10 @@ export class SnapEngine {
 
   private collect(e: Entity, from: Vec2 | null, out: Candidate[]): void {
     const { doc } = this;
-    if (e.kind === 'line') {
+    if (e.kind === 'point') {
+      const p = doc.point(e.at);
+      out.push({ point: p, kind: 'endpoint', pointId: p.id });
+    } else if (e.kind === 'line') {
       const a = doc.point(e.p1);
       const b = doc.point(e.p2);
       out.push({ point: a, kind: 'endpoint', pointId: a.id });

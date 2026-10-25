@@ -203,29 +203,39 @@ export class ConstraintService {
    * like a drag, so the constraints still hold; Z never takes part in 2D constraints.
    */
   async setPoint(id: Id, to: PointPosition): Promise<Outcome> {
-    const p = this.doc.points.get(id);
-    if (!p) return { ok: false, message: '점이 없습니다.' };
+    if (!this.doc.isVertex(id)) return { ok: false, message: '점이 없습니다.' };
     if (![to.x, to.y, to.z ?? 0].every(Number.isFinite)) return { ok: false, message: '좌표는 숫자여야 합니다.' };
+    // A line's midpoint moves both of its ends.
+    const ids = this.doc.vertexPoints(id);
+    const p = this.doc.vertex(id);
     const delta = { x: to.x - p.x, y: to.y - p.y };
     const steps: Command[] = [];
     if (delta.x !== 0 || delta.y !== 0) {
-      if (constrainedClusters(this.doc, [id]).length > 0) await this.ensure();
-      const drag = this.beginDrag([id]);
+      if (constrainedClusters(this.doc, ids).length > 0) await this.ensure();
+      const drag = this.beginDrag(ids);
       if (drag) {
-        if (!drag.update(delta) || Math.hypot(p.x - to.x, p.y - to.y) > 1e-6) {
+        const reached = drag.update(delta) && Math.hypot(this.doc.vertex(id).x - to.x, this.doc.vertex(id).y - to.y) <= 1e-6;
+        if (!reached) {
           drag.cancel();
           return { ok: false, message: '구속 조건 때문에 점을 그 위치로 옮길 수 없습니다.' };
         }
         steps.push(drag.finish());
       } else {
-        const move = new MovePoints([id], delta);
+        const move = new MovePoints(ids, delta);
         move.apply(this.doc);
         steps.push(move);
       }
     }
-    if ((to.z ?? 0) !== (p.z ?? 0)) {
-      const before = SetPoints.capture(this.doc, [id]);
-      const after = new Map([[id, { x: p.x, y: p.y, ...(to.z ? { z: to.z } : {}) }]]);
+    const dz = (to.z ?? 0) - (p.z ?? 0);
+    if (dz !== 0) {
+      const before = SetPoints.capture(this.doc, ids);
+      const after = new Map(
+        ids.map((pid) => {
+          const q = this.doc.point(pid);
+          const z = (q.z ?? 0) + dz;
+          return [pid, { x: q.x, y: q.y, ...(z ? { z } : {}) }];
+        }),
+      );
       const lift = new SetPoints('높이 변경', before, after);
       lift.apply(this.doc);
       steps.push(lift);

@@ -10,7 +10,7 @@
 import { dimensionGeometry } from '../geom/dimension';
 import type { Vec2 } from '../geom/vec';
 import { SNAP_LABELS, type SnapResult } from '../snap/snap';
-import type { DocumentModel } from '../model/document';
+import { type DocumentModel, midpointId } from '../model/document';
 import type { Selection } from '../model/selection';
 import type { SpatialIndex } from '../model/spatial';
 import { connectedFloors } from '../model/presets';
@@ -27,6 +27,8 @@ export const COLORS = CANVAS;
 const EXT_GAP_PX = 3;
 const EXT_OVERSHOOT_PX = 5;
 const TICK_PX = 5;
+/** Half size of a point object's cross on screen, px. */
+const POINT_MARK_PX = 6;
 
 /** Adds an aligned dimension's extension lines, dimension line and ticks to the current path. */
 function traceDimension(ctx: CanvasRenderingContext2D, view: Viewport, a: Vec2, b: Vec2, offset: number): void {
@@ -434,16 +436,18 @@ export class Renderer {
     const painter = new Painter(ctx, view);
     if (!state.clean) {
       for (const id of this.selection.values()) {
-        if (doc.points.has(id)) {
-          if (doc.isPointVisible(id)) painter.vertex(doc.point(id), COLORS.selected, true);
+        if (doc.isVertex(id)) {
+          if (doc.isPointVisible(id)) painter.vertex(doc.vertex(id), COLORS.selected, true);
           continue;
         }
         const e = doc.entities.get(id);
         if (!e) continue;
         for (const pid of doc.pointIdsOf(e)) painter.marker(doc.point(pid), COLORS.selected);
+        // A line is start + midpoint + end: show its midpoint grip too.
+        if (e.kind === 'line') painter.vertex(doc.vertex(midpointId(e.id)), COLORS.selected, false);
       }
       // A hovered vertex shows as a grip: clicking it selects the point itself.
-      if (state.hover && doc.points.has(state.hover) && !this.selection.has(state.hover)) painter.vertex(doc.point(state.hover), COLORS.hover, false);
+      if (state.hover && doc.isVertex(state.hover) && !this.selection.has(state.hover)) painter.vertex(doc.vertex(state.hover), COLORS.hover, false);
     }
     state.overlay?.(painter);
     if (state.snap) painter.snap(state.snap);
@@ -641,6 +645,15 @@ export class Renderer {
           ctx.moveTo(a.x, a.y);
           ctx.lineTo(b.x, b.y);
         }
+      } else if (e.kind === 'point') {
+        // A point object keeps a fixed screen size: a small cross in a ring.
+        const c = view.toScreen(doc.point(e.at));
+        ctx.moveTo(c.x - POINT_MARK_PX, c.y);
+        ctx.lineTo(c.x + POINT_MARK_PX, c.y);
+        ctx.moveTo(c.x, c.y - POINT_MARK_PX);
+        ctx.lineTo(c.x, c.y + POINT_MARK_PX);
+        ctx.moveTo(c.x + POINT_MARK_PX * 0.6, c.y);
+        ctx.arc(c.x, c.y, POINT_MARK_PX * 0.6, 0, Math.PI * 2);
       } else {
         const c = view.toScreen(doc.point(e.center));
         const r = Math.max(e.radius * view.scale, 0.5);

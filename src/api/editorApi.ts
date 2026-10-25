@@ -28,7 +28,7 @@ import {
   UpdateEntities,
   captureLayerTree,
 } from '../model/commands';
-import { type DocumentModel, cloneEntity } from '../model/document';
+import { type DocumentModel, cloneEntity, midpointId } from '../model/document';
 import { arrayOffsets, copyItems, makeShapes, nextTag, type ReorderMove, reorderItems, rotateItems } from '../model/edit';
 import { heightOf } from '../model/heights';
 import { buildScene } from '../model/scene3d';
@@ -125,10 +125,14 @@ export class EditorApi {
       const pt = doc.point(id);
       return { id, x: pt.x, y: pt.y, z: pt.z ?? 0 };
     };
-    const base = { ...cloneEntity(e), floor: doc.floorOf(e), ...(e.kind !== 'dimension' ? { effectiveHeight: heightOf(doc, e) } : {}) };
+    const base = { ...cloneEntity(e), floor: doc.floorOf(e), ...(e.kind !== 'dimension' && e.kind !== 'point' ? { effectiveHeight: heightOf(doc, e) } : {}) };
     switch (e.kind) {
-      case 'line':
-        return { ...base, start: at(e.p1), end: at(e.p2), length: dist(doc.point(e.p1), doc.point(e.p2)) };
+      case 'point':
+        return { ...base, position: at(e.at) };
+      case 'line': {
+        const mid = doc.vertex(midpointId(e.id));
+        return { ...base, start: at(e.p1), middle: { id: mid.id, x: mid.x, y: mid.y, z: mid.z ?? 0 }, end: at(e.p2), length: dist(doc.point(e.p1), doc.point(e.p2)) };
+      }
       case 'dimension':
         return { ...base, start: at(e.p1), end: at(e.p2), length: dist(doc.point(e.p1), doc.point(e.p2)) };
       case 'circle':
@@ -143,25 +147,34 @@ export class EditorApi {
   }
 
   /**
-   * Moves a point (vertex) to an exact X, Y and/or Z; everything built on it follows. Points of constrained
-   * geometry can only change Z here (X/Y would break the constraints; use the editor or remove them first).
+   * Moves a point (vertex) to an exact X, Y and/or Z; everything built on it follows. A line's midpoint
+   * (`middle.id` in getEntity) moves the whole line. Points of constrained geometry can only change Z here
+   * (X/Y would break the constraints; use the editor or remove them first).
    */
   setPoint(p: { id: Id; x?: number; y?: number; z?: number }) {
     const { doc } = this;
-    const pt = doc.points.get(p.id);
-    if (!pt) throw new ApiError(`점이 없습니다: ${p.id}. getEntity 결과의 start/end/position 등에 있는 id를 쓰십시오.`);
+    if (!doc.isVertex(p.id)) throw new ApiError(`점이 없습니다: ${p.id}. getEntity 결과의 start/middle/end/position 등에 있는 id를 쓰십시오.`);
     if (!doc.isPointEditable(p.id)) throw new ApiError('잠겼거나 보이지 않는(다른 층) 객체의 점입니다.');
+    const pt = doc.vertex(p.id);
     const to = {
       x: p.x === undefined ? pt.x : this.num(p.x, 'x'),
       y: p.y === undefined ? pt.y : this.num(p.y, 'y'),
       z: p.z === undefined ? (pt.z ?? 0) : this.num(p.z, 'z'),
     };
     const movesXY = to.x !== pt.x || to.y !== pt.y;
-    if (movesXY && doc.constraintsOn([p.id, ...doc.pointUsers(p.id).map((e) => e.id)]).length > 0) {
+    const moved = doc.vertexPoints(p.id);
+    if (movesXY && doc.constraintsOn([...moved, ...moved.flatMap((id) => doc.pointUsers(id).map((e) => e.id))]).length > 0) {
       throw new ApiError('구속된 형상의 점입니다. X/Y는 편집기에서 옮기거나 구속을 먼저 해제하십시오(Z는 바꿀 수 있습니다).');
     }
-    const before = SetPoints.capture(doc, [p.id]);
-    this.history.execute(new SetPoints('좌표 변경', before, new Map([[p.id, { x: to.x, y: to.y, ...(to.z ? { z: to.z } : {}) }]])));
+    const d = { x: to.x - pt.x, y: to.y - pt.y, z: to.z - (pt.z ?? 0) };
+    const before = SetPoints.capture(doc, moved);
+    const after = new Map(
+      [...before].map(([id, q]) => {
+        const z = (q.z ?? 0) + d.z;
+        return [id, { x: q.x + d.x, y: q.y + d.y, ...(z ? { z } : {}) }];
+      }),
+    );
+    this.history.execute(new SetPoints('좌표 변경', before, after));
     return { id: p.id, ...to, attached: doc.pointUsers(p.id).map((e) => e.id) };
   }
 
@@ -217,6 +230,21 @@ export class EditorApi {
       name: p.name,
       fill: p.fill,
     });
+  }
+
+  /** Standalone point object (reference or survey point); joins an existing point within the join tolerance. */
+  addPoint(p: { x: number; y: number; z?: number; layer?: Id; name?: string }) {
+    const fresh: Point[] = [];
+    const layer = this.layer(p.layer);
+    const at = this.pointAt(this.vec([p.x, p.y]), fresh, layer);
+    if (p.z !== undefined) {
+      const z = this.num(p.z, 'z');
+      const own = fresh.find((q) => q.id === at);
+      if (own && z) own.z = z;
+    }
+    const e: Entity = { id: newId('e'), kind: 'point', at, layer, ...(p.name ? { name: String(p.name) } : {}) };
+    this.history.execute(new AddItems(fresh, [e]));
+    return { id: e.id, point: at };
   }
 
   addCircle(p: { x: number; y: number; radius: number; layer?: Id; name?: string }) {
@@ -283,7 +311,7 @@ export class EditorApi {
     const e = this.entity(p.id);
     const c = cloneEntity(e);
     if (p.height !== undefined) {
-      if (c.kind === 'dimension') throw new ApiError('치수에는 높이가 없습니다.');
+      if (c.kind === 'dimension' || c.kind === 'point') throw new ApiError('치수와 점에는 높이가 없습니다. 점의 높이는 setPoint의 z로 바꾸십시오.');
       if (p.height === null) delete c.height;
       else {
         const h = this.num(p.height, 'height');

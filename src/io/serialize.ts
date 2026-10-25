@@ -170,6 +170,7 @@ export function validate(raw: unknown): DocumentData {
     if (!isStr(e?.id)) throw new FormatError(`잘못된 엔티티 데이터 (#${i})`);
     const layer = isStr(e.layer) && layerIds.has(e.layer) ? e.layer : layers[0].id;
     const base = { id: e.id, layer, ...common(e), ...(isHeight(e.height) ? { height: e.height } : {}) };
+    if (e.kind === 'point') return { id: e.id, layer, ...common(e), kind: 'point', at: ref(e.at, i) };
     if (e.kind === 'line') {
       const stroke = parseStroke(e.stroke, `선 #${i}`);
       return { ...base, kind: 'line', p1: ref(e.p1, i), p2: ref(e.p2, i), ...(stroke ? { stroke } : {}) };

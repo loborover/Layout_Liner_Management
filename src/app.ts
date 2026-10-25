@@ -44,7 +44,7 @@ import { Selection } from './model/selection';
 import { SpatialIndex } from './model/spatial';
 import { SnapEngine, type SnapResult, type SnapSettings } from './snap/snap';
 import { type ConstraintKind, DEFAULT_LAYER_ID, type Id, type StrokeStyle, type Underlay } from './model/types';
-import { CircleTool, DimensionTool, LineTool, RectTool } from './tools/draw';
+import { CircleTool, DimensionTool, LineTool, PointTool, RectTool } from './tools/draw';
 import { MeasureAngleTool, MeasureAreaTool, MeasureDistanceTool } from './tools/measure';
 import { SelectTool } from './tools/select';
 import type { Tool, ToolContext, ToolPointer } from './tools/tool';
@@ -58,7 +58,7 @@ const PICK_TOLERANCE_PX = 6;
 const SNAP_REACH_PX = 10;
 const WHEEL_ZOOM_STEP = 1.0015;
 /** Tools that create geometry on the current layer. */
-const DRAWING_TOOLS = new Set(['line', 'rect', 'circle', 'dimension', 'equipment']);
+const DRAWING_TOOLS = new Set(['point', 'line', 'rect', 'circle', 'dimension', 'equipment']);
 /** Monitoring status → fill colour (docs/VIEWER.md). */
 const STATUS_COLORS: Record<string, string> = STATUS;
 
@@ -147,6 +147,7 @@ export class App implements UiHost {
       select: new SelectTool(ctx),
       line: new LineTool(ctx),
       rect: new RectTool(ctx),
+      point: new PointTool(ctx),
       circle: new CircleTool(ctx),
       dimension: new DimensionTool(ctx),
       'measure-distance': new MeasureDistanceTool(ctx),
@@ -172,7 +173,7 @@ export class App implements UiHost {
       // Hidden or locked geometry can't stay selected: it could otherwise still be moved or deleted.
       this.selection.prune((id) => {
         const view = this.currentMode === 'view';
-        if (this.doc.points.has(id)) return view ? this.doc.isPointVisible(id) : this.doc.isPointEditable(id);
+        if (this.doc.isVertex(id)) return view ? this.doc.isPointVisible(id) : this.doc.isPointEditable(id);
         const e = this.doc.entities.get(id);
         return !!e && (view ? this.doc.isVisible(e) : this.doc.isEditable(e));
       });
@@ -700,6 +701,7 @@ export class App implements UiHost {
         const shortcuts: Record<string, () => void> = editing
           ? {
               v: () => this.setTool('select'),
+              p: () => this.setTool('point'),
               l: () => this.setTool('line'),
               r: () => this.setTool('rect'),
               c: () => this.setTool('circle'),
@@ -1073,7 +1075,7 @@ export class App implements UiHost {
       }
       case 'fixed': {
         // Selected points are fixed themselves; selected geometry fixes all of its points.
-        const picked = this.selection.values().filter((id) => this.doc.points.has(id));
+        const picked = this.selection.values().filter((id) => this.doc.isVertex(id)).flatMap((id) => this.doc.vertexPoints(id));
         const points = [...new Set([...picked, ...selected.filter((e) => e.kind !== 'dimension').flatMap((e) => this.doc.pointIdsOf(e))])];
         if (points.length === 0) return this.notify('고정할 점, 선이나 원을 선택하십시오.');
         refs = [points];

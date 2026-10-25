@@ -36,6 +36,10 @@ export function describe(doc: DocumentModel, e: Entity, unit: DisplayUnit): { ti
   } else if (e.kind === 'shape') {
     title ||= '도형';
     rows.push(['면적', formatArea(doc.shapeArea(e))]);
+  } else if (e.kind === 'point') {
+    title ||= '점';
+    const p = doc.point(e.at);
+    rows.push(['좌표', `${formatLength(p.x, unit)}, ${formatLength(p.y, unit)}, Z ${formatLength(p.z ?? 0, unit)}`]);
   } else if (e.kind === 'line') {
     title ||= '선';
     const a = doc.point(e.p1);

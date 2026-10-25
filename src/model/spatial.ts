@@ -17,7 +17,7 @@ import {
 import { dimensionGeometry } from '../geom/dimension';
 import { edgesOf, insideConvex } from '../geom/equipment';
 import { insidePolygon } from '../geom/polygon';
-import type { DocumentModel } from './document';
+import { type DocumentModel, midpointId } from './document';
 import type { Entity, Id } from './types';
 
 interface Item extends Box {
@@ -51,6 +51,7 @@ export class SpatialIndex {
 
   /** Distance from p to an entity's outline; 0 anywhere inside a piece of equipment, so it can be grabbed by its body. */
   distanceTo(e: Entity, p: Vec2): number {
+    if (e.kind === 'point') return dist(p, this.doc.point(e.at));
     if (e.kind === 'equipment') {
       const corners = this.doc.cornersOf(e);
       if (insideConvex(p, corners)) return 0;
@@ -78,7 +79,7 @@ export class SpatialIndex {
   }
 
   /**
-   * Nearest point (vertex) within tol of p among editable entities' points: line ends, shape corners, circle
+   * Nearest point (vertex) within tol of p among editable entities' points: line ends and midpoints, shape corners, circle
    * centres, equipment insertion points, dimension feet. Selecting a point edits everything attached to it.
    */
   pickPoint(p: Vec2, tol: number): Id | null {
@@ -86,8 +87,10 @@ export class SpatialIndex {
     let bestD = tol;
     for (const e of this.query({ minX: p.x - tol, minY: p.y - tol, maxX: p.x + tol, maxY: p.y + tol })) {
       if (!this.doc.isEditable(e)) continue;
-      for (const id of this.doc.pointIdsOf(e)) {
-        const d = dist(p, this.doc.point(id));
+      // A line is an assembly of its start, midpoint and end; the midpoint is a vertex too.
+      const ids = e.kind === 'line' ? [...this.doc.pointIdsOf(e), midpointId(e.id)] : this.doc.pointIdsOf(e);
+      for (const id of ids) {
+        const d = dist(p, this.doc.vertex(id));
         if (d <= bestD) {
           best = id;
           bestD = d;
@@ -124,6 +127,7 @@ export class SpatialIndex {
     return this.query(box).filter((e) => {
       if (!this.doc.isEditable(e)) return false;
       if (!crossing) return boxContainsBox(box, this.doc.bboxOf(e));
+      if (e.kind === 'point') return boxContainsBox(box, this.doc.bboxOf(e));
       if (e.kind === 'line') return segmentIntersectsBox(this.doc.point(e.p1), this.doc.point(e.p2), box);
       if (e.kind === 'dimension') {
         const { d1, d2 } = dimensionGeometry(this.doc.point(e.p1), this.doc.point(e.p2), e.offset);

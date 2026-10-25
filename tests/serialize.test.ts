@@ -31,4 +31,20 @@ describe('serialize', () => {
     };
     expect(() => deserialize(JSON.stringify(bad))).toThrow(/없는 점/);
   });
+
+  it('reads point objects (version 3) and drops a height they cannot have', () => {
+    const data = {
+      format: 'layout-liner',
+      version: 3,
+      units: 'mm',
+      points: [{ id: 'p', x: 10, y: 20, z: 300 }],
+      entities: [{ id: 'a', kind: 'point', at: 'p', layer: 'layer-0', name: '기준점', height: 5 }],
+      layers: [],
+    };
+    const doc = new DocumentModel();
+    doc.load(deserialize(JSON.stringify(data)));
+    expect(doc.entities.get('a')).toEqual({ id: 'a', kind: 'point', at: 'p', layer: 'layer-0', name: '기준점' });
+    expect(doc.point('p').z).toBe(300);
+    expect(() => deserialize(JSON.stringify({ ...data, entities: [{ id: 'a', kind: 'point', at: 'q', layer: 'layer-0' }] }))).toThrow(/없는 점/);
+  });
 });

@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { History } from '../src/model/commands';
-import { DocumentModel } from '../src/model/document';
+import { DocumentModel, midpointId } from '../src/model/document';
 import { Selection } from '../src/model/selection';
 import { SpatialIndex } from '../src/model/spatial';
 import { SnapEngine } from '../src/snap/snap';
-import { DimensionTool, LineTool } from '../src/tools/draw';
+import { DimensionTool, LineTool, PointTool } from '../src/tools/draw';
 import { SelectTool } from '../src/tools/select';
 import type { Tool, ToolContext, ToolPointer } from '../src/tools/tool';
 import { ConstraintService } from '../src/constraints/service';
@@ -140,6 +140,60 @@ describe('point selection', () => {
     selection.set([corner]);
     select.key({ key: 'Delete' } as KeyboardEvent);
     expect([...doc.entities.values()].filter((e) => e.kind === 'line')).toHaveLength(0);
+  });
+});
+
+describe('points as objects', () => {
+  it("selects a line's midpoint as a point and moves the whole line with it", () => {
+    const { doc, history, selection, ctx, at, click } = setup();
+    const line = new LineTool(ctx);
+    click(line, 0, 0);
+    click(line, 1000, 0);
+    line.cancel();
+    const l = [...doc.entities.values()].find((e) => e.kind === 'line')!;
+    const select = new SelectTool(ctx);
+    click(select, 502, 1);
+    expect(selection.values()).toEqual([midpointId(l.id)]);
+    expect(doc.vertex(midpointId(l.id))).toMatchObject({ x: 500, y: 0 });
+    select.down(at(select, 500, 0));
+    select.move(at(select, 500, 300));
+    select.up(at(select, 500, 300));
+    if (l.kind !== 'line') throw new Error();
+    expect(doc.point(l.p1)).toMatchObject({ x: 0, y: 300 });
+    expect(doc.point(l.p2)).toMatchObject({ x: 1000, y: 300 });
+    history.undo();
+    expect(doc.point(l.p1)).toMatchObject({ x: 0, y: 0 });
+    // Deleting the midpoint deletes its line.
+    selection.set([midpointId(l.id)]);
+    select.key({ key: 'Delete' } as KeyboardEvent);
+    expect(doc.entities.size).toBe(0);
+  });
+
+  it('places point objects that lines can start from and that survive save/load', () => {
+    const { doc, selection, ctx, click } = setup();
+    const tool = new PointTool(ctx);
+    click(tool, 100, 100);
+    const pe = [...doc.entities.values()].find((e) => e.kind === 'point')!;
+    expect(pe.kind === 'point' && doc.point(pe.at)).toMatchObject({ x: 100, y: 100 });
+    click(tool, 101, 99); // already a point object here: refused
+    expect(doc.entities.size).toBe(1);
+    // A line drawn from it (Ctrl: points only) shares its point.
+    const line = new LineTool(ctx);
+    click(line, 104, 103, true);
+    click(line, 900, 100);
+    line.cancel();
+    const l = [...doc.entities.values()].find((e) => e.kind === 'line')!;
+    expect(l.kind === 'line' && pe.kind === 'point' && l.p1 === pe.at).toBe(true);
+    // Clicking a lone point object selects the object itself.
+    const other = new PointTool(ctx);
+    click(other, 2000, 2000);
+    const lone = [...doc.entities.values()].filter((e) => e.kind === 'point')[1];
+    const select = new SelectTool(ctx);
+    click(select, 2001, 2001);
+    expect(selection.values()).toEqual([lone.id]);
+    const copy = new DocumentModel();
+    copy.load(deserialize(serialize(doc.toData())));
+    expect([...copy.entities.values()].filter((e) => e.kind === 'point')).toHaveLength(2);
   });
 });
 

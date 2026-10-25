@@ -3,10 +3,11 @@
  *
  * Renderer-independent 3D scene of a drawing (request: 3D views of every object). Turns the 2D document plus Z and
  * heights (src/model/heights.ts) into simple solids and lines in world millimetres (Z up):
- * - a styled line (wall) becomes its band extruded by its height; a plain line stays a 3D line;
+ * - a styled line (wall) becomes its band extruded by its height (flat without one); a plain line stays a 3D line;
  * - a shape becomes a face at its points' Z, or a prism when it has a height;
  * - a circle becomes a cylinder (height > 0) or a ring;
  * - equipment becomes a box (a cylinder for round columns), a stair becomes steps, a ramp a wedge;
+ * - a point object becomes a small 3D cross;
  * - floors are stacked by their elevation.
  * DOM-free, so the same scene can be built in the browser (src/view3d/) or on a host server that renders or
  * converts it (glTF, images) for heavy drawings; the API exposes it as `scene3d`.
@@ -53,6 +54,8 @@ export interface SceneOptions {
 
 /** Segments used to approximate circles and round columns. */
 const CIRCLE_SEGMENTS = 32;
+/** Half size of the 3D cross drawn for a point object, mm. */
+const POINT_CROSS = 150;
 /** Most steps drawn for one stair. */
 const MAX_STEPS = 40;
 
@@ -76,8 +79,8 @@ export function buildScene(doc: DocumentModel, opts: SceneOptions = {}): Scene3D
         const a = doc.point(e.p1);
         const b = doc.point(e.p2);
         const band = strokes.band(e.id);
-        if (band && h > 0) {
-          // Band corners: start-u1, end-u1, end-u2, start-u2.
+        if (band) {
+          // Band corners: start-u1, end-u1, end-u2, start-u2. Without a height the band lies flat on the floor.
           const bottom = [z(e.p1), z(e.p2), z(e.p2), z(e.p1)];
           solids.push({ id: e.id, outline: band, bottom, top: bottom.map((v) => v + h), color: override ?? e.stroke?.color ?? layerColor, opacity: 1 });
         } else if (h > 0) {
@@ -111,6 +114,18 @@ export function buildScene(doc: DocumentModel, opts: SceneOptions = {}): Scene3D
           const q = outline[(i + 1) % outline.length];
           lines.push({ id: e.id, a: [p.x, p.y, z0], b: [q.x, q.y, z0], color: override ?? layerColor });
         });
+        break;
+      }
+      case 'point': {
+        // A point object shows as a small 3D cross at its X, Y, Z.
+        const p = doc.point(e.at);
+        const zz = z(e.at);
+        const color = override ?? layerColor;
+        lines.push(
+          { id: e.id, a: [p.x - POINT_CROSS, p.y, zz], b: [p.x + POINT_CROSS, p.y, zz], color },
+          { id: e.id, a: [p.x, p.y - POINT_CROSS, zz], b: [p.x, p.y + POINT_CROSS, zz], color },
+          { id: e.id, a: [p.x, p.y, zz - POINT_CROSS], b: [p.x, p.y, zz + POINT_CROSS], color },
+        );
         break;
       }
       case 'equipment':
@@ -176,7 +191,7 @@ function equipmentSolids(doc: DocumentModel, e: Extract<Entity, { kind: 'equipme
     case 'ramp': {
       const s = box(-d / 2, d / 2, z0, z0, 0.95);
       // Wedge: thin at the front, full height at the back.
-      s.top = [z0 + 1, z0 + 1, z0 + h, z0 + h];
+      s.top = [z0 + Math.min(1, h), z0 + Math.min(1, h), z0 + h, z0 + h];
       return [s];
     }
     case 'lift':

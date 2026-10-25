@@ -1,14 +1,14 @@
 /**
  * @file draw.ts
  *
- * Drawing tools: chained line, rectangle, circle and aligned dimension. Each click produces an AddItems command.
+ * Drawing tools: point object, chained line, rectangle, circle and aligned dimension. Each click produces an AddItems command.
  */
 import { offsetThrough } from '../geom/dimension';
 import { type Vec2, angleDeg, dist } from '../geom/vec';
 import { AddItems, Batch } from '../model/commands';
 import { linePath } from '../model/edit';
 import { newId } from '../model/ids';
-import { type Id, type LineEntity, type Point, type ShapeEntity } from '../model/types';
+import { type Entity, type Id, type LineEntity, type Point, type ShapeEntity } from '../model/types';
 import { formatAngle, formatLength } from '../view/format';
 import { COLORS, type Painter } from '../view/renderer';
 import type { SnapQuery } from '../snap/snap';
@@ -224,6 +224,48 @@ export class RectTool implements Tool {
 }
 
 /** Circle from centre and a point on the circumference. */
+/**
+ * Point object tool: each click places a standalone point (a reference or survey point, a sensor location). Clicking
+ * an existing point makes a point object on it instead of a duplicate point.
+ */
+export class PointTool implements Tool {
+  readonly id = 'point';
+  readonly hint = '클릭: 점 놓기(기존 점 위면 그 점을 공유) · 속성 패널에서 X, Y, Z 입력 · Esc: 끝내기';
+  readonly cursor = 'crosshair';
+  private cursorPos: Vec2 | null = null;
+
+  constructor(private readonly ctx: ToolContext) {}
+
+  snapQuery(): SnapQuery {
+    return {};
+  }
+
+  down(p: ToolPointer): void {
+    if (p.button !== 0) return;
+    const { doc } = this.ctx;
+    const shared = existingPoint(this.ctx, p);
+    if (shared && doc.pointUsers(shared.id).some((e) => e.kind === 'point')) return this.ctx.notify('이 위치에는 이미 점 객체가 있습니다.');
+    const at = shared ?? point(p.world);
+    const e: Entity = { id: newId('e'), kind: 'point', at: at.id, layer: this.ctx.layer() };
+    this.ctx.history.execute(new AddItems(shared ? [] : [at], [e]));
+  }
+
+  move(p: ToolPointer): void {
+    this.cursorPos = p.world;
+    this.ctx.requestRender();
+  }
+
+  up(): void {}
+
+  cancel(): boolean {
+    return false;
+  }
+
+  overlay(p: Painter): void {
+    if (this.cursorPos) p.marker(this.cursorPos, COLORS.preview, 4);
+  }
+}
+
 export class CircleTool implements Tool {
   readonly id = 'circle';
   readonly hint = '클릭: 중심 → 클릭: 반지름 · Esc: 취소';

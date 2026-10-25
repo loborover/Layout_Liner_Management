@@ -127,6 +127,13 @@ export function writeDxf(doc: DocumentModel): string {
       const size = Math.min(type?.width ?? 0, type?.depth ?? 0);
       const label = [e.tag, type?.name].filter(Boolean).join(' ');
       if (label && size > 0) text(doc.point(e.at), Math.min(size / 6, 250), label, layer);
+    } else if (e.kind === 'point') {
+      const p = doc.point(e.at);
+      pair(0, 'POINT');
+      pair(8, layer);
+      pair(10, p.x);
+      pair(20, p.y);
+      pair(30, p.z ?? 0);
     } else {
       const a = doc.point(e.p1);
       const b = doc.point(e.p2);

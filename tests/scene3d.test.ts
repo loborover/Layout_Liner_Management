@@ -13,21 +13,27 @@ function setup() {
 }
 
 describe('3D scene', () => {
-  it('extrudes walls to the floor height and stacks floors by elevation', () => {
+  it('starts every height at 0, extrudes by explicit heights and stacks floors by elevation', () => {
     const { doc, call } = setup();
     call('addRectangle', { x: 0, y: 0, width: 4000, height: 3000 });
     const lines = [...doc.entities.values()].filter((e) => e.kind === 'line').map((e) => e.id);
     call('setStroke', { ids: lines, stroke: { width: 200, align: 'inside' } });
+    // Without heights, walls lie flat on the floor.
+    let walls = buildScene(doc).solids.filter((s) => lines.includes(s.id));
+    expect(walls).toHaveLength(4);
+    expect(walls.every((w) => w.top.every((t) => t === 0))).toBe(true);
+    for (const id of lines) call('updateEntity', { id, height: 4000 });
     const second = call('addFloor', { name: '2층' }) as { floor: string };
     call('setActiveFloor', { floor: second.floor });
-    call('placeEquipment', { type: 'eq-bench', x: 1000, y: 1000 });
+    const placed = call('placeEquipment', { type: 'eq-bench', x: 1000, y: 1000 }) as { id: string };
+    expect(buildScene(doc).solids.find((s) => s.id === placed.id)!.top[0]).toBe(4000); // flat, on the second floor
+    call('updateEntity', { id: placed.id, height: 1000 });
     const scene = buildScene(doc);
-    const walls = scene.solids.filter((s) => lines.includes(s.id));
-    expect(walls).toHaveLength(4);
+    walls = scene.solids.filter((s) => lines.includes(s.id));
     expect(walls.every((w) => w.top.every((t) => t === 4000) && w.bottom.every((b) => b === 0))).toBe(true);
-    const bench = scene.solids.find((s) => doc.entities.get(s.id)?.kind === 'equipment')!;
-    expect(bench.bottom[0]).toBe(4000); // on the second floor
-    expect(bench.top[0]).toBe(5000); // default equipment height 1000
+    const bench = scene.solids.find((s) => s.id === placed.id)!;
+    expect(bench.bottom[0]).toBe(4000);
+    expect(bench.top[0]).toBe(5000);
     expect(scene.max[2]).toBe(5000);
     // Only the active floor.
     expect(buildScene(doc, { floors: 'active' }).solids.every((s) => doc.floorOf(doc.entities.get(s.id)!) === second.floor)).toBe(true);
@@ -43,8 +49,10 @@ describe('3D scene', () => {
     call('updateEntity', { id: line.id, height: 1200 });
     scene = buildScene(doc);
     expect(scene.solids[0].top).toEqual([1700, 1200, 1200, 1700]);
-    call('placeEquipment', { type: 'st-stair', x: 10000, y: 0 });
-    call('placeEquipment', { type: 'st-ramp', x: 20000, y: 0 });
+    const stair = call('placeEquipment', { type: 'st-stair', x: 10000, y: 0 }) as { id: string };
+    const rampAt = call('placeEquipment', { type: 'st-ramp', x: 20000, y: 0 }) as { id: string };
+    call('updateEntity', { id: stair.id, height: 4000 });
+    call('updateEntity', { id: rampAt.id, height: 1000 });
     scene = buildScene(doc);
     const steps = scene.solids.filter((s) => (doc.entities.get(s.id) as { type?: string })?.type === 'st-stair');
     expect(steps.length).toBe(15); // 4200 deep / 280 tread
@@ -56,8 +64,10 @@ describe('3D scene', () => {
   it('merges geometry into few buffers with an id per triangle', () => {
     const { doc, call } = setup();
     call('addRectangle', { x: 0, y: 0, width: 4000, height: 3000, });
-    call('placeEquipment', { type: 'eq-bench', x: 1000, y: 1000 });
-    call('placeEquipment', { type: 'eq-bench', x: 3000, y: 1000 });
+    for (const x of [1000, 3000]) {
+      const { id } = call('placeEquipment', { type: 'eq-bench', x, y: 1000 }) as { id: string };
+      call('updateEntity', { id, height: 900 });
+    }
     const b = sceneBuffers(buildScene(doc), '#4A4A4A');
     for (const m of b.meshes) expect(m.ids.length * 9).toBe(m.positions.length);
     const benchTriangles = b.meshes.flatMap((m) => m.ids).filter((id) => doc.entities.get(id)?.kind === 'equipment');

@@ -54,9 +54,10 @@ DOM을 쓰지 않는 계층(geom, model, constraints, io, api)은 Node에서 그
 - **계층.** 층 > 폴더 > 레이어 > 객체. 활성 층만 보이고 편집됩니다. 폴더를 숨기거나 잠그면 안의 레이어가 모두 숨거나 잠깁니다. 판단은 `doc.isVisible(e)`, `doc.isEditable(e)` 한 곳에서 합니다.
 - **그리기 순서 = 트리 순서.** `doc.entities`(Map)의 삽입 순서가 그리기 순서이자 객체 트리의 순서입니다. 순서 변경은 `ReorderEntities` 명령입니다.
 - **구조 프리셋.** 기둥·계단·경사로·리프트는 `category`가 있는 설비 종류입니다. 특성 정의는 `PROP_DEFS`, 값은 객체 → 종류 → 기본값 순으로 찾습니다(`propValue`). 계단 단수, 경사로 기울기 같은 계산·검토는 `presetInfo`에 있습니다.
-- **점 선택.** 선택(`Selection`)에는 객체 id와 함께 점 id도 들어갈 수 있습니다. 꼭짓점 위를 클릭하면 선보다 점이 먼저 선택되고(`SpatialIndex.pickPoint`), 점을 끌면 그 점을 쓰는 형상이 함께 움직입니다. 점을 지우면 그 점을 쓰는 객체가 지워집니다(`deletionTargets`). 점이 보이고 편집 가능한지는 `doc.isPointVisible`, `doc.isPointEditable`(점을 쓰는 객체 기준)이 판단합니다.
+- **점은 객체입니다.** 선은 시작점·중간점·끝점과 선의 묶음(Assembly)입니다. 시작점·끝점은 저장된 점, 중간점은 계산되는 점(`midpointId(lineId)`, `doc.vertex`, `doc.vertexPoints`)이며, 셋 모두 클릭·트리·API로 선택하고 좌표를 고칠 수 있습니다. 중간점을 옮기면 두 끝점이 함께 움직여 선 전체가 이동합니다. 홀로 있는 점은 점 객체(`kind: 'point'`, 점 도구 P)로 레이어에 놓입니다.
+- **점 선택.** 선택(`Selection`)에는 객체 id와 함께 점 id(중간점 포함, `doc.isVertex`)도 들어갈 수 있습니다. 꼭짓점 위를 클릭하면 선보다 점이 먼저 선택되고(`SpatialIndex.pickPoint`), 점을 끌면 그 점을 쓰는 형상이 함께 움직입니다. 점을 지우면 그 점을 쓰는 객체가 지워집니다(`deletionTargets`). 점이 보이고 편집 가능한지는 `doc.isPointVisible`, `doc.isPointEditable`(점을 쓰는 객체 기준)이 판단합니다.
 - **Ctrl 점 스냅과 닫힌 도형.** 선 도구에서 Ctrl(맥은 Cmd)을 누르면 스냅이 보이는 객체의 점만 잡습니다(`SnapQuery.pointsOnly`). 그 상태로 기존 점에 선을 이어 고리가 닫히면 `linePath`(선 그래프 최단 경로)로 고리를 찾아 도형을 만듭니다.
-- **좌표와 높이.** 점은 X, Y와 층 바닥에서의 높이 Z를 가집니다. 속성 패널과 API `setPoint`로 고칩니다. X, Y는 구속이 있으면 구속 해석을 거쳐 옮기고(`ConstraintService.setPoint`), Z는 `SetPoints` 명령으로 바꿉니다. 객체의 높이는 `height`, 없으면 `src/model/heights.ts`의 기본값입니다.
+- **좌표와 높이.** 점은 X, Y와 층 바닥에서의 높이 Z를 가집니다. 속성 패널과 API `setPoint`로 고칩니다. X, Y는 구속이 있으면 구속 해석을 거쳐 옮기고(`ConstraintService.setPoint`), Z는 `SetPoints` 명령으로 바꿉니다. 객체의 높이는 `height`이며 기본값은 0입니다(`src/model/heights.ts`).
 - **3D 장면.** `buildScene`(`src/model/scene3d.ts`)이 문서를 입체(바닥 외곽선 + 꼭짓점별 아래·위 Z)와 3D 선으로 바꿉니다. 렌더러에 독립적이라 브라우저(`src/view3d/`)와 호스트 서버가 같은 결과를 씁니다. 무거운 도면은 API `scene3d`로 장면을 받아 서버에서 렌더링하거나 glTF 등으로 변환하는 것을 전제로 합니다([VIEW3D.md](VIEW3D.md)).
 - **테마.** 색은 `src/theme.ts`에만 씁니다. `style.css`의 `:root` 변수는 `cssVariables()`와 같아야 하고 그 밖에는 색 값을 쓰지 않습니다(`tests/theme.test.ts`가 검사).
 - **모드.** 편집 모드와 뷰어 모드(`App.setMode`). 뷰어 모드에서는 `InspectTool`만 쓰이고, 변경 API 호출이 막히며, `.edit-only` UI가 숨겨집니다.

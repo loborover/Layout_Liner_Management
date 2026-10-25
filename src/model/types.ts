@@ -44,14 +44,28 @@ export interface StrokeStyle {
   align: StrokeAlign;
 }
 
+/**
+ * A standalone point object (a reference or survey point, a sensor location) on a layer. Lines and shapes drawn
+ * from it share its point.
+ */
+export interface PointEntity extends EntityBase {
+  kind: 'point';
+  at: Id;
+}
+
+/**
+ * A line is an assembly of a start point, a midpoint and an end point joined by the line (the user's model,
+ * 2026-10-25). The start and end are stored points; the midpoint is derived from them, but can be selected and
+ * moved like a point (see `midpointId` in src/model/document.ts), which moves the whole line.
+ */
 export interface LineEntity extends EntityBase {
   kind: 'line';
-  /** Start point. The midpoint is derived (snap "중점"). */
+  /** Start point. */
   p1: Id;
   /** End point. */
   p2: Id;
   stroke?: StrokeStyle;
-  /** Height of the line's wall in 3D, mm. Absent: the floor height for a styled line (a wall), 0 otherwise. */
+  /** Height of the line's wall in 3D, mm; 0 (flat) when absent. */
   height?: number;
 }
 
@@ -109,7 +123,7 @@ export interface ShapeEntity extends EntityBase {
   height?: number;
 }
 
-export type Entity = LineEntity | CircleEntity | DimensionEntity | EquipmentEntity | ShapeEntity;
+export type Entity = PointEntity | LineEntity | CircleEntity | DimensionEntity | EquipmentEntity | ShapeEntity;
 export type EntityKind = Entity['kind'];
 
 /** Category of a library item: plain equipment or a structural preset with its own drawing and properties. */
@@ -127,7 +141,7 @@ export interface EquipmentType {
   category?: StructureCategory;
   /** Default property values, keyed by the category's property definitions. */
   props?: Record<string, PropValue>;
-  /** Height in 3D, mm. Absent: the floor height for columns, stairs, ramps and lifts, 1000 mm for equipment. */
+  /** Default height in 3D of its instances, mm; 0 (flat) when absent. */
   height?: number;
 }
 
@@ -195,7 +209,7 @@ export interface Underlay {
 export interface DocumentData {
   format: 'layout-liner';
   /**
-   * 2 added floors, folders, shapes, line styles, presets and bindings; 3 added point Z and object heights (3D).
+   * 2 added floors, folders, shapes, line styles, presets and bindings; 3 added point Z, object heights (3D) and point objects.
    * Older versions are upgraded on load.
    */
   version: 3;

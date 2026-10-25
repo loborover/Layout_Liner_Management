@@ -9,7 +9,7 @@
  * from the monitoring data source are added. Every change is one undoable UpdateEntities/SetEquipmentTypes command.
  */
 import { UpdateEntities } from '../model/commands';
-import { cloneEntity } from '../model/document';
+import { cloneEntity, midpointId } from '../model/document';
 import { defaultHeight } from '../model/heights';
 import { CATEGORY_LABELS, PROP_DEFS, type PropDef, categoryOf, presetInfo, propValue } from '../model/presets';
 import { polygonPerimeter } from '../geom/polygon';
@@ -44,7 +44,7 @@ export class PropertyPanel {
       const e = doc.entities.get(id);
       return e ? [e] : [];
     });
-    const points = selection.values().filter((id) => doc.points.has(id));
+    const points = selection.values().filter((id) => doc.isVertex(id));
     const sets: HTMLElement[] = [];
     if (items.length === 0 && points.length > 0) sets.push(this.pointSet(points));
     else if (items.length === 0) sets.push(this.floorInfo());
@@ -124,7 +124,7 @@ export class PropertyPanel {
   /** X, Y, Z inputs for one point (mm; Z above the floor level). */
   private xyz(id: Id): HTMLElement {
     const { doc } = this.host;
-    const p = doc.point(id);
+    const p = doc.vertex(id);
     const box = document.createElement('span');
     box.className = 'xyz';
     const field = (axis: 'x' | 'y' | 'z') => {
@@ -134,7 +134,7 @@ export class PropertyPanel {
       const input = this.input('number', String(Math.round(value * 100) / 100), (v) => {
         const n = Number(v);
         if (v.trim() === '' || !Number.isFinite(n)) return this.host.notify('좌표는 숫자로 입력하십시오.');
-        const cur = doc.point(id);
+        const cur = doc.vertex(id);
         this.host.setPoint(id, { x: cur.x, y: cur.y, z: cur.z ?? 0, [axis]: n });
       });
       input.step = 'any';
@@ -151,23 +151,29 @@ export class PropertyPanel {
     const { doc } = this.host;
     const f = this.fieldset('좌표 (mm)');
     const named: [string, Id][] =
-      e.kind === 'line' || e.kind === 'dimension'
+      e.kind === 'line'
+        ? [
+            ['시작점', e.p1],
+            ['중간점', midpointId(e.id)],
+            ['끝점', e.p2],
+          ]
+        : e.kind === 'dimension'
         ? [
             ['시작점', e.p1],
             ['끝점', e.p2],
           ]
         : e.kind === 'circle'
           ? [['중심', e.center]]
-          : e.kind === 'equipment'
+          : e.kind === 'equipment' || e.kind === 'point'
             ? [['위치', e.at]]
             : e.points.map((id, i) => [`꼭짓점 ${i + 1}`, id] as [string, Id]);
     const MAX = 12;
     for (const [label, id] of named.slice(0, MAX)) this.row(f, label, this.xyz(id));
     if (named.length > MAX) this.row(f, '', `외 ${named.length - MAX}개 (꼭짓점을 클릭해 편집)`);
-    if (e.kind !== 'dimension') {
+    if (e.kind !== 'dimension' && e.kind !== 'point') {
       const h = this.input('number', e.height !== undefined ? String(e.height) : '', (v) =>
         this.update('높이 변경', [e], (c) => {
-          if (c.kind === 'dimension') return;
+          if (c.kind === 'dimension' || c.kind === 'point') return;
           const n = Number(v);
           if (v.trim() === '') delete c.height;
           else if (Number.isFinite(n) && n >= 0) c.height = n;
@@ -184,14 +190,14 @@ export class PropertyPanel {
   /** A selected point (or several): its coordinates and what is built on it. */
   private pointSet(ids: Id[]): HTMLElement {
     const { doc } = this.host;
-    const f = this.fieldset(ids.length === 1 ? '점' : `점 ${ids.length}개`);
+    const f = this.fieldset(ids.length > 1 ? `점 ${ids.length}개` : doc.midpointLine(ids[0]) ? '선의 중간점' : '점');
     for (const id of ids.slice(0, 12)) {
       this.row(f, ids.length === 1 ? '좌표' : id, this.xyz(id));
     }
     const users = [...new Set(ids.flatMap((id) => doc.pointUsers(id)))];
     const names = users.slice(0, 6).map((e) => e.name ?? this.kindLabel(e));
     this.row(f, '연결', users.length ? `${names.join(', ')}${users.length > 6 ? ` 외 ${users.length - 6}개` : ''}` : '없음');
-    this.warning(f, '점을 옮기면 이 점을 쓰는 선·도형·치수가 함께 바뀝니다. Delete는 연결된 객체를 지웁니다.');
+    this.warning(f, '점을 옮기면 이 점을 쓰는 선·도형·치수가 함께 바뀝니다(선의 중간점은 선 전체를 옮깁니다). Delete는 연결된 객체를 지웁니다.');
     return f;
   }
 
@@ -240,7 +246,7 @@ export class PropertyPanel {
 
   private kindLabel(e: Entity): string {
     if (e.kind === 'equipment') return CATEGORY_LABELS[categoryOf(this.host.doc.equipmentTypes.get(e.type))];
-    return { line: '선', circle: '원', dimension: '치수', shape: '도형' }[e.kind];
+    return { point: '점', line: '선', circle: '원', dimension: '치수', shape: '도형' }[e.kind];
   }
 
   private single(e: Entity): HTMLElement[] {

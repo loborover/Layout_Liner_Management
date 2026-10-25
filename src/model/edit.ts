@@ -65,6 +65,7 @@ export function copyItems(doc: DocumentModel, entityIds: Id[], offsets: Vec2[]):
       const m = (pid: Id) => map.get(pid)!;
       let copy: Entity;
       if (e.kind === 'circle') copy = { ...e, id, center: m(e.center) };
+      else if (e.kind === 'point') copy = { ...e, id, at: m(e.at) };
       else if (e.kind === 'equipment') {
         const type = doc.equipmentTypes.get(e.type);
         const tag = type ? nextTag(doc, type, tags) : e.tag;
@@ -236,7 +237,7 @@ export function deletionTargets(doc: DocumentModel, ids: Iterable<Id>): Id[] {
   const out = new Set<Id>();
   for (const id of ids) {
     if (doc.entities.has(id)) out.add(id);
-    else if (doc.points.has(id)) for (const e of doc.pointUsers(id)) if (doc.isEditable(e)) out.add(e.id);
+    else if (doc.isVertex(id)) for (const e of doc.pointUsers(id)) if (doc.isEditable(e)) out.add(e.id);
   }
   return [...out];
 }

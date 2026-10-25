@@ -99,6 +99,12 @@ export const METHODS: Record<string, MethodSpec> = {
     mutates: true,
     run: (api, p) => api.addRectangle(p as never),
   },
+  addPoint: {
+    description: '독립 점 객체(기준점, 측량점, 센서 위치 등)를 놓습니다. 기존 점과 0.5 mm 안이면 그 점을 공유합니다.',
+    params: obj({ x: num('mm'), y: num('mm'), z: num('층 바닥 기준 높이 mm'), layer: str('레이어 id'), name: str('이름') }, ['x', 'y']),
+    mutates: true,
+    run: (api, p) => api.addPoint(p as never),
+  },
   addCircle: {
     description: '원을 그립니다.',
     params: obj({ x: num('중심 mm'), y: num('중심 mm'), radius: num('mm'), layer: str('레이어 id'), name: str('이름') }, ['x', 'y', 'radius']),
@@ -152,7 +158,7 @@ export const METHODS: Record<string, MethodSpec> = {
     run: (api, p) => api.updateEntity(p as never),
   },
   setPoint: {
-    description: '점(꼭짓점)을 X·Y·Z(mm) 위치로 옮깁니다. 이 점을 쓰는 선·도형·치수가 함께 바뀝니다. Z는 층 바닥 기준 높이. 점 id는 getEntity의 start/end/position/polygon에 있습니다.',
+    description: '점(꼭짓점)을 X·Y·Z(mm) 위치로 옮깁니다. 이 점을 쓰는 선·도형·치수가 함께 바뀝니다. Z는 층 바닥 기준 높이. 점 id는 getEntity의 start/middle/end/position/polygon에 있습니다. 선의 중간점(middle)을 옮기면 선 전체가 옮겨집니다.',
     params: obj({ id: str('점 id'), x: num('X (mm)'), y: num('Y (mm)'), z: num('Z: 층 바닥 기준 높이 (mm)') }, ['id']),
     mutates: true,
     run: (api, p) => api.setPoint(p as never),
