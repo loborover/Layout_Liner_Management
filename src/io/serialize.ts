@@ -54,6 +54,10 @@ export function deserialize(text: string): DocumentData {
       if (!isNum(e.radius) || e.radius <= 0) throw new FormatError(`원 #${i}의 반지름이 잘못되었습니다.`);
       return { id: e.id, kind: 'circle', center: ref(e.center, i), radius: e.radius, layer };
     }
+    if (e.kind === 'dimension') {
+      if (!isNum(e.offset)) throw new FormatError(`치수 #${i}의 간격 값이 잘못되었습니다.`);
+      return { id: e.id, kind: 'dimension', p1: ref(e.p1, i), p2: ref(e.p2, i), offset: e.offset, layer };
+    }
     throw new FormatError(`알 수 없는 엔티티 종류 (#${i})`);
   });
 

@@ -134,3 +134,40 @@ export class History {
     for (const fn of this.listeners) fn();
   }
 }
+
+/** Changes the offset of dimension entities (moving a dimension line without moving what it measures). */
+export class SetDimensionOffsets implements Command {
+  readonly label = '치수선 이동';
+  constructor(private readonly changes: { id: Id; before: number; after: number }[]) {}
+
+  apply(doc: DocumentModel): void {
+    this.set(doc, 'after');
+  }
+
+  revert(doc: DocumentModel): void {
+    this.set(doc, 'before');
+  }
+
+  private set(doc: DocumentModel, which: 'before' | 'after'): void {
+    for (const c of this.changes) {
+      const e = doc.entities.get(c.id);
+      if (e?.kind === 'dimension') e.offset = c[which];
+    }
+  }
+}
+
+/** Several commands recorded as one undo step. */
+export class Batch implements Command {
+  constructor(
+    readonly label: string,
+    private readonly commands: Command[],
+  ) {}
+
+  apply(doc: DocumentModel): void {
+    for (const c of this.commands) c.apply(doc);
+  }
+
+  revert(doc: DocumentModel): void {
+    for (const c of [...this.commands].reverse()) c.revert(doc);
+  }
+}

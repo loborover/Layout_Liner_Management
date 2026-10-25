@@ -1,3 +1,4 @@
+import { dimensionGeometry } from '../geom/dimension';
 import type { Box, Vec2 } from '../geom/vec';
 import { DEFAULT_LAYER_ID, type DocumentData, type Entity, type Id, type Layer, type Point } from './types';
 
@@ -79,7 +80,7 @@ export class DocumentModel {
 
   /** Point ids an entity depends on. */
   pointIdsOf(e: Entity): Id[] {
-    return e.kind === 'line' ? [e.p1, e.p2] : [e.center];
+    return e.kind === 'circle' ? [e.center] : [e.p1, e.p2];
   }
 
   /** Points no remaining entity references, among the given candidates. */
@@ -99,6 +100,14 @@ export class DocumentModel {
         maxX: Math.max(a.x, b.x),
         maxY: Math.max(a.y, b.y),
       };
+    }
+    if (e.kind === 'dimension') {
+      const a = this.point(e.p1);
+      const b = this.point(e.p2);
+      const { d1, d2 } = dimensionGeometry(a, b, e.offset);
+      const xs = [a.x, b.x, d1.x, d2.x];
+      const ys = [a.y, b.y, d1.y, d2.y];
+      return { minX: Math.min(...xs), minY: Math.min(...ys), maxX: Math.max(...xs), maxY: Math.max(...ys) };
     }
     const c = this.point(e.center);
     return { minX: c.x - e.radius, minY: c.y - e.radius, maxX: c.x + e.radius, maxY: c.y + e.radius };
