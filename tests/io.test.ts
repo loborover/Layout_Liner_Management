@@ -178,6 +178,19 @@ describe('exports', () => {
     const width = Number(/viewBox="\S+ \S+ (\S+)/.exec(svg)![1]);
     expect(width).toBeLessThan(6000);
   });
+
+  it('exports drawings with more entities than a function call can take as arguments', () => {
+    const doc = new DocumentModel();
+    const points = [];
+    const entities = [];
+    for (let i = 0; i < 300000; i++) {
+      points.push({ id: `p${i}`, x: i, y: 0 });
+      entities.push({ id: `c${i}`, kind: 'circle' as const, center: `p${i}`, radius: 1, layer: 'layer-0' });
+    }
+    doc.addPoints(points);
+    doc.addEntities(entities);
+    expect(drawingSvg(doc)).toContain('<circle');
+  });
 });
 
 describe('underlay', () => {

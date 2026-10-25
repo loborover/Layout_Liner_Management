@@ -90,15 +90,15 @@ export function drawingSvg(doc: DocumentModel): string | null {
 
 /** Bounds of what the SVG shows: entities on visible layers and a visible underlay. */
 function visibleExtents(doc: DocumentModel): Box | null {
-  const boxes: Box[] = [];
-  for (const e of doc.entities.values()) if (doc.layers.get(e.layer)?.visible !== false) boxes.push(doc.bboxOf(e));
-  const u = doc.underlay;
-  if (u?.visible) boxes.push({ minX: u.x, minY: u.y, maxX: u.x + u.width, maxY: u.y + u.height });
-  if (boxes.length === 0) return null;
-  return {
-    minX: Math.min(...boxes.map((b) => b.minX)),
-    minY: Math.min(...boxes.map((b) => b.minY)),
-    maxX: Math.max(...boxes.map((b) => b.maxX)),
-    maxY: Math.max(...boxes.map((b) => b.maxY)),
+  // Accumulated in a loop: spreading every box into Math.min would overflow the argument limit on big drawings.
+  let box: Box | null = null;
+  const grow = (b: Box) => {
+    box = box
+      ? { minX: Math.min(box.minX, b.minX), minY: Math.min(box.minY, b.minY), maxX: Math.max(box.maxX, b.maxX), maxY: Math.max(box.maxY, b.maxY) }
+      : b;
   };
+  for (const e of doc.entities.values()) if (doc.layers.get(e.layer)?.visible !== false) grow(doc.bboxOf(e));
+  const u = doc.underlay;
+  if (u?.visible) grow({ minX: u.x, minY: u.y, maxX: u.x + u.width, maxY: u.y + u.height });
+  return box;
 }
