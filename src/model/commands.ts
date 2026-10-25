@@ -1,6 +1,6 @@
 import type { Vec2 } from '../geom/vec';
 import type { DocumentModel } from './document';
-import type { Constraint, Entity, Id, Point } from './types';
+import type { Constraint, Entity, EquipmentType, Id, Layer, Point } from './types';
 
 export interface Command {
   readonly label: string;
@@ -301,4 +301,66 @@ export class SetConstraintValue implements Command {
     const c = doc.constraints.get(this.id);
     if (c) c.value = this.before;
   }
+}
+
+/** Replaces entities' properties (layer, tag, rotation…) with new versions of the same entities. */
+export class UpdateEntities implements Command {
+  private readonly before: Entity[];
+  private readonly after: Entity[];
+  constructor(
+    readonly label: string,
+    before: Entity[],
+    after: Entity[],
+  ) {
+    // Copies: the live entities may be edited in place later (e.g. a dimension offset drag).
+    this.before = before.map((e) => ({ ...e }));
+    this.after = after.map((e) => ({ ...e }));
+  }
+
+  apply(doc: DocumentModel): void {
+    doc.addEntities(this.after);
+  }
+
+  revert(doc: DocumentModel): void {
+    doc.addEntities(this.before);
+  }
+}
+
+/** Replaces the whole layer table. Layer edits are rare and small, so a snapshot is simplest. */
+export class SetLayers implements Command {
+  constructor(
+    readonly label: string,
+    private readonly before: Layer[],
+    private readonly after: Layer[],
+  ) {}
+
+  apply(doc: DocumentModel): void {
+    replace(doc.layers, this.after);
+  }
+
+  revert(doc: DocumentModel): void {
+    replace(doc.layers, this.before);
+  }
+}
+
+/** Replaces the equipment library; instances pick up a changed size or name from it. */
+export class SetEquipmentTypes implements Command {
+  constructor(
+    readonly label: string,
+    private readonly before: EquipmentType[],
+    private readonly after: EquipmentType[],
+  ) {}
+
+  apply(doc: DocumentModel): void {
+    replace(doc.equipmentTypes, this.after);
+  }
+
+  revert(doc: DocumentModel): void {
+    replace(doc.equipmentTypes, this.before);
+  }
+}
+
+function replace<T extends { id: Id }>(map: Map<Id, T>, items: T[]): void {
+  map.clear();
+  for (const it of items) map.set(it.id, { ...it });
 }

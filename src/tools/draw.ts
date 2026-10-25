@@ -2,7 +2,7 @@ import { offsetThrough } from '../geom/dimension';
 import { type Vec2, angleDeg, dist } from '../geom/vec';
 import { AddItems } from '../model/commands';
 import { newId } from '../model/ids';
-import { DEFAULT_LAYER_ID, type Id, type LineEntity, type Point } from '../model/types';
+import { type Id, type LineEntity, type Point } from '../model/types';
 import { formatAngle, formatLength } from '../view/format';
 import { COLORS, type Painter } from '../view/renderer';
 import type { SnapQuery } from '../snap/snap';
@@ -17,7 +17,7 @@ export function existingPoint(ctx: ToolContext, p: ToolPointer): Point | null {
   const id = p.snap?.pointId;
   return id && ctx.doc.points.has(id) ? ctx.doc.point(id) : null;
 }
-const line = (p1: Id, p2: Id): LineEntity => ({ id: newId('e'), kind: 'line', p1, p2, layer: DEFAULT_LAYER_ID });
+const line = (ctx: ToolContext, p1: Id, p2: Id): LineEntity => ({ id: newId('e'), kind: 'line', p1, p2, layer: ctx.layer() });
 
 /** Chained line tool: each click adds a segment joined to the previous one. */
 export class LineTool implements Tool {
@@ -52,7 +52,7 @@ export class LineTool implements Tool {
     const end = existing ?? point(p.world);
     if (end.id === this.start.id || dist(end, this.start) < 1e-9) return;
     const newPoints = [...(this.pending ? [this.start] : []), ...(existing ? [] : [end])];
-    this.ctx.history.execute(new AddItems(newPoints, [line(this.start.id, end.id)]));
+    this.ctx.history.execute(new AddItems(newPoints, [line(this.ctx, this.start.id, end.id)]));
     if (existing && existing.id === this.first?.id) {
       this.reset(); // outline closed on its first point
     } else {
@@ -128,7 +128,7 @@ export class RectTool implements Tool {
     const b = p.world;
     if (Math.abs(a.x - b.x) < 1e-9 || Math.abs(a.y - b.y) < 1e-9) return;
     const pts = [point(a), point({ x: b.x, y: a.y }), point(b), point({ x: a.x, y: b.y })];
-    const lines = pts.map((pt, i) => line(pt.id, pts[(i + 1) % 4].id));
+    const lines = pts.map((pt, i) => line(this.ctx, pt.id, pts[(i + 1) % 4].id));
     this.ctx.history.execute(new AddItems(pts, lines));
     this.corner = null;
   }
@@ -191,7 +191,7 @@ export class CircleTool implements Tool {
     if (r < 1e-9) return;
     const c = point(this.centre);
     this.ctx.history.execute(
-      new AddItems([c], [{ id: newId('e'), kind: 'circle', center: c.id, radius: r, layer: DEFAULT_LAYER_ID }]),
+      new AddItems([c], [{ id: newId('e'), kind: 'circle', center: c.id, radius: r, layer: this.ctx.layer() }]),
     );
     this.centre = null;
   }
@@ -259,7 +259,7 @@ export class DimensionTool implements Tool {
     const fresh = [this.p1, this.p2].filter((pt) => !doc.points.has(pt.id));
     const offset = offsetThrough(this.p1, this.p2, p.world);
     this.ctx.history.execute(
-      new AddItems(fresh, [{ id: newId('e'), kind: 'dimension', p1: this.p1.id, p2: this.p2.id, offset, layer: DEFAULT_LAYER_ID }]),
+      new AddItems(fresh, [{ id: newId('e'), kind: 'dimension', p1: this.p1.id, p2: this.p2.id, offset, layer: this.ctx.layer() }]),
     );
     this.p1 = this.p2 = null;
   }

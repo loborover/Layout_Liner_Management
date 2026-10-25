@@ -349,7 +349,9 @@ export class Renderer {
       batch.items.push(e);
       drawn++;
     }
+    this.fillEquipment(batches);
     for (const batch of batches.values()) this.strokeBatch(batch.items, batch.color, batch.width);
+    this.labelEquipment(batches);
     for (const batch of batches.values()) {
       for (const e of batch.items) {
         if (e.kind !== 'dimension') continue;
@@ -369,6 +371,52 @@ export class Renderer {
     state.overlay?.(painter);
     if (state.snap) painter.snap(state.snap);
     return drawn;
+  }
+
+  /** Light tint over equipment footprints so they read as solid objects. */
+  private fillEquipment(batches: Map<string, { color: string; items: Entity[] }>): void {
+    const { ctx, view } = this;
+    ctx.globalAlpha = 0.08;
+    for (const batch of batches.values()) {
+      ctx.beginPath();
+      let any = false;
+      for (const e of batch.items) {
+        if (e.kind !== 'equipment') continue;
+        const cs = this.doc.cornersOf(e).map((c) => view.toScreen(c));
+        ctx.moveTo(cs[0].x, cs[0].y);
+        for (let i = 1; i < 4; i++) ctx.lineTo(cs[i].x, cs[i].y);
+        ctx.closePath();
+        any = true;
+      }
+      if (!any) continue;
+      ctx.fillStyle = batch.color;
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  /** Name and tag in the middle of each piece of equipment that is big enough on screen to hold them. */
+  private labelEquipment(batches: Map<string, { color: string; items: Entity[] }>): void {
+    const { ctx, view } = this;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    for (const batch of batches.values()) {
+      ctx.fillStyle = batch.color;
+      for (const e of batch.items) {
+        if (e.kind !== 'equipment') continue;
+        const type = this.doc.equipmentTypes.get(e.type);
+        if (!type) continue;
+        const size = Math.min(type.width, type.depth) * view.scale;
+        if (size < 22) continue;
+        const c = view.toScreen(this.doc.point(e.at));
+        const font = Math.max(10, Math.min(14, size / 4));
+        ctx.font = `${font}px system-ui, sans-serif`;
+        const lines = e.tag ? [e.tag, type.name] : [type.name];
+        if (size < 40) lines.length = 1;
+        lines.forEach((text, i) => ctx.fillText(text, c.x, c.y + (i - (lines.length - 1) / 2) * (font + 2)));
+      }
+    }
+    ctx.textBaseline = 'alphabetic';
   }
 
   /** Small symbols next to constrained entities, and a marker on fixed points. */
@@ -439,6 +487,20 @@ export class Renderer {
         ctx.lineTo(b.x, b.y);
       } else if (e.kind === 'dimension') {
         traceDimension(ctx, view, this.doc.point(e.p1), this.doc.point(e.p2), e.offset);
+      } else if (e.kind === 'equipment') {
+        const cs = this.doc.cornersOf(e).map((c) => view.toScreen(c));
+        ctx.moveTo(cs[0].x, cs[0].y);
+        for (let i = 1; i < 4; i++) ctx.lineTo(cs[i].x, cs[i].y);
+        ctx.closePath();
+        // Front marker: a short tick into the footprint from the middle of the front edge.
+        const mid = { x: (cs[0].x + cs[1].x) / 2, y: (cs[0].y + cs[1].y) / 2 };
+        const back = { x: (cs[2].x + cs[3].x) / 2, y: (cs[2].y + cs[3].y) / 2 };
+        const len = Math.hypot(back.x - mid.x, back.y - mid.y);
+        if (len > 1) {
+          const t = Math.min(10, len * 0.25) / len;
+          ctx.moveTo(mid.x, mid.y);
+          ctx.lineTo(mid.x + (back.x - mid.x) * t, mid.y + (back.y - mid.y) * t);
+        }
       } else {
         const c = view.toScreen(this.doc.point(e.center));
         const r = Math.max(e.radius * view.scale, 0.5);

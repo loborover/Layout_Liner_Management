@@ -35,7 +35,33 @@ export interface DimensionEntity {
   layer: Id;
 }
 
-export type Entity = LineEntity | CircleEntity | DimensionEntity;
+/**
+ * A placed piece of equipment: a rectangular footprint of its type, centred on `at`.
+ * Like a CAD block reference, the size comes from the type, so editing the type updates every instance.
+ */
+export interface EquipmentEntity {
+  id: Id;
+  kind: 'equipment';
+  type: Id;
+  at: Id;
+  /** Degrees, counter-clockwise. At 0 the width runs along X and the front faces -Y. */
+  rotation: number;
+  /** Equipment number shown on the plan and in the equipment list, e.g. "CNC-3". */
+  tag: string;
+  layer: Id;
+}
+
+export type Entity = LineEntity | CircleEntity | DimensionEntity | EquipmentEntity;
+
+/** Equipment definition (block): footprint and name shared by its instances. */
+export interface EquipmentType {
+  id: Id;
+  name: string;
+  width: number; // mm, along the equipment's own X
+  depth: number; // mm, along its own Y
+  /** Prefix of new instances' tags. */
+  prefix: string;
+}
 
 export type ConstraintKind = 'horizontal' | 'vertical' | 'parallel' | 'perpendicular' | 'equal' | 'fixed' | 'radius';
 
@@ -67,6 +93,16 @@ export interface DocumentData {
   entities: Entity[];
   constraints: Constraint[];
   layers: Layer[];
+  equipmentTypes: EquipmentType[];
 }
 
 export const DEFAULT_LAYER_ID = 'layer-0';
+
+/** Library a new drawing starts with. */
+export const DEFAULT_EQUIPMENT_TYPES: EquipmentType[] = [
+  { id: 'eq-bench', name: '작업대', width: 1800, depth: 750, prefix: 'WB' },
+  { id: 'eq-rack', name: '선반', width: 2700, depth: 1000, prefix: 'RK' },
+  { id: 'eq-machine', name: '가공기', width: 3000, depth: 2200, prefix: 'MC' },
+  { id: 'eq-conveyor', name: '컨베이어', width: 4000, depth: 600, prefix: 'CV' },
+  { id: 'eq-pallet', name: '팔레트', width: 1100, depth: 1100, prefix: 'PL' },
+];

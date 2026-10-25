@@ -9,6 +9,7 @@ import {
   segmentIntersectsBox,
 } from '../geom/vec';
 import { dimensionGeometry } from '../geom/dimension';
+import { edgesOf, insideConvex } from '../geom/equipment';
 import type { DocumentModel } from './document';
 import type { Entity, Id } from './types';
 
@@ -41,8 +42,13 @@ export class SpatialIndex {
     return this.tree.search(box).map((it) => this.doc.entities.get(it.id)!);
   }
 
-  /** Distance from p to an entity's outline. */
+  /** Distance from p to an entity's outline; 0 anywhere inside a piece of equipment, so it can be grabbed by its body. */
   distanceTo(e: Entity, p: Vec2): number {
+    if (e.kind === 'equipment') {
+      const corners = this.doc.cornersOf(e);
+      if (insideConvex(p, corners)) return 0;
+      return Math.min(...edgesOf(corners).map(([a, b]) => distToSegment(p, a, b)));
+    }
     if (e.kind === 'line') return distToSegment(p, this.doc.point(e.p1), this.doc.point(e.p2));
     if (e.kind === 'dimension') {
       const { d1, d2 } = dimensionGeometry(this.doc.point(e.p1), this.doc.point(e.p2), e.offset);
@@ -78,6 +84,11 @@ export class SpatialIndex {
       if (e.kind === 'dimension') {
         const { d1, d2 } = dimensionGeometry(this.doc.point(e.p1), this.doc.point(e.p2), e.offset);
         return segmentIntersectsBox(d1, d2, box);
+      }
+      if (e.kind === 'equipment') {
+        const corners = this.doc.cornersOf(e);
+        const centre = { x: (box.minX + box.maxX) / 2, y: (box.minY + box.maxY) / 2 };
+        return edgesOf(corners).some(([a, b]) => segmentIntersectsBox(a, b, box)) || insideConvex(centre, corners);
       }
       return circleIntersectsBox(this.doc.point(e.center), e.radius, box);
     });

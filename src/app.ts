@@ -4,10 +4,14 @@ import { hasConstraints } from './constraints/components';
 import { type ClusterStatus, ConstraintService } from './constraints/service';
 import { Batch, type Command, History, RemoveConstraints, SetDimensionValue } from './model/commands';
 import { DocumentModel } from './model/document';
+import { arrayOffsets, copyItems, moveToLayer, rotateItems } from './model/edit';
+import { equipmentCsv } from './io/equipmentList';
+import { EquipmentTool } from './tools/equipment';
+import { SidePanel } from './ui/panel';
 import { Selection } from './model/selection';
 import { SpatialIndex } from './model/spatial';
 import { SnapEngine, type SnapResult, type SnapSettings } from './snap/snap';
-import type { ConstraintKind, Id } from './model/types';
+import { type ConstraintKind, DEFAULT_LAYER_ID, type Id } from './model/types';
 import { CircleTool, DimensionTool, LineTool, RectTool } from './tools/draw';
 import { MeasureAngleTool, MeasureAreaTool, MeasureDistanceTool } from './tools/measure';
 import { SelectTool } from './tools/select';
@@ -20,6 +24,8 @@ const AUTOSAVE_KEY = 'layout-liner:autosave';
 const PICK_TOLERANCE_PX = 6;
 const SNAP_REACH_PX = 10;
 const WHEEL_ZOOM_STEP = 1.0015;
+/** Tools that create geometry on the current layer. */
+const DRAWING_TOOLS = new Set(['line', 'rect', 'circle', 'dimension', 'equipment']);
 
 const $ = <T extends HTMLElement>(sel: string): T => {
   const el = document.querySelector<T>(sel);
@@ -42,6 +48,9 @@ export class App {
   private tools: Record<string, Tool>;
   private tool: Tool;
   private hover: Id | null = null;
+  private currentLayer: Id = DEFAULT_LAYER_ID;
+  private panel: SidePanel;
+  private equipmentTool: EquipmentTool;
   private unit: DisplayUnit = 'mm';
   private snapSettings: SnapSettings = { object: true, polar: true, grid: true, polarStep: 15 };
   private lastSnap: SnapResult | null = null;
@@ -65,6 +74,7 @@ export class App {
       selection: this.selection,
       view: this.view,
       unit: () => this.unit,
+      layer: () => this.layerForDrawing(),
       pickTolerance: () => this.view.pxToMm(PICK_TOLERANCE_PX),
       setHover: (id) => {
         if (id === this.hover) return;
@@ -86,11 +96,37 @@ export class App {
       'measure-distance': new MeasureDistanceTool(ctx),
       'measure-angle': new MeasureAngleTool(ctx),
       'measure-area': new MeasureAreaTool(ctx),
+      equipment: (this.equipmentTool = new EquipmentTool(ctx)),
     };
+    this.panel = new SidePanel(
+      {
+        doc: this.doc,
+        history: this.history,
+        currentLayer: () => this.layerForDrawing(),
+        setCurrentLayer: (id) => {
+          this.currentLayer = id;
+          this.panel.refresh();
+        },
+        activeType: () => (this.tool === this.equipmentTool ? this.equipmentTool.typeId : null),
+        placeEquipment: (type) => {
+          this.equipmentTool.setType(type);
+          this.setTool('equipment');
+        },
+        notify: (text) => this.notify(text),
+        ask: (question, initial) => window.prompt(question, initial),
+      },
+      $<HTMLUListElement>('#layer-list'),
+      $<HTMLUListElement>('#type-list'),
+    );
     this.tool = this.tools.select;
 
     this.doc.onChange(() => {
-      this.selection.prune((id) => this.doc.entities.has(id));
+      // Hidden or locked geometry can't stay selected: it could otherwise still be moved or deleted.
+      this.selection.prune((id) => {
+        const e = this.doc.entities.get(id);
+        return !!e && this.doc.isEditable(e);
+      });
+      this.panel.refresh();
       this.scheduleAutosave();
       this.scheduleConstraintStatus();
       this.requestRender();
@@ -123,6 +159,7 @@ export class App {
     document.querySelectorAll<HTMLButtonElement>('[data-tool]').forEach((b) => {
       b.setAttribute('aria-pressed', String(b.dataset.tool === id));
     });
+    this.panel?.refresh();
     this.requestRender();
   }
 
@@ -187,6 +224,14 @@ export class App {
         c.style.cursor = 'grabbing';
         return;
       }
+      if (DRAWING_TOOLS.has(this.tool.id) && e.button === 0) {
+        const layer = this.doc.layers.get(this.layerForDrawing());
+        if (layer && (layer.locked || !layer.visible)) {
+          // Geometry drawn there would be invisible or impossible to select, so don't create it.
+          this.notify(`현재 레이어(${layer.name})가 ${layer.locked ? '잠겨' : '숨겨져'} 있어 그릴 수 없습니다.`);
+          return;
+        }
+      }
       this.tool.down(this.pointer(e));
     });
     c.addEventListener('pointerleave', () => {
@@ -239,6 +284,12 @@ export class App {
       open: () => $<HTMLInputElement>('#file-input').click(),
       save: () => this.save(),
       unconstrain: () => this.unconstrain(),
+      rotate: () => this.rotateSelection(),
+      array: () => this.arraySelection(),
+      'to-layer': () => this.selectionToLayer(),
+      'add-layer': () => this.panel.addLayer(),
+      'add-type': () => this.panel.addType(),
+      'export-equipment': () => this.exportEquipment(),
     };
     document.querySelectorAll<HTMLButtonElement>('[data-constraint]').forEach((b) => {
       b.addEventListener('click', () => void this.applyConstraint(b.dataset.constraint as ConstraintKind));
@@ -270,9 +321,10 @@ export class App {
 
   private bindKeyboard(): void {
     window.addEventListener('keydown', (e) => {
-      // Typing into a field must not trigger shortcuts; a toggled checkbox should not swallow them.
+      // Typing into a field must not trigger shortcuts; a clicked checkbox, radio or colour swatch should not swallow them.
       const t = e.target;
-      if ((t instanceof HTMLInputElement && t.type !== 'checkbox') || t instanceof HTMLSelectElement) return;
+      const typing = t instanceof HTMLInputElement && !['checkbox', 'radio', 'color'].includes(t.type);
+      if (typing || t instanceof HTMLSelectElement) return;
       const mod = e.ctrlKey || e.metaKey;
       const key = e.key.toLowerCase();
       if (mod && key === 'z') {
@@ -315,6 +367,7 @@ export class App {
           m: () => this.setTool('measure-distance'),
           n: () => this.setTool('measure-angle'),
           a: () => this.setTool('measure-area'),
+          e: () => this.setTool('equipment'),
           f: () => this.fitAll(),
         };
         shortcuts[key]?.();
@@ -337,6 +390,65 @@ export class App {
   private redo(): void {
     this.tool.interrupt?.();
     this.history.redo();
+  }
+
+  /** Current layer, falling back to the first one if it was deleted (e.g. by undo or opening a file). */
+  private layerForDrawing(): Id {
+    if (!this.doc.layers.has(this.currentLayer)) this.currentLayer = this.doc.layers.keys().next().value ?? DEFAULT_LAYER_ID;
+    return this.currentLayer;
+  }
+
+  private rotateSelection(): void {
+    const ids = this.selection.values();
+    if (ids.length === 0) return this.notify('회전할 객체를 선택하십시오.');
+    const cmd = rotateItems(this.doc, ids, 90);
+    if (typeof cmd === 'string') this.notify(cmd);
+    else if (cmd) this.history.execute(cmd);
+  }
+
+  /** Rectangular array of the selection; the original stays as the first item. */
+  private arraySelection(): void {
+    const ids = this.selection.values();
+    if (ids.length === 0) return this.notify('배열 복사할 객체를 선택하십시오.');
+    const boxes = ids.flatMap((id) => {
+      const e = this.doc.entities.get(id);
+      return e ? [this.doc.bboxOf(e)] : [];
+    });
+    const w = Math.max(...boxes.map((b) => b.maxX)) - Math.min(...boxes.map((b) => b.minX));
+    const h = Math.max(...boxes.map((b) => b.maxY)) - Math.min(...boxes.map((b) => b.minY));
+    const round = (v: number) => Math.ceil((v + 500) / 100) * 100;
+    const text = window.prompt(
+      '배열 복사: 열 수, 행 수, 열 간격(mm), 행 간격(mm)\n간격은 중심 사이 거리이며, 음수면 왼쪽/아래로 복사합니다.',
+      `3, 1, ${round(w)}, ${round(h)}`,
+    );
+    if (text === null) return;
+    const [cols, rows, dx, dy] = text.split(',').map((v) => Number(v.trim()));
+    const valid = [cols, rows].every((n) => Number.isInteger(n) && n >= 1) && cols * rows <= 1000 && [dx, dy].every(Number.isFinite);
+    if (!valid || cols * rows < 2) {
+      return this.notify('형식: 열 수, 행 수, 열 간격, 행 간격 (예: 3, 2, 2500, 1500). 열×행은 2 이상 1000 이하입니다.');
+    }
+    const cmd = copyItems(this.doc, ids, arrayOffsets(cols, rows, dx, dy ?? 0));
+    if (cmd) this.history.execute(cmd);
+  }
+
+  private selectionToLayer(): void {
+    const ids = this.selection.values();
+    if (ids.length === 0) return this.notify('현재 레이어로 옮길 객체를 선택하십시오.');
+    const cmd = moveToLayer(this.doc, ids, this.layerForDrawing());
+    if (cmd) this.history.execute(cmd);
+  }
+
+  private exportEquipment(): void {
+    if (![...this.doc.entities.values()].some((e) => e.kind === 'equipment')) return this.notify('배치된 설비가 없습니다.');
+    this.download(new Blob([equipmentCsv(this.doc)], { type: 'text/csv' }), `equipment-${new Date().toISOString().slice(0, 10)}.csv`);
+  }
+
+  private download(blob: Blob, name: string): void {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = name;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   }
 
   /** Applies a constraint to the current selection. */
@@ -451,11 +563,7 @@ export class App {
 
   private save(): void {
     const blob = new Blob([serialize(this.doc.toData())], { type: 'application/json' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `layout-${new Date().toISOString().slice(0, 10)}.json`;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    this.download(blob, `layout-${new Date().toISOString().slice(0, 10)}.json`);
   }
 
   private openText(text: string): void {

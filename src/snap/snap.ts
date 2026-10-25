@@ -2,6 +2,7 @@ import { type Vec2, add, closestOnSegment, dist, dot, scale, sub } from '../geom
 import type { DocumentModel } from '../model/document';
 import type { SpatialIndex } from '../model/spatial';
 import type { Entity, Id } from '../model/types';
+import { edgesOf } from '../geom/equipment';
 import { circleCircle, segmentCircle, segmentSegment } from '../geom/intersect';
 
 export type ObjectSnapKind = 'endpoint' | 'intersection' | 'center' | 'midpoint' | 'quadrant' | 'perpendicular';
@@ -152,6 +153,19 @@ export class SnapEngine {
         // Only a true perpendicular foot, not a clamped segment end.
         if (dist(foot, a) > 1e-9 && dist(foot, b) > 1e-9) out.push({ point: foot, kind: 'perpendicular' });
       }
+    } else if (e.kind === 'equipment') {
+      // Footprint corners and edge midpoints snap, but never hand out the equipment's own point:
+      // a line drawn from its centre shouldn't drag along when the equipment moves.
+      const cs = doc.cornersOf(e);
+      out.push({ point: { ...doc.point(e.at) }, kind: 'center' });
+      for (const [a, b] of edgesOf(cs)) {
+        out.push({ point: a, kind: 'endpoint' });
+        out.push({ point: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }, kind: 'midpoint' });
+        if (from) {
+          const foot = closestOnSegment(from, a, b);
+          if (dist(foot, a) > 1e-9 && dist(foot, b) > 1e-9) out.push({ point: foot, kind: 'perpendicular' });
+        }
+      }
     } else if (e.kind === 'circle') {
       const c = doc.point(e.center);
       const r = e.radius;
@@ -171,8 +185,28 @@ export class SnapEngine {
     }
   }
 
+  /** Straight edges of an entity, for intersections. */
+  private segments(e: Entity): [Vec2, Vec2][] {
+    if (e.kind === 'line') return [[this.doc.point(e.p1), this.doc.point(e.p2)]];
+    if (e.kind === 'equipment') return edgesOf(this.doc.cornersOf(e));
+    return [];
+  }
+
   private intersections(e1: Entity, e2: Entity): Vec2[] {
     const { doc } = this;
+    if (e1.kind === 'equipment' || e2.kind === 'equipment') {
+      const out: Vec2[] = [];
+      const other = e1.kind === 'equipment' ? e2 : e1;
+      const edges = this.segments(e1.kind === 'equipment' ? e1 : e2);
+      for (const [a, b] of edges) {
+        if (other.kind === 'circle') out.push(...segmentCircle(a, b, doc.point(other.center), other.radius));
+        for (const [c, d] of this.segments(other)) {
+          const p = segmentSegment(a, b, c, d);
+          if (p) out.push(p);
+        }
+      }
+      return out;
+    }
     if (e1.kind === 'line' && e2.kind === 'line') {
       const p = segmentSegment(doc.point(e1.p1), doc.point(e1.p2), doc.point(e2.p1), doc.point(e2.p2));
       return p ? [p] : [];
