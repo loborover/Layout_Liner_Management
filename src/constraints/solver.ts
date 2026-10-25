@@ -55,7 +55,11 @@ export class ConstraintSolver {
    * held points end up as close as the remaining freedom allows. Used when dragging over-constrained geometry.
    */
   solveTowards(doc: DocumentModel, cluster: ConstraintCluster, held: ReadonlySet<Id>): SolveResult {
-    return this.run(doc, cluster, held, true, true);
+    // planegcs reports failure whenever the temporary pulls can't all be met, which is the point here, but its
+    // best effort is still useful: take it, then settle the real constraints exactly from there.
+    const pulled = this.run(doc, cluster, held, true, true);
+    if (!pulled.ok) return pulled;
+    return this.run(doc, cluster, new Set(), true, false);
   }
 
   /** Solves without touching the document, to read the remaining degrees of freedom and any conflicts. */
@@ -158,7 +162,7 @@ export class ConstraintSolver {
     const ours = (ids: string[]) => ids.filter((id) => !id.startsWith(DRAG)).map(ownerOf);
     const conflicting = [...new Set([...unmet, ...ours(this.gcs.get_gcs_conflicting_constraints())])];
     const redundant = [...new Set(ours(this.gcs.get_gcs_redundant_constraints()))];
-    const ok = SOLVED.has(status) && conflicting.length === 0 && redundant.length === 0;
+    const ok = (soft || SOLVED.has(status)) && conflicting.length === 0 && redundant.length === 0;
     const dof = this.gcs.gcs.dof();
     let degenerate = false;
     if (ok && apply) {
@@ -186,7 +190,9 @@ export class ConstraintSolver {
         }
       }
       const after = this.sizes(doc, cluster);
-      degenerate = [...after].some(([id, size]) => size < COLLAPSED && (sizes.get(id) ?? 0) >= COLLAPSED);
+      degenerate =
+        [...after].some(([id, size]) => !Number.isFinite(size) || (size < COLLAPSED && (sizes.get(id) ?? 0) >= COLLAPSED)) ||
+        [...cluster.pointIds].some((id) => !Number.isFinite(doc.point(id).x) || !Number.isFinite(doc.point(id).y));
       if (degenerate) {
         for (const s of saved) {
           s.pt.x = s.x;

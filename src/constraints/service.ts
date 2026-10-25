@@ -46,8 +46,14 @@ export class ConstrainedDrag {
     private readonly cluster: ConstraintCluster,
     readonly moving: Id[],
   ) {
-    this.before = geometryOf(doc, cluster);
+    this.before = this.snapshot();
     this.lastGood = this.before;
+  }
+
+  /** The cluster's geometry plus any dragged points outside it (unconstrained geometry selected alongside). */
+  private snapshot(): GeometryState {
+    const circles = [...this.cluster.entityIds].filter((id) => this.doc.entities.get(id)?.kind === 'circle');
+    return captureGeometry(this.doc, new Set([...this.cluster.pointIds, ...this.moving]), circles);
   }
 
   /** Moves the dragged points by `delta` from where the drag started. Returns false if the solver could not follow. */
@@ -63,7 +69,7 @@ export class ConstrainedDrag {
       this.doc.translatePoints(this.moving, delta);
       r = this.solver.solveTowards(this.doc, this.cluster, held);
     }
-    if (r.ok) this.lastGood = geometryOf(this.doc, this.cluster);
+    if (r.ok) this.lastGood = this.snapshot();
     else restoreGeometry(this.doc, this.lastGood);
     return r.ok;
   }
@@ -74,7 +80,7 @@ export class ConstrainedDrag {
 
   /** Command for the drag, already applied. */
   finish(): Command {
-    return new SetGeometry('이동', this.before, geometryOf(this.doc, this.cluster));
+    return new SetGeometry('이동', this.before, this.snapshot());
   }
 }
 

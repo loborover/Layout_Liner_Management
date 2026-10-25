@@ -1,6 +1,7 @@
 import { GcsWrapper, init_planegcs_module } from '@salusoft89/planegcs';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { constrainedClusters, mergeClusters } from '../src/constraints/components';
+import { ConstraintService } from '../src/constraints/service';
 import { ConstraintSolver } from '../src/constraints/solver';
 import { deserialize, serialize } from '../src/io/serialize';
 import { AddItems, History, RemoveEntities } from '../src/model/commands';
@@ -204,5 +205,24 @@ describe('degrees of freedom', () => {
     expect(solveAll(doc).ok).toBe(true);
     add(doc, { id: 'f', kind: 'fixed', refs: ['a', 'b'] });
     expect(solver.analyze(doc, mergeClusters(constrainedClusters(doc))).dof).toBe(1);
+  });
+});
+
+describe('constrained drag with unconstrained geometry selected too', () => {
+  it('moves the loose line once and undoes it with the rest', async () => {
+    const { doc, history } = room();
+    add(doc, { id: 'h', kind: 'horizontal', refs: ['ab'] });
+    const service = new ConstraintService(doc, history, () => Promise.resolve(solver));
+    await service.ensure();
+    const moving = ['a', 'b', 'x1', 'x2'];
+    const drag = service.beginDrag(moving)!;
+    expect(drag).not.toBeNull();
+    for (const step of [100, 200, 300]) expect(drag.update({ x: step, y: 0 })).toBe(true);
+    expect(doc.point('x1')).toMatchObject({ x: 9300, y: 0 });
+    expect(doc.point('a').y).toBeCloseTo(doc.point('b').y, 6);
+    history.record(drag.finish());
+    history.undo();
+    expect(doc.point('x1')).toMatchObject({ x: 9000, y: 0 });
+    expect(doc.point('x2')).toMatchObject({ x: 9500, y: 700 });
   });
 });
