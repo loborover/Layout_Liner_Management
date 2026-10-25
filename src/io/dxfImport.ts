@@ -27,16 +27,22 @@ export function importDxf(doc: DocumentModel, dxf: DxfDrawing, mmPerUnit = dxf.u
   }
 
   const points: Point[] = [];
-  const byKey = new Map<string, Id>();
+  // Grid of MERGE-sized cells; a point's neighbours within MERGE are in its cell or the eight around it,
+  // so points just either side of a cell boundary still merge.
+  const cells = new Map<string, Point[]>();
   const pointAt = (x: number, y: number): Id => {
-    const key = `${Math.round(x / MERGE)},${Math.round(y / MERGE)}`;
-    let id = byKey.get(key);
-    if (!id) {
-      id = newId('p');
-      byKey.set(key, id);
-      points.push({ id, x, y });
+    const cx = Math.floor(x / MERGE);
+    const cy = Math.floor(y / MERGE);
+    for (let i = -1; i <= 1; i++) {
+      for (let j = -1; j <= 1; j++) {
+        for (const p of cells.get(`${cx + i},${cy + j}`) ?? []) if (Math.hypot(p.x - x, p.y - y) <= MERGE) return p.id;
+      }
     }
-    return id;
+    const p = { id: newId('p'), x, y };
+    points.push(p);
+    const key = `${cx},${cy}`;
+    cells.set(key, [...(cells.get(key) ?? []), p]);
+    return p.id;
   };
 
   const entities: Entity[] = [];
@@ -44,8 +50,9 @@ export function importDxf(doc: DocumentModel, dxf: DxfDrawing, mmPerUnit = dxf.u
   for (const s of dxf.segments) {
     const p1 = pointAt(s.a.x * k, s.a.y * k);
     const p2 = pointAt(s.b.x * k, s.b.y * k);
-    const key = p1 < p2 ? `${p1}|${p2}` : `${p2}|${p1}`;
-    if (p1 === p2 || seen.has(key)) continue; // collapsed or drawn twice
+    // Drawn twice on the same layer; the same line on two layers is kept so each layer shows it.
+    const key = `${s.layer}|${p1 < p2 ? `${p1}|${p2}` : `${p2}|${p1}`}`;
+    if (p1 === p2 || seen.has(key)) continue;
     seen.add(key);
     entities.push({ id: newId('e'), kind: 'line', p1, p2, layer: layerId.get(s.layer)! });
   }

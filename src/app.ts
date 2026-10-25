@@ -301,7 +301,7 @@ export class App {
       'export-equipment': () => this.exportEquipment(),
       'export-dxf': () => this.exportDxf(),
       'export-svg': () => this.exportSvg(),
-      print: () => this.print(),
+      print: () => void this.print(),
       'load-underlay': () => $<HTMLInputElement>('#image-input').click(),
       'remove-underlay': () => {
         if (this.doc.underlay) this.history.execute(new SetUnderlay('밑그림 삭제', this.doc.underlay, null));
@@ -559,7 +559,7 @@ export class App {
   }
 
   /** Prints the whole drawing fitted to the page, through a hidden frame; the browser's dialog can save it as PDF. */
-  private print(): void {
+  private async print(): Promise<void> {
     const svg = drawingSvg(this.doc);
     if (!svg) return this.notify('인쇄할 객체가 없습니다.');
     const frame = document.createElement('iframe');
@@ -571,15 +571,24 @@ export class App {
       `<!doctype html><html><head><meta charset="utf-8"><title>Layout</title><style>@page{size:landscape;margin:10mm}html,body{margin:0;height:100%}svg{width:100%;height:100%}</style></head><body>${svg}</body></html>`,
     );
     page.close();
-    const go = () => {
-      frame.contentWindow!.focus();
-      frame.contentWindow!.print();
-      setTimeout(() => frame.remove(), 1000);
-    };
-    // Wait for an embedded underlay image to decode before printing.
-    const img = page.querySelector('image');
-    if (img) setTimeout(go, 300);
-    else go();
+    // Print only once the frame has loaded and an underlay image has decoded, or it may be left out.
+    const loaded =
+      page.readyState === 'complete'
+        ? Promise.resolve()
+        : new Promise<void>((resolve) => frame.contentWindow!.addEventListener('load', () => resolve(), { once: true }));
+    const u = this.doc.underlay;
+    const decoded = u?.visible
+      ? (() => {
+          const img = new Image();
+          img.src = u.src;
+          return img.decode().catch(() => undefined);
+        })()
+      : Promise.resolve();
+    await Promise.all([loaded, decoded]);
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    frame.contentWindow!.focus();
+    frame.contentWindow!.print();
+    setTimeout(() => frame.remove(), 1000);
   }
 
   private exportEquipment(): void {

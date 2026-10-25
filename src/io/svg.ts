@@ -1,4 +1,5 @@
 import { dimensionGeometry } from '../geom/dimension';
+import type { Box } from '../geom/vec';
 import type { DocumentModel } from '../model/document';
 import { COLORS } from '../view/renderer';
 
@@ -10,7 +11,7 @@ const n = (v: number) => String(Math.round(v * 100) / 100);
  * Strokes keep a constant hairline width whatever the zoom or print scale. Returns null for an empty drawing.
  */
 export function drawingSvg(doc: DocumentModel): string | null {
-  const ext = doc.extents();
+  const ext = visibleExtents(doc);
   if (!ext) return null;
   const size = Math.max(ext.maxX - ext.minX, ext.maxY - ext.minY, 1);
   const margin = size * 0.04;
@@ -85,4 +86,19 @@ export function drawingSvg(doc: DocumentModel): string | null {
     ...parts,
     '</svg>',
   ].join('\n');
+}
+
+/** Bounds of what the SVG shows: entities on visible layers and a visible underlay. */
+function visibleExtents(doc: DocumentModel): Box | null {
+  const boxes: Box[] = [];
+  for (const e of doc.entities.values()) if (doc.layers.get(e.layer)?.visible !== false) boxes.push(doc.bboxOf(e));
+  const u = doc.underlay;
+  if (u?.visible) boxes.push({ minX: u.x, minY: u.y, maxX: u.x + u.width, maxY: u.y + u.height });
+  if (boxes.length === 0) return null;
+  return {
+    minX: Math.min(...boxes.map((b) => b.minX)),
+    minY: Math.min(...boxes.map((b) => b.minY)),
+    maxX: Math.max(...boxes.map((b) => b.maxX)),
+    maxY: Math.max(...boxes.map((b) => b.maxY)),
+  };
 }
