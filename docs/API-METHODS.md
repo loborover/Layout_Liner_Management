@@ -14,10 +14,12 @@
 | [`getEntity`](#getentity) |  | 객체 하나의 상세 정보. |
 | [`addLines`](#addlines) | 예 | 점들을 잇는 연속 선을 그립니다. closed=true면 닫고 도형(면)을 만듭니다. 기존 끝점과 0.5 mm 안이면 연결됩니다. |
 | [`addRectangle`](#addrectangle) | 예 | 왼쪽 아래 모서리 (x, y)에서 width×height 사각형(선 4개 + 도형)을 그립니다. 방·구역에 쓰십시오. |
+| [`addPoint`](#addpoint) | 예 | 독립 점 객체(기준점, 측량점, 센서 위치 등)를 놓습니다. 기존 점과 0.5 mm 안이면 그 점을 공유합니다. |
 | [`addCircle`](#addcircle) | 예 | 원을 그립니다. |
 | [`addDimension`](#adddimension) | 예 | 두 점 사이 정렬 치수를 추가합니다. 기존 끝점에 붙으면 형상을 따라 값이 바뀝니다. |
 | [`placeEquipment`](#placeequipment) | 예 | 설비 또는 구조 프리셋(기둥·계단·경사로·리프트)을 중심 (x, y)에 배치합니다. type은 라이브러리 id나 이름. |
-| [`updateEntity`](#updateentity) | 예 | 객체 속성 변경: name, layer, binding(모니터링 키), stroke(선), fill(도형), tag/rotation/props(설비·구조), radius(원). null은 지움. |
+| [`updateEntity`](#updateentity) | 예 | 객체 속성 변경: name, layer, binding(모니터링 키), stroke(선), fill(도형), tag/rotation/props(설비·구조), radius(원), height(3D 높이 mm). null은 지움. |
+| [`setPoint`](#setpoint) | 예 | 점(꼭짓점)을 X·Y·Z(mm) 위치로 옮깁니다. 이 점을 쓰는 선·도형·치수가 함께 바뀝니다. Z는 층 바닥 기준 높이. 점 id는 getEntity의 start/middle/end/position/polygon에 있습니다. 선의 중간점(middle)을 옮기면 선 전체가 옮겨집니다. |
 | [`setStroke`](#setstroke) | 예 | 선과 도형의 변에 선 양식(벽 두께 등)을 지정합니다. stroke=null이면 지웁니다. |
 | [`moveEntities`](#moveentities) | 예 | 객체를 (dx, dy)만큼 옮깁니다. 공유된 점에 연결된 형상도 따라 움직입니다. |
 | [`rotateEntities`](#rotateentities) | 예 | 90° 단위로 회전합니다. 설비만 선택하면 제자리 회전입니다. |
@@ -32,6 +34,7 @@
 | [`updateLayer`](#updatelayer) | 예 | 레이어 이름·색·표시·잠금·폴더 변경. folder=null이면 폴더에서 뺍니다. |
 | [`addEquipmentType`](#addequipmenttype) | 예 | 라이브러리에 설비 종류나 구조 프리셋(category: column\|stair\|ramp\|lift)을 추가합니다. |
 | [`presetSchema`](#presetschema) |  | 구조 프리셋 범주별 특성 정의(키, 단위, 선택지, 기본값). |
+| [`scene3d`](#scene3d) |  | 3D 장면(벽·설비·계단 등을 높이 있는 입체와 3D 선으로 바꾼 것, mm, Z 위쪽)을 반환합니다. 호스트 서버에서 렌더링하거나 glTF 등으로 변환할 때 씁니다. |
 | [`undo`](#undo) | 예 | 실행 취소. |
 | [`redo`](#redo) | 예 | 다시 실행. |
 | [`batch`](#batch) | 예 | 여러 호출을 한 번의 실행 취소 단계로 묶어 실행합니다. 하나라도 실패하면 모두 되돌립니다. |
@@ -106,6 +109,18 @@
 | `name` | string |  | 도형 이름 |
 | `fill` | string |  | #rrggbb |
 
+## addPoint
+
+독립 점 객체(기준점, 측량점, 센서 위치 등)를 놓습니다. 기존 점과 0.5 mm 안이면 그 점을 공유합니다.
+
+| 매개변수 | 형식 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `x` | number | 예 | mm |
+| `y` | number | 예 | mm |
+| `z` | number |  | 층 바닥 기준 높이 mm |
+| `layer` | string |  | 레이어 id |
+| `name` | string |  | 이름 |
+
 ## addCircle
 
 원을 그립니다.
@@ -147,7 +162,7 @@
 
 ## updateEntity
 
-객체 속성 변경: name, layer, binding(모니터링 키), stroke(선), fill(도형), tag/rotation/props(설비·구조), radius(원). null은 지움.
+객체 속성 변경: name, layer, binding(모니터링 키), stroke(선), fill(도형), tag/rotation/props(설비·구조), radius(원), height(3D 높이 mm). null은 지움.
 
 | 매개변수 | 형식 | 필수 | 설명 |
 | --- | --- | --- | --- |
@@ -161,6 +176,18 @@
 | `rotation` | number |  |  |
 | `radius` | number |  |  |
 | `props` | object \| null |  |  |
+| `height` | number \| null |  | 3D 높이(mm). null이면 기본값(벽·구조물은 층고, 설비 1000) |
+
+## setPoint
+
+점(꼭짓점)을 X·Y·Z(mm) 위치로 옮깁니다. 이 점을 쓰는 선·도형·치수가 함께 바뀝니다. Z는 층 바닥 기준 높이. 점 id는 getEntity의 start/middle/end/position/polygon에 있습니다. 선의 중간점(middle)을 옮기면 선 전체가 옮겨집니다.
+
+| 매개변수 | 형식 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `id` | string | 예 | 점 id |
+| `x` | number |  | X (mm) |
+| `y` | number |  | Y (mm) |
+| `z` | number |  | Z: 층 바닥 기준 높이 (mm) |
 
 ## setStroke
 
@@ -297,6 +324,14 @@
 구조 프리셋 범주별 특성 정의(키, 단위, 선택지, 기본값).
 
 매개변수 없음.
+
+## scene3d
+
+3D 장면(벽·설비·계단 등을 높이 있는 입체와 3D 선으로 바꾼 것, mm, Z 위쪽)을 반환합니다. 호스트 서버에서 렌더링하거나 glTF 등으로 변환할 때 씁니다.
+
+| 매개변수 | 형식 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `floors` | all \| active |  | all: 모든 층을 표고대로 쌓음(기본), active: 현재 층만 |
 
 ## undo
 

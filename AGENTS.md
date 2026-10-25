@@ -32,6 +32,8 @@ npm run demo:host    # 모니터링 앱 시험용 예제 호스트 서버
 | `src/model/` | 문서 모델(단일 진실 원천), 타입, 명령(undo), 편집 연산, 선택, 공간 인덱스. DOM 없음 |
 | `src/geom/` | 순수 기하 함수. 문서·DOM 의존 금지 |
 | `src/view/` | 뷰포트 변환, Canvas 2D 렌더러 |
+| `src/view3d/` | three.js 3D 보기(위·정면·측면·등각·4분할). 필요할 때만 `import()`로 로딩 |
+| `src/theme.ts` | 색 디자인 토큰(Ink wash 팔레트)의 단일 원천 |
 | `src/tools/` | 마우스·키보드 입력을 명령으로 바꾸는 도구 |
 | `src/snap/`, `src/constraints/` | 스냅 엔진, planegcs 구속 솔버 연동 |
 | `src/io/` | JSON 저장·검증, DXF, SVG, CSV |
@@ -55,7 +57,8 @@ npm run demo:host    # 모니터링 앱 시험용 예제 호스트 서버
 7. **파일 머리 주석을 유지합니다.** 모든 소스 파일은 `/** @file ... */` 블록으로 목적·취지·관련 파일을 설명합니다. 새 파일에도 같은 형식으로 쓰고, 역할이 바뀌면 고칩니다.
 8. **API를 바꾸면** `src/api/editorApi.ts`, `src/api/rpc.ts`의 메서드 표, `mcp/tools.ts`, `docs/API.md`를 함께 맞추고 `npm run docs:api`를 실행합니다.
 9. **사용자에게 보이는 문구는 한국어**입니다. 코드 주석과 식별자는 영어입니다.
-10. 의존성은 꼭 필요할 때만 추가합니다. 편집기는 브라우저에서 가볍게 실행되어야 합니다.
+10. 의존성은 꼭 필요할 때만 추가합니다. 편집기는 브라우저에서 가볍게 실행되어야 합니다. 무거운 라이브러리(three.js 등)는 동적 `import()`로 필요할 때만 불러오고, 무거운 처리는 호스트 서버가 맡을 수 있게 DOM 없는 결과(`scene3d` 등)를 API로 내보냅니다.
+11. **색은 `src/theme.ts`에만 씁니다.** 다른 파일에 색 값(#hex, rgb 등)을 직접 쓰지 말고 토큰을 가져다 쓰십시오(예외: DXF 색 번호표처럼 파일 형식이 정한 색). `style.css`의 `:root`는 `cssVariables()`와 같아야 합니다(`tests/theme.test.ts`).
 
 ## 5. 코드 스타일
 
@@ -82,3 +85,4 @@ npm run demo:host    # 모니터링 앱 시험용 예제 호스트 서버
 - [docs/DATA_MODEL.md](docs/DATA_MODEL.md): 도면 파일 형식(층·폴더·레이어·객체)
 - [docs/API.md](docs/API.md): 브라우저 API, JSON-RPC, MCP 도구
 - [docs/VIEWER.md](docs/VIEWER.md): 모니터링 뷰어와 데이터 소스 형식
+- [docs/VIEW3D.md](docs/VIEW3D.md): 3D 보기, 높이 규칙, 호스트 서버 처리

@@ -10,7 +10,7 @@
 import { dimensionGeometry } from '../geom/dimension';
 import type { Vec2 } from '../geom/vec';
 import { SNAP_LABELS, type SnapResult } from '../snap/snap';
-import type { DocumentModel } from '../model/document';
+import { type DocumentModel, midpointId } from '../model/document';
 import type { Selection } from '../model/selection';
 import type { SpatialIndex } from '../model/spatial';
 import { connectedFloors } from '../model/presets';
@@ -19,29 +19,16 @@ import { planSymbol } from '../model/symbols';
 import type { ConstraintKind, Entity, EquipmentEntity, Id, ShapeEntity } from '../model/types';
 import { type DisplayUnit, formatArea, formatLength } from './format';
 import { type Viewport, gridSpacing } from './viewport';
+import { CANVAS } from '../theme';
 
-export const COLORS = {
-  background: '#f8fafc',
-  gridMinor: '#e2e8f0',
-  gridMajor: '#cbd5e1',
-  axis: '#94a3b8',
-  selected: '#2563eb',
-  hover: '#f59e0b',
-  preview: '#0ea5e9',
-  text: '#0f172a',
-  window: 'rgba(37, 99, 235, 0.08)',
-  crossing: 'rgba(22, 163, 74, 0.08)',
-  snap: '#16a34a',
-  constrained: '#15803d',
-  driving: '#be123c',
-  badge: '#7c3aed',
-  guide: 'rgba(22, 163, 74, 0.6)',
-  dimension: '#0f766e',
-};
+/** Canvas colours: the Ink wash tokens from src/theme.ts. */
+export const COLORS = CANVAS;
 
 const EXT_GAP_PX = 3;
 const EXT_OVERSHOOT_PX = 5;
 const TICK_PX = 5;
+/** Half size of a point object's cross on screen, px. */
+const POINT_MARK_PX = 6;
 
 /** Adds an aligned dimension's extension lines, dimension line and ticks to the current path. */
 function traceDimension(ctx: CanvasRenderingContext2D, view: Viewport, a: Vec2, b: Vec2, offset: number): void {
@@ -88,7 +75,7 @@ function labelDimension(ctx: CanvasRenderingContext2D, view: Viewport, a: Vec2, 
   ctx.textAlign = 'center';
   ctx.textBaseline = 'bottom';
   const w = ctx.measureText(text).width;
-  ctx.fillStyle = 'rgba(248,250,252,0.85)';
+  ctx.fillStyle = COLORS.labelPlate;
   ctx.fillRect(-w / 2 - 2, -17, w + 4, 14);
   ctx.fillStyle = color;
   ctx.fillText(text, 0, -4);
@@ -179,6 +166,20 @@ export class Painter {
     ctx.arc(s.x, s.y, radiusPx, (-fromDeg * Math.PI) / 180, (-toDeg * Math.PI) / 180, true);
     ctx.strokeStyle = color;
     ctx.lineWidth = 1.5;
+    ctx.stroke();
+  }
+
+  /** Vertex grip: a square, filled when the point is selected. */
+  vertex(p: Vec2, color: string, filled: boolean): void {
+    const { ctx } = this;
+    const s = this.view.toScreen(p);
+    const h = filled ? 5 : 4.5;
+    ctx.beginPath();
+    ctx.rect(s.x - h, s.y - h, h * 2, h * 2);
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = color;
+    ctx.fillStyle = filled ? color : COLORS.background;
+    ctx.fill();
     ctx.stroke();
   }
 
@@ -276,7 +277,7 @@ export class Painter {
     const { ctx } = this;
     ctx.font = '12px system-ui, sans-serif';
     const w = ctx.measureText(text).width;
-    ctx.fillStyle = 'rgba(255,255,255,0.9)';
+    ctx.fillStyle = COLORS.labelPlate;
     ctx.fillRect(s.x + dx - 3, s.y + dy - 12, w + 6, 16);
     ctx.fillStyle = COLORS.text;
     ctx.fillText(text, s.x + dx, s.y + dy);
@@ -435,10 +436,18 @@ export class Renderer {
     const painter = new Painter(ctx, view);
     if (!state.clean) {
       for (const id of this.selection.values()) {
+        if (doc.isVertex(id)) {
+          if (doc.isPointVisible(id)) painter.vertex(doc.vertex(id), COLORS.selected, true);
+          continue;
+        }
         const e = doc.entities.get(id);
         if (!e) continue;
         for (const pid of doc.pointIdsOf(e)) painter.marker(doc.point(pid), COLORS.selected);
+        // A line is start + midpoint + end: show its midpoint grip too.
+        if (e.kind === 'line') painter.vertex(doc.vertex(midpointId(e.id)), COLORS.selected, false);
       }
+      // A hovered vertex shows as a grip: clicking it selects the point itself.
+      if (state.hover && doc.isVertex(state.hover) && !this.selection.has(state.hover)) painter.vertex(doc.vertex(state.hover), COLORS.hover, false);
     }
     state.overlay?.(painter);
     if (state.snap) painter.snap(state.snap);
@@ -597,7 +606,7 @@ export class Renderer {
       const s = view.toScreen(anchor);
       const label = texts.join(' ');
       const w = ctx.measureText(label).width + 6;
-      ctx.fillStyle = 'rgba(255,255,255,0.9)';
+      ctx.fillStyle = COLORS.labelPlate;
       ctx.fillRect(s.x + 6, s.y + 4, w, 15);
       ctx.strokeStyle = COLORS.badge;
       ctx.lineWidth = 1;
@@ -636,6 +645,15 @@ export class Renderer {
           ctx.moveTo(a.x, a.y);
           ctx.lineTo(b.x, b.y);
         }
+      } else if (e.kind === 'point') {
+        // A point object keeps a fixed screen size: a small cross in a ring.
+        const c = view.toScreen(doc.point(e.at));
+        ctx.moveTo(c.x - POINT_MARK_PX, c.y);
+        ctx.lineTo(c.x + POINT_MARK_PX, c.y);
+        ctx.moveTo(c.x, c.y - POINT_MARK_PX);
+        ctx.lineTo(c.x, c.y + POINT_MARK_PX);
+        ctx.moveTo(c.x + POINT_MARK_PX * 0.6, c.y);
+        ctx.arc(c.x, c.y, POINT_MARK_PX * 0.6, 0, Math.PI * 2);
       } else {
         const c = view.toScreen(doc.point(e.center));
         const r = Math.max(e.radius * view.scale, 0.5);

@@ -11,6 +11,8 @@ export interface Point {
   id: Id;
   x: number; // mm
   y: number; // mm, world Y axis points up
+  /** Height above its floor's level, mm (3D views). 0 when absent; 2D editing never changes it. */
+  z?: number;
 }
 
 /** Fields every entity has. */
@@ -42,19 +44,37 @@ export interface StrokeStyle {
   align: StrokeAlign;
 }
 
+/**
+ * A standalone point object (a reference or survey point, a sensor location) on a layer. Lines and shapes drawn
+ * from it share its point.
+ */
+export interface PointEntity extends EntityBase {
+  kind: 'point';
+  at: Id;
+}
+
+/**
+ * A line is an assembly of a start point, a midpoint and an end point joined by the line (the user's model,
+ * 2026-10-25). The start and end are stored points; the midpoint is derived from them, but can be selected and
+ * moved like a point (see `midpointId` in src/model/document.ts), which moves the whole line.
+ */
 export interface LineEntity extends EntityBase {
   kind: 'line';
-  /** Start point. The midpoint is derived (snap "중점"). */
+  /** Start point. */
   p1: Id;
   /** End point. */
   p2: Id;
   stroke?: StrokeStyle;
+  /** Height of the line's wall in 3D, mm; 0 (flat) when absent. */
+  height?: number;
 }
 
 export interface CircleEntity extends EntityBase {
   kind: 'circle';
   center: Id;
   radius: number; // mm
+  /** Extruded height in 3D (a round tank, a pit), mm; 0 when absent. */
+  height?: number;
 }
 
 /** Aligned dimension. Points may be shared with measured geometry so the value follows edits. */
@@ -84,6 +104,8 @@ export interface EquipmentEntity extends EntityBase {
   /** Equipment number shown on the plan and in the equipment list, e.g. "CNC-3". */
   tag: string;
   props?: Record<string, PropValue>;
+  /** Height in 3D for this instance, mm; the type's height when absent. */
+  height?: number;
 }
 
 /**
@@ -97,9 +119,11 @@ export interface ShapeEntity extends EntityBase {
   edges: Id[];
   /** Face fill colour; the layer colour (faint) when absent. */
   fill?: string;
+  /** Extruded height in 3D (a slab, a platform, a zone volume), mm; a flat face when absent. */
+  height?: number;
 }
 
-export type Entity = LineEntity | CircleEntity | DimensionEntity | EquipmentEntity | ShapeEntity;
+export type Entity = PointEntity | LineEntity | CircleEntity | DimensionEntity | EquipmentEntity | ShapeEntity;
 export type EntityKind = Entity['kind'];
 
 /** Category of a library item: plain equipment or a structural preset with its own drawing and properties. */
@@ -117,6 +141,8 @@ export interface EquipmentType {
   category?: StructureCategory;
   /** Default property values, keyed by the category's property definitions. */
   props?: Record<string, PropValue>;
+  /** Default height in 3D of its instances, mm; 0 (flat) when absent. */
+  height?: number;
 }
 
 export type ConstraintKind = 'horizontal' | 'vertical' | 'parallel' | 'perpendicular' | 'equal' | 'fixed' | 'radius';
@@ -182,8 +208,11 @@ export interface Underlay {
 
 export interface DocumentData {
   format: 'layout-liner';
-  /** 2 added floors, folders, shapes, line styles, presets and bindings; version 1 files are upgraded on load. */
-  version: 2;
+  /**
+   * 2 added floors, folders, shapes, line styles, presets and bindings; 3 added point Z, object heights (3D) and point objects.
+   * Older versions are upgraded on load.
+   */
+  version: 3;
   units: 'mm';
   points: Point[];
   entities: Entity[];

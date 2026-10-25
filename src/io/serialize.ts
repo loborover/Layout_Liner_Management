@@ -22,6 +22,7 @@ import {
   type StructureCategory,
   type Underlay,
 } from '../model/types';
+import { LAYER_DEFAULT } from '../theme';
 
 const CONSTRAINT_KINDS: ConstraintKind[] = ['horizontal', 'vertical', 'parallel', 'perpendicular', 'equal', 'fixed', 'radius'];
 const CATEGORIES: StructureCategory[] = ['equipment', 'column', 'stair', 'ramp', 'lift'];
@@ -56,9 +57,13 @@ export function parseStroke(v: Raw, where: string): StrokeStyle | undefined {
   return { width: v.width, align: v.align, ...(v.color ? { color: v.color } : {}) };
 }
 
+/** A height field: a finite number ≥ 0 (mm). */
+const isHeight = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v) && v >= 0;
+
 /**
  * Parses and validates a saved drawing. Throws FormatError with a readable message.
- * Version 1 files (before floors, folders and shapes) are upgraded: everything goes on one floor "1층" and the
+ * Version 2 files need nothing (Z and heights default to 0 / derived values). Version 1 files (before floors, folders
+ * and shapes) are upgraded: everything goes on one floor "1층" and the
  * structural presets are added to the library.
  */
 export function deserialize(text: string): DocumentData {
@@ -75,12 +80,12 @@ export function deserialize(text: string): DocumentData {
 export function validate(raw: unknown): DocumentData {
   const obj = raw as Raw;
   if (!obj || obj.format !== 'layout-liner') throw new FormatError('Layout Liner 도면 파일이 아닙니다.');
-  if (obj.version !== 1 && obj.version !== 2) throw new FormatError(`지원하지 않는 파일 버전입니다: ${String(obj.version)}`);
+  if (obj.version !== 1 && obj.version !== 2 && obj.version !== 3) throw new FormatError(`지원하지 않는 파일 버전입니다: ${String(obj.version)}`);
   if (!Array.isArray(obj.points) || !Array.isArray(obj.entities)) throw new FormatError('points/entities 항목이 없습니다.');
 
   const points: Point[] = obj.points.map((p: Raw, i: number) => {
     if (!isStr(p?.id) || !isNum(p?.x) || !isNum(p?.y)) throw new FormatError(`잘못된 점 데이터 (#${i})`);
-    return { id: p.id, x: p.x, y: p.y };
+    return { id: p.id, x: p.x, y: p.y, ...(isNum(p.z) && p.z !== 0 ? { z: p.z } : {}) };
   });
   const pointIds = new Set(points.map((p) => p.id));
 
@@ -119,7 +124,7 @@ export function validate(raw: unknown): DocumentData {
           const layer: Layer = {
             id: l.id,
             name: typeof l.name === 'string' ? l.name : l.id,
-            color: typeof l.color === 'string' ? l.color : '#1f2937',
+            color: typeof l.color === 'string' ? l.color : LAYER_DEFAULT,
             visible: l.visible !== false,
             locked: l.locked === true,
             floor,
@@ -128,7 +133,7 @@ export function validate(raw: unknown): DocumentData {
           if (isStr(l.folder) && folderFloor.get(l.folder) === floor) layer.folder = l.folder;
           return layer;
         })
-      : [{ id: DEFAULT_LAYER_ID, name: '0', color: '#1f2937', visible: true, locked: false, floor: floors[0].id }];
+      : [{ id: DEFAULT_LAYER_ID, name: '0', color: LAYER_DEFAULT, visible: true, locked: false, floor: floors[0].id }];
   const layerIds = new Set(layers.map((l) => l.id));
 
   // Drawings saved before equipment existed get the default library; older ones also get the structural presets.
@@ -146,6 +151,7 @@ export function validate(raw: unknown): DocumentData {
           prefix: typeof t.prefix === 'string' ? t.prefix : '',
         };
         if (category !== 'equipment') type.category = category;
+        if (isHeight(t.height)) type.height = t.height;
         const props = cleanProps(category, t.props);
         if (props) type.props = props;
         return type;
@@ -163,7 +169,8 @@ export function validate(raw: unknown): DocumentData {
   const entities: Entity[] = obj.entities.map((e: Raw, i: number): Entity => {
     if (!isStr(e?.id)) throw new FormatError(`잘못된 엔티티 데이터 (#${i})`);
     const layer = isStr(e.layer) && layerIds.has(e.layer) ? e.layer : layers[0].id;
-    const base = { id: e.id, layer, ...common(e) };
+    const base = { id: e.id, layer, ...common(e), ...(isHeight(e.height) ? { height: e.height } : {}) };
+    if (e.kind === 'point') return { id: e.id, layer, ...common(e), kind: 'point', at: ref(e.at, i) };
     if (e.kind === 'line') {
       const stroke = parseStroke(e.stroke, `선 #${i}`);
       return { ...base, kind: 'line', p1: ref(e.p1, i), p2: ref(e.p2, i), ...(stroke ? { stroke } : {}) };
@@ -173,6 +180,7 @@ export function validate(raw: unknown): DocumentData {
       return { ...base, kind: 'circle', center: ref(e.center, i), radius: e.radius };
     }
     if (e.kind === 'dimension') {
+      delete (base as { height?: number }).height;
       if (!isNum(e.offset)) throw new FormatError(`치수 #${i}의 간격 값이 잘못되었습니다.`);
       if (e.value !== undefined && (!isNum(e.value) || e.value <= 0)) throw new FormatError(`치수 #${i}의 값이 잘못되었습니다.`);
       return { ...base, kind: 'dimension', p1: ref(e.p1, i), p2: ref(e.p2, i), offset: e.offset, ...(e.value !== undefined ? { value: e.value } : {}) };
@@ -237,7 +245,7 @@ export function validate(raw: unknown): DocumentData {
 
   return {
     format: 'layout-liner',
-    version: 2,
+    version: 3,
     units: 'mm',
     points,
     entities,

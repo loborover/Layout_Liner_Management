@@ -215,6 +215,51 @@ export class MovePoints implements Command {
   }
 }
 
+/** A point's full position, including its height above the floor. */
+export interface PointPosition {
+  x: number;
+  y: number;
+  z?: number;
+}
+
+/** Sets point positions (X, Y and Z) from the property panel or the API. */
+export class SetPoints implements Command {
+  constructor(
+    readonly label: string,
+    private readonly before: Map<Id, PointPosition>,
+    private readonly after: Map<Id, PointPosition>,
+  ) {}
+
+  /** Captures the current positions of `ids` as a "before" map. */
+  static capture(doc: DocumentModel, ids: Iterable<Id>): Map<Id, PointPosition> {
+    const out = new Map<Id, PointPosition>();
+    for (const id of ids) {
+      const p = doc.points.get(id);
+      if (p) out.set(id, { x: p.x, y: p.y, ...(p.z ? { z: p.z } : {}) });
+    }
+    return out;
+  }
+
+  apply(doc: DocumentModel): void {
+    SetPoints.restore(doc, this.after);
+  }
+
+  revert(doc: DocumentModel): void {
+    SetPoints.restore(doc, this.before);
+  }
+
+  private static restore(doc: DocumentModel, state: Map<Id, PointPosition>): void {
+    for (const [id, v] of state) {
+      const p = doc.points.get(id);
+      if (!p) continue;
+      p.x = v.x;
+      p.y = v.y;
+      if (v.z) p.z = v.z;
+      else delete p.z;
+    }
+  }
+}
+
 type HistoryListener = () => void;
 
 export class History {

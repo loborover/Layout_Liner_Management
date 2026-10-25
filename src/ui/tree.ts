@@ -15,16 +15,17 @@
  * Large layers list their first MAX_ROWS objects only, and the tree is rebuilt at most a few times a second.
  */
 import { SetLayerTree, captureLayerTree, type LayerTree } from '../model/commands';
+import { midpointId } from '../model/document';
 import { newId } from '../model/ids';
 import { categoryOf } from '../model/presets';
 import type { Entity, Floor, Folder, Id, Layer } from '../model/types';
 import { formatArea, formatLength } from '../view/format';
 import type { UiHost } from './host';
 import { type IconName, icon } from './icons';
+import { LAYER_COLORS } from '../theme';
 
 const MAX_ROWS = 300;
-const LAYER_COLORS = ['#1f2937', '#0f766e', '#16a34a', '#d97706', '#9333ea', '#dc2626', '#0891b2'];
-const KIND_LABEL: Record<Entity['kind'], string> = { line: '선', circle: '원', dimension: '치수', equipment: '설비', shape: '도형' };
+const KIND_LABEL: Record<Entity['kind'], string> = { point: '점', line: '선', circle: '원', dimension: '치수', equipment: '설비', shape: '도형' };
 
 export class ObjectTree {
   /** Explicit open/closed choices by node key; nodes without one use their default. */
@@ -251,12 +252,18 @@ export class ObjectTree {
     const unit = this.host.unit();
     const expandable = e.kind === 'shape' || e.kind === 'line';
     const key = `e:${e.id}`;
-    const row = this.node(depth, key, expandable, false);
+    // A line opens by itself when one of its points is selected, so the selected point shows in the tree.
+    const pointSelected = e.kind === 'line' && [e.p1, midpointId(e.id), e.p2].some((id) => selection.has(id));
+    const row = this.node(depth, key, expandable, pointSelected);
     row.classList.toggle('selected', selection.has(e.id));
-    let iconName: IconName = e.kind === 'shape' ? 'shape' : e.kind === 'dimension' ? 'dimension' : e.kind === 'circle' ? 'circle' : 'line';
+    let iconName: IconName =
+      e.kind === 'shape' ? 'shape' : e.kind === 'dimension' ? 'dimension' : e.kind === 'circle' ? 'circle' : e.kind === 'point' ? 'point' : 'line';
     let text = e.name || KIND_LABEL[e.kind];
     let meta = '';
-    if (e.kind === 'line') {
+    if (e.kind === 'point') {
+      const p = doc.point(e.at);
+      meta = `${formatLength(p.x, unit)}, ${formatLength(p.y, unit)}`;
+    } else if (e.kind === 'line') {
       const a = doc.point(e.p1);
       const b = doc.point(e.p2);
       meta = formatLength(Math.hypot(b.x - a.x, b.y - a.y), unit) + (e.stroke && e.stroke.width > 0 ? ` · ${e.stroke.width}` : '');
@@ -281,21 +288,26 @@ export class ObjectTree {
     });
     row.addEventListener('dblclick', () => this.host.zoomTo([e.id]));
     const rows: HTMLElement[] = [row];
-    if (!expandable || !this.isOpen(key, false)) return rows;
+    if (!expandable || !this.isOpen(key, pointSelected)) return rows;
     if (e.kind === 'shape') {
       for (const id of e.edges) {
         const line = doc.entities.get(id);
         if (line) rows.push(...this.entityRows(line, depth + 1));
       }
     } else if (e.kind === 'line') {
-      const a = doc.point(e.p1);
-      const b = doc.point(e.p2);
-      const pt = (name: string, x: number, y: number) => {
+      // A line is an assembly of three points and the line: each point is its own selectable object.
+      const pt = (name: string, id: Id) => {
+        const v = doc.vertex(id);
         const r = this.node(depth + 1, null, false, false);
-        r.append(icon('point'), this.label(name), this.meta(`${formatLength(x, unit)}, ${formatLength(y, unit)}`));
+        r.classList.toggle('selected', selection.has(id));
+        r.append(icon('point'), this.label(name, '클릭: 점 선택 · Shift+클릭: 추가'), this.meta(`${formatLength(v.x, unit)}, ${formatLength(v.y, unit)}`));
+        r.addEventListener('click', (ev) => {
+          if (ev.shiftKey) selection.toggle(id);
+          else selection.set([id]);
+        });
         return r;
       };
-      rows.push(pt('시작점', a.x, a.y), pt('중간점', (a.x + b.x) / 2, (a.y + b.y) / 2), pt('끝점', b.x, b.y));
+      rows.push(pt('시작점', e.p1), pt('중간점', midpointId(e.id)), pt('끝점', e.p2));
     }
     return rows;
   }

@@ -95,7 +95,7 @@ export class EquipmentTool implements Tool {
     const type = this.type ? this.ctx.doc.equipmentTypes.get(this.type) : undefined;
     if (!this.cursorPos || !type) return;
     const corners = equipmentCorners(this.cursorPos, type.width, type.depth, this.rotation);
-    p.polygon(corners, COLORS.preview, 'rgba(37, 99, 235, 0.08)', true, [6, 4]);
+    p.polygon(corners, COLORS.preview, COLORS.placeFill, true, [6, 4]);
     const unit = this.ctx.unit();
     p.label(this.cursorPos, `${type.name} ${formatLength(type.width, unit)} × ${formatLength(type.depth, unit)} · ${this.rotation}°`);
   }

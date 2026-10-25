@@ -4,16 +4,19 @@
  * Property panel for the current selection. Shows what an object is and lets edit mode change it:
  * name, layer, monitoring binding (all objects); line style (lines and shapes' edges); fill and area (shapes);
  * radius (circles); tag, rotation and preset properties with design checks (equipment and structures).
- * With nothing selected it shows the active floor. In viewer mode the same fields are read-only and live values
+ * Every object also lists the X, Y, Z of its points (Z = height above the floor) and its 3D height; a selected
+ * point (vertex) gets its own X, Y, Z fields. With nothing selected it shows the active floor. In viewer mode the same fields are read-only and live values
  * from the monitoring data source are added. Every change is one undoable UpdateEntities/SetEquipmentTypes command.
  */
 import { UpdateEntities } from '../model/commands';
-import { cloneEntity } from '../model/document';
+import { cloneEntity, midpointId } from '../model/document';
+import { defaultHeight } from '../model/heights';
 import { CATEGORY_LABELS, PROP_DEFS, type PropDef, categoryOf, presetInfo, propValue } from '../model/presets';
 import { polygonPerimeter } from '../geom/polygon';
 import type { Entity, Id, LineEntity, PropValue, StrokeStyle } from '../model/types';
 import { formatArea, formatLength } from '../view/format';
 import type { UiHost } from './host';
+import { LAYER_DEFAULT, SHAPE_FILL } from '../theme';
 
 const ALIGN_LABELS = { inside: '내측', center: '중심', outside: '외측' } as const;
 
@@ -41,8 +44,10 @@ export class PropertyPanel {
       const e = doc.entities.get(id);
       return e ? [e] : [];
     });
+    const points = selection.values().filter((id) => doc.isVertex(id));
     const sets: HTMLElement[] = [];
-    if (items.length === 0) sets.push(this.floorInfo());
+    if (items.length === 0 && points.length > 0) sets.push(this.pointSet(points));
+    else if (items.length === 0) sets.push(this.floorInfo());
     else if (items.length === 1) sets.push(...this.single(items[0]));
     else sets.push(...this.multiple(items));
     this.root.replaceChildren(...sets);
@@ -116,6 +121,86 @@ export class PropertyPanel {
     this.host.history.execute(new UpdateEntities(label, items, after));
   }
 
+  /** X, Y, Z inputs for one point (mm; Z above the floor level). */
+  private xyz(id: Id): HTMLElement {
+    const { doc } = this.host;
+    const p = doc.vertex(id);
+    const box = document.createElement('span');
+    box.className = 'xyz';
+    const field = (axis: 'x' | 'y' | 'z') => {
+      const label = document.createElement('label');
+      label.textContent = axis.toUpperCase();
+      const value = axis === 'z' ? (p.z ?? 0) : p[axis];
+      const input = this.input('number', String(Math.round(value * 100) / 100), (v) => {
+        const n = Number(v);
+        if (v.trim() === '' || !Number.isFinite(n)) return this.host.notify('좌표는 숫자로 입력하십시오.');
+        const cur = doc.vertex(id);
+        this.host.setPoint(id, { x: cur.x, y: cur.y, z: cur.z ?? 0, [axis]: n });
+      });
+      input.step = 'any';
+      input.title = `${axis.toUpperCase()} (mm${axis === 'z' ? ', 층 바닥 기준 높이' : ''})`;
+      label.append(input);
+      return label;
+    };
+    box.append(field('x'), field('y'), field('z'));
+    return box;
+  }
+
+  /** Coordinates of an entity's points: what each point is, then X, Y, Z. */
+  private coordinates(e: Entity): HTMLElement {
+    const { doc } = this.host;
+    const f = this.fieldset('좌표 (mm)');
+    const named: [string, Id][] =
+      e.kind === 'line'
+        ? [
+            ['시작점', e.p1],
+            ['중간점', midpointId(e.id)],
+            ['끝점', e.p2],
+          ]
+        : e.kind === 'dimension'
+        ? [
+            ['시작점', e.p1],
+            ['끝점', e.p2],
+          ]
+        : e.kind === 'circle'
+          ? [['중심', e.center]]
+          : e.kind === 'equipment' || e.kind === 'point'
+            ? [['위치', e.at]]
+            : e.points.map((id, i) => [`꼭짓점 ${i + 1}`, id] as [string, Id]);
+    const MAX = 12;
+    for (const [label, id] of named.slice(0, MAX)) this.row(f, label, this.xyz(id));
+    if (named.length > MAX) this.row(f, '', `외 ${named.length - MAX}개 (꼭짓점을 클릭해 편집)`);
+    if (e.kind !== 'dimension' && e.kind !== 'point') {
+      const h = this.input('number', e.height !== undefined ? String(e.height) : '', (v) =>
+        this.update('높이 변경', [e], (c) => {
+          if (c.kind === 'dimension' || c.kind === 'point') return;
+          const n = Number(v);
+          if (v.trim() === '') delete c.height;
+          else if (Number.isFinite(n) && n >= 0) c.height = n;
+        }),
+      );
+      h.placeholder = `${defaultHeight(doc, e)} (기본값)`;
+      h.min = '0';
+      h.title = '3D 보기에서 바닥(점의 Z)부터 올라가는 높이. 비우면 기본값';
+      this.row(f, '높이', h);
+    }
+    return f;
+  }
+
+  /** A selected point (or several): its coordinates and what is built on it. */
+  private pointSet(ids: Id[]): HTMLElement {
+    const { doc } = this.host;
+    const f = this.fieldset(ids.length > 1 ? `점 ${ids.length}개` : doc.midpointLine(ids[0]) ? '선의 중간점' : '점');
+    for (const id of ids.slice(0, 12)) {
+      this.row(f, ids.length === 1 ? '좌표' : id, this.xyz(id));
+    }
+    const users = [...new Set(ids.flatMap((id) => doc.pointUsers(id)))];
+    const names = users.slice(0, 6).map((e) => e.name ?? this.kindLabel(e));
+    this.row(f, '연결', users.length ? `${names.join(', ')}${users.length > 6 ? ` 외 ${users.length - 6}개` : ''}` : '없음');
+    this.warning(f, '점을 옮기면 이 점을 쓰는 선·도형·치수가 함께 바뀝니다(선의 중간점은 선 전체를 옮깁니다). Delete는 연결된 객체를 지웁니다.');
+    return f;
+  }
+
   // ---- sections ----
 
   private floorInfo(): HTMLElement {
@@ -161,7 +246,7 @@ export class PropertyPanel {
 
   private kindLabel(e: Entity): string {
     if (e.kind === 'equipment') return CATEGORY_LABELS[categoryOf(this.host.doc.equipmentTypes.get(e.type))];
-    return { line: '선', circle: '원', dimension: '치수', shape: '도형' }[e.kind];
+    return { point: '점', line: '선', circle: '원', dimension: '치수', shape: '도형' }[e.kind];
   }
 
   private single(e: Entity): HTMLElement[] {
@@ -172,8 +257,6 @@ export class PropertyPanel {
     if (e.kind === 'line') {
       const a = doc.point(e.p1);
       const b = doc.point(e.p2);
-      this.row(f, '시작점', `${formatLength(a.x, unit)}, ${formatLength(a.y, unit)}`);
-      this.row(f, '끝점', `${formatLength(b.x, unit)}, ${formatLength(b.y, unit)}`);
       this.row(f, '길이', formatLength(Math.hypot(b.x - a.x, b.y - a.y), unit));
       const shapes = doc.shapesUsing([e.id]);
       if (shapes.length) this.row(f, '소속 도형', shapes.map((s) => s.name ?? '도형').join(', '));
@@ -183,7 +266,7 @@ export class PropertyPanel {
       this.row(f, '면적', formatArea(doc.shapeArea(e)));
       this.row(f, '둘레', formatLength(polygonPerimeter(poly), unit));
       this.row(f, '꼭짓점', `${e.points.length}개`);
-      const fill = this.input('color', e.fill ?? doc.layers.get(e.layer)?.color ?? '#94a3b8', (v) => this.update('채우기 색', [e], (c) => c.kind === 'shape' && (c.fill = v)));
+      const fill = this.input('color', e.fill ?? doc.layers.get(e.layer)?.color ?? SHAPE_FILL, (v) => this.update('채우기 색', [e], (c) => c.kind === 'shape' && (c.fill = v)));
       const clear = this.button('없음', '채우기 색 지우기 (레이어 색으로 옅게)', () => this.update('채우기 색', [e], (c) => c.kind === 'shape' && delete c.fill));
       const box = document.createElement('span');
       box.className = 'row';
@@ -195,8 +278,6 @@ export class PropertyPanel {
       });
       sets.push(this.strokeSet(lines, '변 선 양식'));
     } else if (e.kind === 'circle') {
-      const c = doc.point(e.center);
-      this.row(f, '중심', `${formatLength(c.x, unit)}, ${formatLength(c.y, unit)}`);
       const constrained = doc.constraintsOn([e.id]).length > 0;
       const r = this.input('number', String(Math.round(e.radius * 100) / 100), (v) => {
         const n = Number(v);
@@ -214,6 +295,7 @@ export class PropertyPanel {
     } else if (e.kind === 'equipment') {
       sets.push(...this.equipmentSets(e));
     }
+    sets.splice(1, 0, this.coordinates(e));
     return sets;
   }
 
@@ -327,7 +409,7 @@ export class PropertyPanel {
         apply({ width: n });
       }),
     );
-    const color = this.input('color', current.color ?? this.host.doc.layers.get(lines[0]?.layer ?? '')?.color ?? '#475569', (v) => apply({ color: v }));
+    const color = this.input('color', current.color ?? this.host.doc.layers.get(lines[0]?.layer ?? '')?.color ?? LAYER_DEFAULT, (v) => apply({ color: v }));
     this.row(f, '색', color);
     const actions = document.createElement('div');
     actions.className = 'actions';

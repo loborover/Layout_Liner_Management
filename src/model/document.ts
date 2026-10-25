@@ -23,10 +23,20 @@ import {
   type Folder,
   type Id,
   type Layer,
+  type LineEntity,
   type Point,
   type ShapeEntity,
   type Underlay,
 } from './types';
+import { LAYER_DEFAULT } from '../theme';
+
+/** Vertex id of a line's midpoint: the line id plus this suffix (never stored, see `midpointId`). */
+const MIDPOINT_SUFFIX = '~mid';
+
+/** Selectable vertex id of a line's derived midpoint. */
+export function midpointId(lineId: Id): Id {
+  return lineId + MIDPOINT_SUFFIX;
+}
 
 type Listener = () => void;
 
@@ -81,7 +91,7 @@ export class DocumentModel {
     this.layers.set(DEFAULT_LAYER_ID, {
       id: DEFAULT_LAYER_ID,
       name: '0',
-      color: '#1f2937',
+      color: LAYER_DEFAULT,
       visible: true,
       locked: false,
       floor: DEFAULT_FLOOR_ID,
@@ -96,6 +106,33 @@ export class DocumentModel {
     const p = this.points.get(id);
     if (!p) throw new Error(`Unknown point ${id}`);
     return p;
+  }
+
+  /** The line whose derived midpoint has this vertex id, if any. */
+  midpointLine(id: Id): LineEntity | null {
+    if (!id.endsWith(MIDPOINT_SUFFIX)) return null;
+    const e = this.entities.get(id.slice(0, -MIDPOINT_SUFFIX.length));
+    return e?.kind === 'line' ? e : null;
+  }
+
+  /** Whether an id names a selectable vertex: a stored point or a line's midpoint. */
+  isVertex(id: Id): boolean {
+    return this.points.has(id) || this.midpointLine(id) !== null;
+  }
+
+  /** Position of a vertex; a midpoint is the average of its line's ends (X, Y and Z). */
+  vertex(id: Id): Point {
+    const line = this.midpointLine(id);
+    if (!line) return this.point(id);
+    const a = this.point(line.p1);
+    const b = this.point(line.p2);
+    return { id, x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, z: ((a.z ?? 0) + (b.z ?? 0)) / 2 };
+  }
+
+  /** Stored points that move when a vertex moves: the point itself, or both ends of a midpoint's line. */
+  vertexPoints(id: Id): Id[] {
+    const line = this.midpointLine(id);
+    return line ? [line.p1, line.p2] : [id];
   }
 
   addPoints(points: Point[]): void {
@@ -177,9 +214,40 @@ export class DocumentModel {
   /** Point ids an entity depends on. */
   pointIdsOf(e: Entity): Id[] {
     if (e.kind === 'circle') return [e.center];
-    if (e.kind === 'equipment') return [e.at];
+    if (e.kind === 'equipment' || e.kind === 'point') return [e.at];
     if (e.kind === 'shape') return e.points;
     return [e.p1, e.p2];
+  }
+
+  private usersRev = -1;
+  private users = new Map<Id, Entity[]>();
+
+  /** Entities that reference a point (lines, shapes, dimensions, circles, equipment), cached per revision. */
+  pointUsers(id: Id): Entity[] {
+    const line = this.midpointLine(id);
+    if (line) return [line];
+    if (this.usersRev !== this.rev) {
+      this.users.clear();
+      for (const e of this.entities.values()) {
+        for (const pid of this.pointIdsOf(e)) {
+          let list = this.users.get(pid);
+          if (!list) this.users.set(pid, (list = []));
+          list.push(e);
+        }
+      }
+      this.usersRev = this.rev;
+    }
+    return this.users.get(id) ?? [];
+  }
+
+  /** Whether a point can be selected and edited: some editable entity uses it. */
+  isPointEditable(id: Id): boolean {
+    return this.pointUsers(id).some((e) => this.isEditable(e));
+  }
+
+  /** Whether a point is shown: some visible entity uses it. */
+  isPointVisible(id: Id): boolean {
+    return this.pointUsers(id).some((e) => this.isVisible(e));
   }
 
   /** Footprint corners of a piece of equipment, counter-clockwise from its front-left. */
@@ -196,6 +264,10 @@ export class DocumentModel {
   }
 
   bboxOf(e: Entity): Box {
+    if (e.kind === 'point') {
+      const p = this.point(e.at);
+      return { minX: p.x, minY: p.y, maxX: p.x, maxY: p.y };
+    }
     if (e.kind === 'line') {
       const a = this.point(e.p1);
       const b = this.point(e.p2);
@@ -275,7 +347,7 @@ export class DocumentModel {
   toData(): DocumentData {
     return {
       format: 'layout-liner',
-      version: 2,
+      version: 3,
       units: 'mm',
       points: [...this.points.values()].map((p) => ({ ...p })),
       entities: [...this.entities.values()].map(cloneEntity),

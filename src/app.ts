@@ -18,7 +18,7 @@ import { hasConstraints } from './constraints/components';
 import { type ClusterStatus, ConstraintService } from './constraints/service';
 import { Batch, type Command, History, RemoveConstraints, RemoveEntities, SetDimensionValue, SetUnderlay, UpdateEntities } from './model/commands';
 import { DocumentModel, cloneEntity } from './model/document';
-import { arrayOffsets, copyItems, makeShapes, moveToLayer, type ReorderMove, reorderItems, rotateItems } from './model/edit';
+import { arrayOffsets, copyItems, makeShapes, moveToLayer, type ReorderMove, reorderItems, rotateItems, deletionTargets } from './model/edit';
 import { EditorApi } from './api/editorApi';
 import { METHODS, dispatch } from './api/rpc';
 import { BridgeClient } from './api/bridge';
@@ -30,6 +30,8 @@ import { PropertyPanel } from './ui/properties';
 import { fillInspector } from './ui/inspector';
 import { hydrateIcons } from './ui/icons';
 import type { LiveValue, Mode, UiHost } from './ui/host';
+import { buildScene } from './model/scene3d';
+import type { Layout, View3D } from './view3d/view3d';
 import { equipmentCsv } from './io/equipmentList';
 import { DxfError, parseDxf } from './io/dxf';
 import { writeDxf } from './io/dxfExport';
@@ -42,22 +44,23 @@ import { Selection } from './model/selection';
 import { SpatialIndex } from './model/spatial';
 import { SnapEngine, type SnapResult, type SnapSettings } from './snap/snap';
 import { type ConstraintKind, DEFAULT_LAYER_ID, type Id, type StrokeStyle, type Underlay } from './model/types';
-import { CircleTool, DimensionTool, LineTool, RectTool } from './tools/draw';
+import { CircleTool, DimensionTool, LineTool, PointTool, RectTool } from './tools/draw';
 import { MeasureAngleTool, MeasureAreaTool, MeasureDistanceTool } from './tools/measure';
 import { SelectTool } from './tools/select';
 import type { Tool, ToolContext, ToolPointer } from './tools/tool';
 import { type DisplayUnit, formatLength } from './view/format';
 import { type EntityStatus, Renderer } from './view/renderer';
 import { Viewport, gridSpacing } from './view/viewport';
+import { CANVAS, STATUS } from './theme';
 
 const AUTOSAVE_KEY = 'layout-liner:autosave';
 const PICK_TOLERANCE_PX = 6;
 const SNAP_REACH_PX = 10;
 const WHEEL_ZOOM_STEP = 1.0015;
 /** Tools that create geometry on the current layer. */
-const DRAWING_TOOLS = new Set(['line', 'rect', 'circle', 'dimension', 'equipment']);
+const DRAWING_TOOLS = new Set(['point', 'line', 'rect', 'circle', 'dimension', 'equipment']);
 /** Monitoring status → fill colour (docs/VIEWER.md). */
-const STATUS_COLORS: Record<string, string> = { ok: '#16a34a', warn: '#f59e0b', alarm: '#dc2626', offline: '#94a3b8' };
+const STATUS_COLORS: Record<string, string> = STATUS;
 
 const $ = <T extends HTMLElement>(sel: string): T => {
   const el = document.querySelector<T>(sel);
@@ -84,6 +87,10 @@ export class App implements UiHost {
   private tools: Record<string, Tool>;
   private tool: Tool;
   private hover: Id | null = null;
+  private view3d: View3D | null = null;
+  private currentView: 'plan' | Layout = 'plan';
+  private scene3dRequested = false;
+  private fit3dPending = false;
   private currentLayerId: Id = DEFAULT_LAYER_ID;
   private library: Library;
   private tree: ObjectTree;
@@ -140,6 +147,7 @@ export class App implements UiHost {
       select: new SelectTool(ctx),
       line: new LineTool(ctx),
       rect: new RectTool(ctx),
+      point: new PointTool(ctx),
       circle: new CircleTool(ctx),
       dimension: new DimensionTool(ctx),
       'measure-distance': new MeasureDistanceTool(ctx),
@@ -164,10 +172,13 @@ export class App implements UiHost {
     this.doc.onChange(() => {
       // Hidden or locked geometry can't stay selected: it could otherwise still be moved or deleted.
       this.selection.prune((id) => {
+        const view = this.currentMode === 'view';
+        if (this.doc.isVertex(id)) return view ? this.doc.isPointVisible(id) : this.doc.isPointEditable(id);
         const e = this.doc.entities.get(id);
-        return !!e && (this.currentMode === 'view' ? this.doc.isVisible(e) : this.doc.isEditable(e));
+        return !!e && (view ? this.doc.isVisible(e) : this.doc.isEditable(e));
       });
       this.refreshPanels();
+      this.refresh3d();
       this.refreshInspector();
       this.refreshUnderlayControls();
       this.refreshFloorSelect();
@@ -178,6 +189,7 @@ export class App implements UiHost {
     this.selection.onChange(() => {
       this.tree.refresh();
       this.props.refresh();
+      this.refresh3d();
       // Selecting from the tree should show the selection's properties when the bar shows nothing else useful.
       this.requestRender();
     });
@@ -207,6 +219,13 @@ export class App implements UiHost {
 
   unit(): DisplayUnit {
     return this.displayUnit;
+  }
+
+  setPoint(id: Id, to: { x: number; y: number; z?: number }): void {
+    if (this.currentMode !== 'edit') return this.notify('뷰어 모드에서는 편집할 수 없습니다.');
+    void this.constraints.setPoint(id, to).then((r) => {
+      if (!r.ok) this.notify(r.message);
+    });
   }
 
   /** Current layer, falling back to the first layer of the active floor (e.g. after undo, opening a file or a floor change). */
@@ -368,7 +387,61 @@ export class App implements UiHost {
   private resize(): void {
     const r = this.canvas.parentElement!.getBoundingClientRect();
     this.renderer.resize(r.width, r.height, window.devicePixelRatio || 1);
+    this.view3d?.resize(r.width, r.height, window.devicePixelRatio || 1);
     this.requestRender();
+  }
+
+  // ---------- 3D views ----------
+
+  /**
+   * Switches between the 2D plan editor and the 3D views. three.js and the 3D code are fetched the first time a
+   * 3D view opens (dynamic import), so the plan editor never pays for them.
+   */
+  async setView(view: 'plan' | Layout): Promise<void> {
+    document.querySelectorAll<HTMLButtonElement>('[data-view]').forEach((b) => b.setAttribute('aria-checked', String(b.dataset.view === view)));
+    if (view === 'plan') {
+      this.currentView = 'plan';
+      document.body.classList.remove('view-3d');
+      this.hintEl.textContent = this.tool.hint;
+      this.resize();
+      return;
+    }
+    const first = !this.view3d;
+    if (first) {
+      this.notify('3D 보기를 불러오는 중…');
+      try {
+        const { View3D } = await import('./view3d/view3d');
+        this.view3d ??= new View3D(this.canvas.parentElement!, (id) => (id ? this.selection.set([id]) : this.selection.clear()));
+        this.notify('');
+      } catch (err) {
+        this.notify(`3D 보기를 열 수 없습니다(WebGL 필요): ${err instanceof Error ? err.message : String(err)}`);
+        return this.setView('plan');
+      }
+    }
+    this.currentView = view;
+    this.setTool('select');
+    document.body.classList.add('view-3d');
+    this.view3d!.setLayout(view);
+    this.resize();
+    this.refresh3d(first);
+    this.hintEl.textContent = '3D 보기: 클릭 선택 · 휠 확대 · 드래그 이동(등각: 회전, Shift+드래그 이동) · 더블클릭 맞춤 · 편집은 평면 보기에서';
+  }
+
+  /** Rebuilds the 3D scene (debounced to one per frame) when the drawing, selection or live values change. */
+  private refresh3d(fit = false): void {
+    if (this.currentView === 'plan' || !this.view3d) return;
+    if (fit) this.fit3dPending = true;
+    if (this.scene3dRequested) return;
+    this.scene3dRequested = true;
+    requestAnimationFrame(() => {
+      this.scene3dRequested = false;
+      const colors = new Map<Id, string>();
+      for (const [id, st] of this.liveStatus() ?? []) colors.set(id, st.color);
+      for (const id of this.selection.values()) if (this.doc.entities.has(id)) colors.set(id, CANVAS.selected);
+      const allFloors = document.querySelector<HTMLInputElement>('#view3d-all-floors')?.checked !== false;
+      this.view3d!.setScene(buildScene(this.doc, { floors: allFloors ? 'all' : 'active', colors }), this.fit3dPending);
+      this.fit3dPending = false;
+    });
   }
 
   private pointer(e: PointerEvent | MouseEvent): ToolPointer {
@@ -376,11 +449,16 @@ export class App implements UiHost {
     const screen = { x: e.clientX - r.left, y: e.clientY - r.top };
     const raw = this.view.toWorld(screen);
     const q = this.tool.snapQuery?.() ?? {};
+    const ctrl = e.ctrlKey || e.metaKey;
     const snap =
       this.currentMode === 'edit' || this.tool.id.startsWith('measure')
-        ? this.snapper.snap(raw, this.view.pxToMm(SNAP_REACH_PX), gridSpacing(this.view.scale).minor, this.snapSettings, { ...q, ortho: e.shiftKey && !!q.from })
+        ? this.snapper.snap(raw, this.view.pxToMm(SNAP_REACH_PX), gridSpacing(this.view.scale).minor, this.snapSettings, {
+            ...q,
+            ortho: e.shiftKey && !!q.from,
+            pointsOnly: ctrl,
+          })
         : null;
-    return { screen, raw, world: snap?.point ?? raw, snap, button: e.button, shift: e.shiftKey };
+    return { screen, raw, world: snap?.point ?? raw, snap, button: e.button, shift: e.shiftKey, ctrl };
   }
 
   private bindCanvas(): void {
@@ -452,6 +530,10 @@ export class App implements UiHost {
     document.querySelectorAll<HTMLButtonElement>('[data-tool]').forEach((b) => {
       b.addEventListener('click', () => this.setTool(b.dataset.tool!));
     });
+    document.querySelectorAll<HTMLButtonElement>('[data-view]').forEach((b) => {
+      b.addEventListener('click', () => void this.setView(b.dataset.view as 'plan' | Layout));
+    });
+    document.querySelector<HTMLInputElement>('#view3d-all-floors')?.addEventListener('change', () => this.refresh3d(true));
     document.querySelectorAll<HTMLButtonElement>('[data-mode]').forEach((b) => {
       b.addEventListener('click', () => this.setMode(b.dataset.mode as Mode));
     });
@@ -469,7 +551,8 @@ export class App implements UiHost {
     const actions: Record<string, () => void> = {
       undo: e(() => this.undo()),
       redo: e(() => this.redo()),
-      fit: () => this.fitAll(),
+      fit: () => (this.currentView === 'plan' ? this.fitAll() : this.view3d?.fitAll()),
+      'view3d-fit': () => this.view3d?.fitAll(),
       new: e(() => this.newDrawing()),
       open: e(() => $<HTMLInputElement>('#file-input').click()),
       save: () => this.save(),
@@ -618,6 +701,7 @@ export class App implements UiHost {
         const shortcuts: Record<string, () => void> = editing
           ? {
               v: () => this.setTool('select'),
+              p: () => this.setTool('point'),
               l: () => this.setTool('line'),
               r: () => this.setTool('rect'),
               c: () => this.setTool('circle'),
@@ -629,6 +713,11 @@ export class App implements UiHost {
               f: () => this.fitAll(),
             }
           : { f: () => this.fitAll(), m: () => this.setTool('measure-distance'), v: () => this.setTool('inspect') };
+        // 3D views: drawing tools act on the hidden plan, so only fitting works there (Delete/undo go through above).
+        if (this.currentView !== 'plan') {
+          if (key === 'f') this.view3d?.fitAll();
+          return;
+        }
         shortcuts[key]?.();
       }
     });
@@ -721,13 +810,18 @@ export class App implements UiHost {
   }
 
   private reorderSelection(move: ReorderMove): void {
-    const cmd = reorderItems(this.doc, this.selection.values(), move);
+    const cmd = reorderItems(this.doc, this.selectedEntities(), move);
     if (!cmd) return this.notify(this.selection.size === 0 ? '순서를 바꿀 객체를 선택하십시오.' : '이미 그 위치입니다.');
     this.history.execute(cmd);
   }
 
+  /** Selected entity ids; selected points (vertices) are left out. */
+  private selectedEntities(): Id[] {
+    return this.selection.values().filter((id) => this.doc.entities.has(id));
+  }
+
   private deleteSelection(): void {
-    const ids = this.selection.values();
+    const ids = deletionTargets(this.doc, this.selection.values());
     if (ids.length === 0) return this.notify('삭제할 객체를 선택하십시오.');
     this.tool.interrupt?.();
     this.selection.clear();
@@ -787,7 +881,7 @@ export class App implements UiHost {
   }
 
   private rotateSelection(): void {
-    const ids = this.selection.values();
+    const ids = this.selectedEntities();
     if (ids.length === 0) return this.notify('회전할 객체를 선택하십시오.');
     const cmd = rotateItems(this.doc, ids, 90);
     if (typeof cmd === 'string') this.notify(cmd);
@@ -796,7 +890,7 @@ export class App implements UiHost {
 
   /** Rectangular array of the selection; the original stays as the first item. */
   private arraySelection(): void {
-    const ids = this.selection.values();
+    const ids = this.selectedEntities();
     if (ids.length === 0) return this.notify('배열 복사할 객체를 선택하십시오.');
     const boxes = ids.flatMap((id) => {
       const e = this.doc.entities.get(id);
@@ -820,7 +914,7 @@ export class App implements UiHost {
   }
 
   private selectionToLayer(): void {
-    const ids = this.selection.values();
+    const ids = this.selectedEntities();
     if (ids.length === 0) return this.notify('현재 레이어로 옮길 객체를 선택하십시오.');
     const target = this.currentLayer();
     if (ids.some((id) => this.doc.floorOf(this.doc.entities.get(id)!) !== this.doc.layers.get(target)?.floor)) {
@@ -980,8 +1074,10 @@ export class App implements UiHost {
         break;
       }
       case 'fixed': {
-        const points = [...new Set(selected.filter((e) => e.kind !== 'dimension').flatMap((e) => this.doc.pointIdsOf(e)))];
-        if (points.length === 0) return this.notify('고정할 선이나 원을 선택하십시오.');
+        // Selected points are fixed themselves; selected geometry fixes all of its points.
+        const picked = this.selection.values().filter((id) => this.doc.isVertex(id)).flatMap((id) => this.doc.vertexPoints(id));
+        const points = [...new Set([...picked, ...selected.filter((e) => e.kind !== 'dimension').flatMap((e) => this.doc.pointIdsOf(e))])];
+        if (points.length === 0) return this.notify('고정할 점, 선이나 원을 선택하십시오.');
         refs = [points];
         break;
       }

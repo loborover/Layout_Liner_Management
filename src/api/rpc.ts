@@ -99,6 +99,12 @@ export const METHODS: Record<string, MethodSpec> = {
     mutates: true,
     run: (api, p) => api.addRectangle(p as never),
   },
+  addPoint: {
+    description: '독립 점 객체(기준점, 측량점, 센서 위치 등)를 놓습니다. 기존 점과 0.5 mm 안이면 그 점을 공유합니다.',
+    params: obj({ x: num('mm'), y: num('mm'), z: num('층 바닥 기준 높이 mm'), layer: str('레이어 id'), name: str('이름') }, ['x', 'y']),
+    mutates: true,
+    run: (api, p) => api.addPoint(p as never),
+  },
   addCircle: {
     description: '원을 그립니다.',
     params: obj({ x: num('중심 mm'), y: num('중심 mm'), radius: num('mm'), layer: str('레이어 id'), name: str('이름') }, ['x', 'y', 'radius']),
@@ -131,7 +137,7 @@ export const METHODS: Record<string, MethodSpec> = {
     run: (api, p) => api.placeEquipment(p as never),
   },
   updateEntity: {
-    description: '객체 속성 변경: name, layer, binding(모니터링 키), stroke(선), fill(도형), tag/rotation/props(설비·구조), radius(원). null은 지움.',
+    description: '객체 속성 변경: name, layer, binding(모니터링 키), stroke(선), fill(도형), tag/rotation/props(설비·구조), radius(원), height(3D 높이 mm). null은 지움.',
     params: obj(
       {
         id: str('객체 id'),
@@ -144,11 +150,18 @@ export const METHODS: Record<string, MethodSpec> = {
         rotation: { type: 'number' },
         radius: { type: 'number' },
         props: { type: ['object', 'null'] },
+        height: { type: ['number', 'null'], minimum: 0, description: '3D 높이(mm). null이면 기본값(벽·구조물은 층고, 설비 1000)' },
       },
       ['id'],
     ),
     mutates: true,
     run: (api, p) => api.updateEntity(p as never),
+  },
+  setPoint: {
+    description: '점(꼭짓점)을 X·Y·Z(mm) 위치로 옮깁니다. 이 점을 쓰는 선·도형·치수가 함께 바뀝니다. Z는 층 바닥 기준 높이. 점 id는 getEntity의 start/middle/end/position/polygon에 있습니다. 선의 중간점(middle)을 옮기면 선 전체가 옮겨집니다.',
+    params: obj({ id: str('점 id'), x: num('X (mm)'), y: num('Y (mm)'), z: num('Z: 층 바닥 기준 높이 (mm)') }, ['id']),
+    mutates: true,
+    run: (api, p) => api.setPoint(p as never),
   },
   setStroke: {
     description: '선과 도형의 변에 선 양식(벽 두께 등)을 지정합니다. stroke=null이면 지웁니다.',
@@ -246,6 +259,12 @@ export const METHODS: Record<string, MethodSpec> = {
     params: obj({}),
     mutates: false,
     run: (api) => api.presetSchema(),
+  },
+  scene3d: {
+    description: '3D 장면(벽·설비·계단 등을 높이 있는 입체와 3D 선으로 바꾼 것, mm, Z 위쪽)을 반환합니다. 호스트 서버에서 렌더링하거나 glTF 등으로 변환할 때 씁니다.',
+    params: obj({ floors: { enum: ['all', 'active'], description: "all: 모든 층을 표고대로 쌓음(기본), active: 현재 층만" } }),
+    mutates: false,
+    run: (api, p) => api.scene3d(p as never),
   },
   undo: { description: '실행 취소.', params: obj({}), mutates: true, run: (api) => api.undo() },
   redo: { description: '다시 실행.', params: obj({}), mutates: true, run: (api) => api.redo() },

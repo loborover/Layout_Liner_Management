@@ -2,11 +2,13 @@
  * @file select.ts
  *
  * Selection tool: click/shift-click/window selection, dragging (with constrained drag support), dimension-line
- * drag, double-click value editing and Delete.
+ * drag, double-click value editing and Delete. Clicking right on a vertex selects the point itself (shared by the
+ * lines, shapes and dimensions built on it), so a single corner can be dragged or given exact X, Y, Z.
  */
 import { type Vec2, boxFromPoints, dist, sub } from '../geom/vec';
 import { dimensionGeometry } from '../geom/dimension';
 import { Batch, type Command, MovePoints, RemoveEntities, SetDimensionOffsets, UpdateEntities } from '../model/commands';
+import { deletionTargets } from '../model/edit';
 import type { Id } from '../model/types';
 import type { ConstrainedDrag } from '../constraints/service';
 import type { SnapQuery } from '../snap/snap';
@@ -33,7 +35,7 @@ const DRAG_THRESHOLD_PX = 4;
 export class SelectTool implements Tool {
   readonly id = 'select';
   readonly hint =
-    '클릭: 선택 · Shift+클릭: 추가/해제 · 드래그: 이동 또는 영역 선택(→ 포함, ← 걸침) · 더블클릭: 치수 값·반지름·설비 번호 입력 · Delete: 삭제';
+    '클릭: 선택(꼭짓점·선의 중간점 위: 점 선택) · Shift+클릭: 추가/해제 · 드래그: 이동 또는 영역 선택(→ 포함, ← 걸침) · 더블클릭: 치수 값·반지름·설비 번호 입력 · Delete: 삭제';
   readonly cursor = 'default';
   private state: State = { kind: 'idle' };
 
@@ -43,27 +45,34 @@ export class SelectTool implements Tool {
     const s = this.state;
     // While dragging a selection, snap the grabbed point to other geometry, never to what is moving.
     if (s.kind === 'move' || (s.kind === 'press' && s.onEntity)) {
-      return { from: s.start, exclude: new Set(this.ctx.selection.values()) };
+      const { doc, selection } = this.ctx;
+      // A dragged point must not snap to the entities built on it, which move with it.
+      const exclude = new Set(
+        selection.values().flatMap((id) => (doc.isVertex(id) ? doc.vertexPoints(id).flatMap((pid) => doc.pointUsers(pid).map((e) => e.id)) : [id])),
+      );
+      return { from: s.start, exclude };
     }
     return {};
   }
 
   down(p: ToolPointer): void {
     if (p.button !== 0) return;
-    const { index, selection } = this.ctx;
-    const hit = index.pick(p.raw, this.ctx.pickTolerance());
+    const { selection } = this.ctx;
+    const hit = this.hitAt(p.raw);
     if (hit) {
-      if (p.shift) selection.toggle(hit.id);
-      else if (!selection.has(hit.id)) selection.set([hit.id]);
+      if (p.shift) selection.toggle(hit);
+      else if (!selection.has(hit)) selection.set([hit]);
     }
-    this.state = { kind: 'press', start: p.world, startRaw: p.raw, startScreen: p.screen, onEntity: !!hit && selection.has(hit.id) };
+    // A press on a vertex starts the drag from the vertex itself, so it lands exactly on the snap target.
+    const start = hit && this.ctx.doc.isVertex(hit) ? { ...this.ctx.doc.vertex(hit) } : p.world;
+    this.state = { kind: 'press', start, startRaw: p.raw, startScreen: p.screen, onEntity: !!hit && selection.has(hit) };
   }
 
   move(p: ToolPointer): void {
     const { ctx } = this;
     const s = this.state;
     if (s.kind === 'idle') {
-      ctx.setHover(ctx.index.pick(p.raw, ctx.pickTolerance())?.id ?? null);
+      ctx.setHover(this.hitAt(p.raw));
       return;
     }
     if (s.kind === 'press') {
@@ -150,7 +159,7 @@ export class SelectTool implements Tool {
 
   key(e: KeyboardEvent): boolean {
     if (e.key === 'Delete' || e.key === 'Backspace') {
-      const ids = this.ctx.selection.values();
+      const ids = deletionTargets(this.ctx.doc, this.ctx.selection.values());
       if (ids.length === 0) return false;
       this.ctx.selection.clear();
       this.ctx.history.execute(new RemoveEntities(ids));
@@ -190,7 +199,22 @@ export class SelectTool implements Tool {
     const s = this.state;
     if (s.kind !== 'box') return;
     const crossing = s.end.x < s.start.x;
-    p.rect(s.start, s.end, crossing ? '#16a34a' : COLORS.selected, crossing ? COLORS.crossing : COLORS.window, crossing ? [5, 4] : []);
+    p.rect(s.start, s.end, crossing ? COLORS.snap : COLORS.selected, crossing ? COLORS.crossing : COLORS.window, crossing ? [5, 4] : []);
+  }
+
+  /**
+   * What a click at p selects: a vertex when the cursor is on one (points win over the lines through them), else an
+   * entity. A point used only by a point object selects that object, so its name and layer can be edited too.
+   */
+  private hitAt(p: Vec2): Id | null {
+    const { doc, index } = this.ctx;
+    const tol = this.ctx.pickTolerance();
+    const vertex = index.pickPoint(p, tol);
+    if (vertex) {
+      const users = doc.pointUsers(vertex);
+      return users.length === 1 && users[0].kind === 'point' ? users[0].id : vertex;
+    }
+    return index.pick(p, tol)?.id ?? null;
   }
 
   /** Selected dimensions that stay attached to unmoved points; dragging them moves their dimension line. */
@@ -233,6 +257,10 @@ export class SelectTool implements Tool {
     const ids = new Set<Id>();
     const dimensionPoints = new Set<Id>();
     for (const id of selection.values()) {
+      if (doc.isVertex(id)) {
+        if (doc.isPointEditable(id)) for (const pid of doc.vertexPoints(id)) ids.add(pid);
+        continue;
+      }
       const e = doc.entities.get(id);
       if (!e || !doc.isEditable(e)) continue;
       for (const pid of doc.pointIdsOf(e)) (e.kind === 'dimension' ? dimensionPoints : ids).add(pid);

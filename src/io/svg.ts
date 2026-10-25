@@ -77,6 +77,10 @@ export function drawingSvg(doc: DocumentModel): string | null {
             labels.push(`<text x="${n(at.x)}" y="${n(-at.y + dy)}" font-size="${n(fs)}">${esc(t)}</text>`);
           });
         }
+      } else if (e.kind === 'point') {
+        const p = doc.point(e.at);
+        const r = textSize * 0.25;
+        shapes.push(`<path d="M${n(p.x - r)} ${y(p.y)}L${n(p.x + r)} ${y(p.y)}M${n(p.x)} ${y(p.y - r)}L${n(p.x)} ${y(p.y + r)}" stroke="${layer.color}"/>`);
       } else {
         const a = doc.point(e.p1);
         const b = doc.point(e.p2);
