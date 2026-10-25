@@ -19,6 +19,8 @@ npm test             # 단위 테스트 (vitest, Node 환경, DOM 없음)
 npm run typecheck    # 타입 검사 (tsc --noEmit)
 npm run build        # 배포 빌드 (dist/), typecheck 포함
 npm run mcp          # MCP 서버 실행 (stdio), docs/API.md 참고
+npm run docs:api     # src/api/rpc.ts에서 docs/API-METHODS.md 생성 (API를 바꾸면 필수)
+npm run demo:host    # 모니터링 앱 시험용 예제 호스트 서버
 ```
 
 변경을 마치기 전에 **반드시 `npm run typecheck`와 `npm test`를 통과**시키십시오. 실패를 남긴 채 끝내지 마십시오.
@@ -38,7 +40,8 @@ npm run mcp          # MCP 서버 실행 (stdio), docs/API.md 참고
 | `src/viewer/` | 모니터링 뷰어 앱과 데이터 소스 어댑터 |
 | `mcp/` | Node용 MCP 서버(파일 편집 + 브라우저 실시간 연결 브리지) |
 | `tests/` | vitest 단위 테스트 |
-| `docs/` | 아키텍처, 데이터 모델, API 문서 |
+| `scripts/` | 문서 자동 생성(`apiReference.ts`), 예제 호스트 서버(`demoHost.ts`) |
+| `docs/` | 아키텍처, 데이터 모델, API(자동 생성 메서드 목록 포함), 뷰어 문서 |
 | `deploy/`, `Dockerfile` | Docker/Nginx 배포 |
 
 ## 4. 반드시 지킬 규칙
@@ -50,7 +53,7 @@ npm run mcp          # MCP 서버 실행 (stdio), docs/API.md 참고
 5. **`src/model`, `src/geom`, `src/api`, `src/io`(DXF/JSON)는 DOM을 쓰지 않습니다.** MCP 서버가 Node에서 같은 코드를 사용합니다.
 6. **새 기능에는 테스트를 추가합니다.** 순수 로직은 `tests/`에서 Node로 검증할 수 있게 설계하십시오.
 7. **파일 머리 주석을 유지합니다.** 모든 소스 파일은 `/** @file ... */` 블록으로 목적·취지·관련 파일을 설명합니다. 새 파일에도 같은 형식으로 쓰고, 역할이 바뀌면 고칩니다.
-8. **API를 바꾸면** `src/api/editorApi.ts`, `src/api/rpc.ts`의 메서드 표, `mcp/tools.ts`, `docs/API.md`를 함께 맞춥니다.
+8. **API를 바꾸면** `src/api/editorApi.ts`, `src/api/rpc.ts`의 메서드 표, `mcp/tools.ts`, `docs/API.md`를 함께 맞추고 `npm run docs:api`를 실행합니다.
 9. **사용자에게 보이는 문구는 한국어**입니다. 코드 주석과 식별자는 영어입니다.
 10. 의존성은 꼭 필요할 때만 추가합니다. 편집기는 브라우저에서 가볍게 실행되어야 합니다.
 

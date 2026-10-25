@@ -1,0 +1,25 @@
+# Layout Liner Management
+
+> 공장·건물 평면도 위에서 공간 레이아웃을 그리는 웹 기반 경량 2D CAD(TypeScript, Vite, Canvas 2D, planegcs 구속 솔버). 편집기(index.html), 실시간 모니터링 앱(viewer.html), AI용 편집 API와 MCP 서버를 포함합니다. 길이는 mm, Y축은 위쪽입니다.
+
+AI 에이전트는 먼저 AGENTS.md의 규칙을 읽으십시오. 모든 소스 파일 첫머리의 `@file` 주석에 그 파일의 목적이 있습니다.
+
+## 문서
+
+- [AGENTS.md](AGENTS.md): 작업 규칙, 명령어, 저장소 지도
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): 모듈 구조, 데이터 흐름, 확장 지점
+- [docs/DATA_MODEL.md](docs/DATA_MODEL.md): 도면 JSON 형식(층·폴더·레이어·객체·도형·구조 프리셋)
+- [docs/API.md](docs/API.md): 브라우저 API, MCP 서버, HTTP JSON-RPC, 실시간 브리지
+- [docs/API-METHODS.md](docs/API-METHODS.md): 메서드별 매개변수(자동 생성)
+- [docs/VIEWER.md](docs/VIEWER.md): 뷰어 모드, 모니터링 앱, 호스트 서버 JSON 형식
+
+## 핵심 코드
+
+- [src/model/types.ts](src/model/types.ts): 도면 데이터 타입
+- [src/api/rpc.ts](src/api/rpc.ts): API 메서드 표(MCP 도구의 원본)
+- [mcp/server.ts](mcp/server.ts): MCP 서버
+
+## Optional
+
+- [README.md](README.md): 사용자용 기능 설명
+- [deploy/README.md](deploy/README.md): Docker 배포

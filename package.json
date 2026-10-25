@@ -10,7 +10,9 @@
     "preview": "vite preview",
     "test": "vitest run",
     "typecheck": "tsc --noEmit && tsc --noEmit -p mcp",
-    "mcp": "tsx mcp/server.ts"
+    "mcp": "tsx mcp/server.ts",
+    "docs:api": "tsx scripts/apiReference.ts",
+    "demo:host": "tsx scripts/demoHost.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.2",
