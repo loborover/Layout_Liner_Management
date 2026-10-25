@@ -16,6 +16,7 @@ import {
 } from '../geom/vec';
 import { dimensionGeometry } from '../geom/dimension';
 import { edgesOf, insideConvex } from '../geom/equipment';
+import { insidePolygon } from '../geom/polygon';
 import type { DocumentModel } from './document';
 import type { Entity, Id } from './types';
 
@@ -55,22 +56,30 @@ export class SpatialIndex {
       if (insideConvex(p, corners)) return 0;
       return Math.min(...edgesOf(corners).map(([a, b]) => distToSegment(p, a, b)));
     }
+    if (e.kind === 'shape') {
+      // A shape is grabbed by its face; its outline belongs to its lines.
+      return insidePolygon(p, this.doc.shapePolygon(e)) ? 0 : Infinity;
+    }
     if (e.kind === 'line') return distToSegment(p, this.doc.point(e.p1), this.doc.point(e.p2));
     if (e.kind === 'dimension') {
       const { d1, d2 } = dimensionGeometry(this.doc.point(e.p1), this.doc.point(e.p2), e.offset);
       return distToSegment(p, d1, d2);
     }
-    return Math.abs(dist(p, this.doc.point(e.center)) - e.radius);
+    if (e.kind === 'circle') return Math.abs(dist(p, this.doc.point(e.center)) - e.radius);
+    return Infinity;
   }
 
-  /** Nearest editable entity within tol (mm) of p. */
+  /**
+   * Nearest editable entity within tol (mm) of p. Faces (shapes) rank below everything else, so a line or a piece
+   * of equipment inside a room is picked before the room; among overlapping faces the topmost (latest) wins.
+   */
   pick(p: Vec2, tol: number): Entity | null {
     let best: Entity | null = null;
-    let bestD = tol;
+    let bestD = tol + 1e-9;
     for (const e of this.query({ minX: p.x - tol, minY: p.y - tol, maxX: p.x + tol, maxY: p.y + tol })) {
       if (!this.doc.isEditable(e)) continue;
-      const d = this.distanceTo(e, p);
-      if (d <= bestD) {
+      const d = e.kind === 'shape' ? (this.distanceTo(e, p) === 0 ? tol * 0.999 : Infinity) : this.distanceTo(e, p);
+      if (d < bestD || (d === bestD && best?.kind === 'shape' && e.kind === 'shape' && this.later(e, best))) {
         best = e;
         bestD = d;
       }
@@ -91,12 +100,24 @@ export class SpatialIndex {
         const { d1, d2 } = dimensionGeometry(this.doc.point(e.p1), this.doc.point(e.p2), e.offset);
         return segmentIntersectsBox(d1, d2, box);
       }
-      if (e.kind === 'equipment') {
-        const corners = this.doc.cornersOf(e);
+      if (e.kind === 'equipment' || e.kind === 'shape') {
+        const corners = e.kind === 'equipment' ? this.doc.cornersOf(e) : this.doc.shapePolygon(e);
         const centre = { x: (box.minX + box.maxX) / 2, y: (box.minY + box.maxY) / 2 };
-        return edgesOf(corners).some(([a, b]) => segmentIntersectsBox(a, b, box)) || insideConvex(centre, corners);
+        return edgesOf(corners).some(([a, b]) => segmentIntersectsBox(a, b, box)) || insidePolygon(centre, corners);
       }
-      return circleIntersectsBox(this.doc.point(e.center), e.radius, box);
+      return e.kind === 'circle' && circleIntersectsBox(this.doc.point(e.center), e.radius, box);
     });
+  }
+
+  private orderRev = -1;
+  private orderIndex = new Map<Id, number>();
+
+  /** Whether a comes after b in the drawing order (is drawn on top of it). */
+  private later(a: Entity, b: Entity): boolean {
+    if (this.orderRev !== this.doc.rev) {
+      this.orderIndex = new Map([...this.doc.entities.keys()].map((id, i) => [id, i]));
+      this.orderRev = this.doc.rev;
+    }
+    return (this.orderIndex.get(a.id) ?? 0) > (this.orderIndex.get(b.id) ?? 0);
   }
 }

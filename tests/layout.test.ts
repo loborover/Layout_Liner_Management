@@ -117,7 +117,7 @@ describe('editing', () => {
 
   it('moves entities to a layer and back with undo', () => {
     const { doc, history } = plant();
-    doc.layers.set('l2', { id: 'l2', name: '설비', color: '#2563eb', visible: true, locked: false });
+    doc.layers.set('l2', { id: 'l2', name: '설비', color: '#2563eb', visible: true, locked: false, floor: 'floor-1' });
     history.execute(moveToLayer(doc, ['m1', 'm2'], 'l2')!);
     expect(doc.entities.get('m1')?.layer).toBe('l2');
     history.undo();

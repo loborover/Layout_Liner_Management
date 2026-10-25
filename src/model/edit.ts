@@ -9,13 +9,14 @@ import {
   AddItems,
   Batch,
   type Command,
+  ReorderEntities,
   SetGeometry,
   UpdateEntities,
   captureGeometry,
 } from './commands';
 import type { DocumentModel } from './document';
 import { newId } from './ids';
-import type { Constraint, Entity, EquipmentType, Id, Point } from './types';
+import type { Constraint, Entity, EquipmentType, Id, LineEntity, Point, ShapeEntity } from './types';
 
 /** Next free tag for a type, e.g. "MC-4" after "MC-1".."MC-3". `taken` holds tags handed out but not yet in the document. */
 export function nextTag(doc: DocumentModel, type: EquipmentType, taken: Set<string> = new Set()): string {
@@ -33,10 +34,13 @@ export function nextTag(doc: DocumentModel, type: EquipmentType, taken: Set<stri
  * New equipment gets fresh tags. Returns null when there is nothing to copy.
  */
 export function copyItems(doc: DocumentModel, entityIds: Id[], offsets: Vec2[]): Command | null {
-  const entities = entityIds.flatMap((id) => {
+  // A shape copies with its edge lines, or the copy would reference the original's lines.
+  const ids = new Set(entityIds);
+  for (const id of entityIds) {
     const e = doc.entities.get(id);
-    return e ? [e] : [];
-  });
+    if (e?.kind === 'shape') for (const edge of e.edges) ids.add(edge);
+  }
+  const entities = [...doc.entities.values()].filter((e) => ids.has(e.id));
   if (entities.length === 0 || offsets.length === 0) return null;
   const pointIds = [...new Set(entities.flatMap((e) => doc.pointIdsOf(e)))];
   const inside = new Set<Id>([...entities.map((e) => e.id), ...pointIds]);
@@ -54,9 +58,10 @@ export function copyItems(doc: DocumentModel, entityIds: Id[], offsets: Vec2[]):
       map.set(id, q.id);
       points.push(q);
     }
+    // Ids first, so a shape can map edges that come after it in the document.
+    for (const e of entities) map.set(e.id, newId('e'));
     for (const e of entities) {
-      const id = newId('e');
-      map.set(e.id, id);
+      const id = map.get(e.id)!;
       const m = (pid: Id) => map.get(pid)!;
       let copy: Entity;
       if (e.kind === 'circle') copy = { ...e, id, center: m(e.center) };
@@ -64,8 +69,9 @@ export function copyItems(doc: DocumentModel, entityIds: Id[], offsets: Vec2[]):
         const type = doc.equipmentTypes.get(e.type);
         const tag = type ? nextTag(doc, type, tags) : e.tag;
         tags.add(tag);
-        copy = { ...e, id, at: m(e.at), tag };
-      } else copy = { ...e, id, p1: m(e.p1), p2: m(e.p2) };
+        copy = { ...e, id, at: m(e.at), tag, ...(e.props ? { props: { ...e.props } } : {}) };
+      } else if (e.kind === 'shape') copy = { ...e, id, points: e.points.map(m), edges: e.edges.map(m) };
+      else copy = { ...e, id, p1: m(e.p1), p2: m(e.p2) };
       copies.push(copy);
     }
     for (const c of constraints) copiedConstraints.push({ ...c, id: newId('k'), refs: c.refs.map((r) => map.get(r)!) });
@@ -133,4 +139,91 @@ export function moveToLayer(doc: DocumentModel, entityIds: Id[], layer: Id): Com
   });
   if (before.length === 0) return null;
   return new UpdateEntities('레이어 변경', before, before.map((e) => ({ ...e, layer })));
+}
+
+/**
+ * Closed loops formed by the given lines through their shared points. Only connected groups where every point
+ * joins exactly two of the lines count (a simple ring); branching groups are skipped as ambiguous.
+ */
+export function findLoops(doc: DocumentModel, lineIds: Iterable<Id>): { points: Id[]; edges: Id[] }[] {
+  const lines = [...lineIds].flatMap((id) => {
+    const e = doc.entities.get(id);
+    return e?.kind === 'line' ? [e] : [];
+  });
+  const byPoint = new Map<Id, LineEntity[]>();
+  for (const l of lines) {
+    for (const p of [l.p1, l.p2]) byPoint.set(p, [...(byPoint.get(p) ?? []), l]);
+  }
+  const used = new Set<Id>();
+  const loops: { points: Id[]; edges: Id[] }[] = [];
+  for (const start of lines) {
+    if (used.has(start.id)) continue;
+    const points: Id[] = [start.p1];
+    const edges: Id[] = [start.id];
+    const group = new Set<Id>([start.id]);
+    let at = start.p2;
+    let prev = start;
+    let ok = true;
+    while (at !== start.p1) {
+      const next = (byPoint.get(at) ?? []).filter((l) => l.id !== prev.id);
+      if ((byPoint.get(at) ?? []).length !== 2 || next.length !== 1 || group.has(next[0].id)) {
+        ok = false;
+        break;
+      }
+      points.push(at);
+      edges.push(next[0].id);
+      group.add(next[0].id);
+      prev = next[0];
+      at = prev.p1 === at ? prev.p2 : prev.p1;
+    }
+    for (const id of group) used.add(id);
+    if (ok && (byPoint.get(start.p1) ?? []).length === 2 && edges.length >= 3) loops.push({ points, edges });
+  }
+  return loops;
+}
+
+/**
+ * Turns closed loops among the given lines into shapes ("닫힌 선 → 도형"), skipping loops that already are one.
+ * The shape goes on the layer of its first line. Returns null when there is no new loop.
+ */
+export function makeShapes(doc: DocumentModel, lineIds: Iterable<Id>, name?: string): { command: Command; shapes: ShapeEntity[] } | null {
+  const existing = new Set([...doc.entities.values()].flatMap((e) => (e.kind === 'shape' ? [[...e.edges].sort().join('|')] : [])));
+  let n = [...doc.entities.values()].filter((e) => e.kind === 'shape').length;
+  const shapes: ShapeEntity[] = findLoops(doc, lineIds)
+    .filter((l) => !existing.has([...l.edges].sort().join('|')))
+    .map((l) => ({
+      id: newId('e'),
+      kind: 'shape',
+      points: l.points,
+      edges: l.edges,
+      layer: doc.entities.get(l.edges[0])!.layer,
+      name: name ?? `도형 ${++n}`,
+    }));
+  if (shapes.length === 0) return null;
+  return { command: new AddItems([], shapes), shapes };
+}
+
+export type ReorderMove = 'front' | 'back' | 'forward' | 'backward';
+
+/** Moves entities in the drawing order: to the top or bottom, or one step past their neighbour. */
+export function reorderItems(doc: DocumentModel, entityIds: Id[], move: ReorderMove): Command | null {
+  const before = [...doc.entities.keys()];
+  const sel = new Set(entityIds.filter((id) => doc.entities.has(id)));
+  if (sel.size === 0) return null;
+  let after: Id[];
+  if (move === 'front') after = [...before.filter((id) => !sel.has(id)), ...before.filter((id) => sel.has(id))];
+  else if (move === 'back') after = [...before.filter((id) => sel.has(id)), ...before.filter((id) => !sel.has(id))];
+  else {
+    after = [...before];
+    const step = move === 'forward' ? 1 : -1;
+    const idxs = after.map((id, i) => (sel.has(id) ? i : -1)).filter((i) => i >= 0);
+    if (step > 0) idxs.reverse();
+    for (const i of idxs) {
+      const j = i + step;
+      if (j < 0 || j >= after.length || sel.has(after[j])) continue;
+      [after[i], after[j]] = [after[j], after[i]];
+    }
+  }
+  if (after.every((id, i) => id === before[i])) return null;
+  return new ReorderEntities('순서 변경', before, after);
 }

@@ -75,6 +75,8 @@ export function writeDxf(doc: DocumentModel): string {
   };
   for (const e of doc.entities.values()) {
     const layer = layerName.get(e.layer) ?? '0';
+    // A shape's outline is its lines, which are written themselves; R12 has no filled face to add.
+    if (e.kind === 'shape') continue;
     if (e.kind === 'line') line(doc.point(e.p1), doc.point(e.p2), layer);
     else if (e.kind === 'circle') {
       const c = doc.point(e.center);

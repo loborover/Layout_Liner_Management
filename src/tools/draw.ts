@@ -5,9 +5,9 @@
  */
 import { offsetThrough } from '../geom/dimension';
 import { type Vec2, angleDeg, dist } from '../geom/vec';
-import { AddItems } from '../model/commands';
+import { AddItems, Batch } from '../model/commands';
 import { newId } from '../model/ids';
-import { type Id, type LineEntity, type Point } from '../model/types';
+import { type Id, type LineEntity, type Point, type ShapeEntity } from '../model/types';
 import { formatAngle, formatLength } from '../view/format';
 import { COLORS, type Painter } from '../view/renderer';
 import type { SnapQuery } from '../snap/snap';
@@ -24,7 +24,16 @@ export function existingPoint(ctx: ToolContext, p: ToolPointer): Point | null {
 }
 const line = (ctx: ToolContext, p1: Id, p2: Id): LineEntity => ({ id: newId('e'), kind: 'line', p1, p2, layer: ctx.layer() });
 
-/** Chained line tool: each click adds a segment joined to the previous one. */
+/** Shape over a closed chain of lines: `points[i]` → `points[i+1]` is `lines[i]`. */
+function shapeOf(ctx: ToolContext, points: Id[], lines: Id[]): ShapeEntity {
+  const n = [...ctx.doc.entities.values()].filter((e) => e.kind === 'shape').length + 1;
+  return { id: newId('e'), kind: 'shape', points, edges: lines, layer: ctx.layer(), name: `도형 ${n}` };
+}
+
+/**
+ * Chained line tool: each click adds a segment joined to the previous one. Closing the chain on its first point
+ * also creates a shape (face) over the loop, in the same undo step.
+ */
 export class LineTool implements Tool {
   readonly id = 'line';
   readonly hint = '클릭: 점 추가(연속 선) · 기존 끝점 클릭: 연결 · 시작점 클릭: 닫기 · Shift: 수평/수직 · 우클릭/Esc: 종료';
@@ -33,6 +42,9 @@ export class LineTool implements Tool {
   private start: Point | null = null;
   private pending = false;
   private first: Point | null = null;
+  /** Points and lines of the current chain, in drawing order, for the shape made when it closes. */
+  private chainPoints: Id[] = [];
+  private chainLines: Id[] = [];
   private cursorPos: Vec2 | null = null;
 
   constructor(private readonly ctx: ToolContext) {}
@@ -52,15 +64,27 @@ export class LineTool implements Tool {
       this.start = existing ?? point(p.world);
       this.first = this.start;
       this.pending = !existing;
+      this.chainPoints = [this.start.id];
+      this.chainLines = [];
       return;
     }
     const end = existing ?? point(p.world);
     if (end.id === this.start.id || dist(end, this.start) < 1e-9) return;
     const newPoints = [...(this.pending ? [this.start] : []), ...(existing ? [] : [end])];
-    this.ctx.history.execute(new AddItems(newPoints, [line(this.ctx, this.start.id, end.id)]));
+    const seg = line(this.ctx, this.start.id, end.id);
+    this.chainLines.push(seg.id);
     if (existing && existing.id === this.first?.id) {
-      this.reset(); // outline closed on its first point
+      // Outline closed on its first point: the loop becomes a shape.
+      const add = new AddItems(newPoints, [seg]);
+      // An undo during the chain may have removed earlier segments; then there is no loop to fill.
+      const closed = this.chainLines.length >= 3 && this.chainLines.slice(0, -1).every((id) => doc.entities.has(id));
+      this.ctx.history.execute(
+        closed ? new Batch('도형 그리기', [add, new AddItems([], [shapeOf(this.ctx, [...this.chainPoints], [...this.chainLines])])]) : add,
+      );
+      this.reset();
     } else {
+      this.ctx.history.execute(new AddItems(newPoints, [seg]));
+      this.chainPoints.push(end.id);
       this.start = doc.point(end.id);
       this.pending = false;
     }
@@ -102,10 +126,12 @@ export class LineTool implements Tool {
     this.start = null;
     this.first = null;
     this.pending = false;
+    this.chainPoints = [];
+    this.chainLines = [];
   }
 }
 
-/** Axis-aligned rectangle from two corners, stored as four connected lines. */
+/** Axis-aligned rectangle from two corners, stored as four connected lines and a shape over them. */
 export class RectTool implements Tool {
   readonly id = 'rect';
   readonly hint = '클릭: 첫 모서리 → 클릭: 반대 모서리 · Esc: 취소';
@@ -134,7 +160,8 @@ export class RectTool implements Tool {
     if (Math.abs(a.x - b.x) < 1e-9 || Math.abs(a.y - b.y) < 1e-9) return;
     const pts = [point(a), point({ x: b.x, y: a.y }), point(b), point({ x: a.x, y: b.y })];
     const lines = pts.map((pt, i) => line(this.ctx, pt.id, pts[(i + 1) % 4].id));
-    this.ctx.history.execute(new AddItems(pts, lines));
+    const shape = shapeOf(this.ctx, pts.map((pt) => pt.id), lines.map((l) => l.id));
+    this.ctx.history.execute(new AddItems(pts, [...lines, shape]));
     this.corner = null;
   }
 

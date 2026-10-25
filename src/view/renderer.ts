@@ -1,8 +1,11 @@
 /**
  * @file renderer.ts
  *
- * Canvas 2D renderer. Draws grid, underlay and entities, batching strokes by style for speed, plus selection,
- * constraint badges and tool overlays through the Painter helper.
+ * Canvas 2D renderer. Draws grid, underlay and entities, plus selection, constraint badges and tool overlays
+ * through the Painter helper. Frame order: faces and line bands in drawing order (doc.entities order, so a
+ * later entity covers an earlier one), then outlines batched by stroke style (one path per colour/width, which
+ * keeps large drawings fast), then labels. Structures that reach the active floor from another floor (stairs,
+ * ramps, lifts) are drawn as dashed ghosts. The viewer passes live `status` colours per entity (docs/VIEWER.md).
  */
 import { dimensionGeometry } from '../geom/dimension';
 import type { Vec2 } from '../geom/vec';
@@ -10,8 +13,11 @@ import { SNAP_LABELS, type SnapResult } from '../snap/snap';
 import type { DocumentModel } from '../model/document';
 import type { Selection } from '../model/selection';
 import type { SpatialIndex } from '../model/spatial';
-import type { ConstraintKind, Entity, Id } from '../model/types';
-import { type DisplayUnit, formatLength } from './format';
+import { connectedFloors } from '../model/presets';
+import { StrokeGeometry } from '../model/strokes';
+import { planSymbol } from '../model/symbols';
+import type { ConstraintKind, Entity, EquipmentEntity, Id, ShapeEntity } from '../model/types';
+import { type DisplayUnit, formatArea, formatLength } from './format';
 import { type Viewport, gridSpacing } from './viewport';
 
 export const COLORS = {
@@ -277,12 +283,24 @@ export class Painter {
   }
 }
 
+/** Live state of an entity, drawn by the viewer over the plan. */
+export interface EntityStatus {
+  /** Fill colour of the entity's footprint or face. */
+  color: string;
+  /** Short value text drawn on the entity, e.g. "72.5 °C". */
+  text?: string;
+}
+
 export interface RenderState {
   hover: Id | null;
   unit: DisplayUnit;
   snap?: SnapResult | null;
   /** Entities with no remaining degrees of freedom, drawn in the constrained colour. */
   fullyConstrained?: ReadonlySet<Id>;
+  /** Viewer monitoring state, keyed by entity id. */
+  status?: ReadonlyMap<Id, EntityStatus>;
+  /** Hide constraint badges and point markers (viewer mode). */
+  clean?: boolean;
   overlay?: (p: Painter) => void;
 }
 
@@ -296,9 +314,20 @@ const BADGES: Record<ConstraintKind, string> = {
   radius: 'R',
 };
 
+interface Styled {
+  e: Entity;
+  color: string;
+  width: number;
+  /** Selected or hovered: outlines of faces are only drawn then. */
+  highlighted: boolean;
+}
+
 export class Renderer {
   private ctx: CanvasRenderingContext2D;
   private dpr = 1;
+  readonly strokes: StrokeGeometry;
+  private orderRev = -1;
+  private order = new Map<Id, number>();
 
   constructor(
     private readonly canvas: HTMLCanvasElement,
@@ -310,6 +339,7 @@ export class Renderer {
     const ctx = canvas.getContext('2d', { alpha: false });
     if (!ctx) throw new Error('Canvas 2D를 사용할 수 없습니다.');
     this.ctx = ctx;
+    this.strokes = new StrokeGeometry(doc);
   }
 
   resize(cssWidth: number, cssHeight: number, dpr: number): void {
@@ -344,25 +374,34 @@ export class Renderer {
     this.ctx.globalAlpha = 1;
   }
 
+  private sortByOrder(items: Entity[]): Entity[] {
+    if (this.orderRev !== this.doc.rev) {
+      this.order = new Map([...this.doc.entities.keys()].map((id, i) => [id, i]));
+      this.orderRev = this.doc.rev;
+    }
+    return items.sort((a, b) => (this.order.get(a.id) ?? 0) - (this.order.get(b.id) ?? 0));
+  }
+
   /** Draws the frame and returns the number of entities drawn. */
   render(state: RenderState): number {
-    const { ctx, view } = this;
+    const { ctx, view, doc } = this;
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     ctx.fillStyle = COLORS.background;
     ctx.fillRect(0, 0, view.width, view.height);
     this.drawGrid();
     this.drawUnderlay();
 
-    // Batch entities by stroke style so each style is one path and one stroke call.
-    const batches = new Map<string, { color: string; width: number; items: Entity[] }>();
-    const visibleIds = new Set<Id>();
-    let drawn = 0;
-    for (const e of this.index.query(view.worldBounds())) {
-      visibleIds.add(e.id);
-      const layer = this.doc.layers.get(e.layer);
-      if (layer && !layer.visible) continue;
+    const visible: Styled[] = [];
+    const ghosts: EquipmentEntity[] = [];
+    for (const e of this.sortByOrder(this.index.query(view.worldBounds()))) {
+      if (!doc.isVisible(e)) {
+        if (e.kind === 'equipment' && connectedFloors(doc, e).includes(doc.activeFloor)) ghosts.push(e);
+        continue;
+      }
+      const layer = doc.layers.get(e.layer);
       const selected = this.selection.has(e.id);
       const hovered = e.id === state.hover;
+      const own = e.kind === 'line' ? e.stroke?.color : undefined;
       const base =
         e.kind === 'dimension'
           ? e.value !== undefined
@@ -370,86 +409,147 @@ export class Renderer {
             : COLORS.dimension
           : state.fullyConstrained?.has(e.id)
             ? COLORS.constrained
-            : (layer?.color ?? COLORS.text);
+            : (own ?? layer?.color ?? COLORS.text);
       const color = selected ? COLORS.selected : hovered ? COLORS.hover : base;
-      const width = selected || hovered ? 2 : 1.25;
-      const key = `${color}|${width}`;
-      let batch = batches.get(key);
-      if (!batch) batches.set(key, (batch = { color, width, items: [] }));
-      batch.items.push(e);
-      drawn++;
-    }
-    this.fillEquipment(batches);
-    for (const batch of batches.values()) this.strokeBatch(batch.items, batch.color, batch.width);
-    this.labelEquipment(batches);
-    for (const batch of batches.values()) {
-      for (const e of batch.items) {
-        if (e.kind !== 'dimension') continue;
-        const a = this.doc.point(e.p1);
-        const b = this.doc.point(e.p2);
-        labelDimension(ctx, view, a, b, e.offset, formatLength(Math.hypot(b.x - a.x, b.y - a.y), state.unit), batch.color);
-      }
+      visible.push({ e, color, width: selected || hovered ? 2 : 1.25, highlighted: selected || hovered });
     }
 
+    // Faces, bands and footprints in drawing order.
+    for (const v of visible) this.fill(v, state.status?.get(v.e.id));
+
+    // Outlines batched by style.
+    const batches = new Map<string, { color: string; width: number; items: Styled[] }>();
+    for (const v of visible) {
+      if (v.e.kind === 'shape' && !v.highlighted) continue;
+      const key = `${v.color}|${v.width}`;
+      let batch = batches.get(key);
+      if (!batch) batches.set(key, (batch = { color: v.color, width: v.width, items: [] }));
+      batch.items.push(v);
+    }
+    for (const batch of batches.values()) this.strokeBatch(batch.items.map((v) => v.e), batch.color, batch.width);
+    this.drawGhosts(ghosts);
+
+    this.labelEntities(visible, state);
+    if (!state.clean) this.drawConstraintBadges(new Set(visible.map((v) => v.e.id)));
     const painter = new Painter(ctx, view);
-    this.drawConstraintBadges(visibleIds);
-    for (const id of this.selection.values()) {
-      const e = this.doc.entities.get(id);
-      if (!e) continue;
-      for (const pid of this.doc.pointIdsOf(e)) painter.marker(this.doc.point(pid), COLORS.selected);
+    if (!state.clean) {
+      for (const id of this.selection.values()) {
+        const e = doc.entities.get(id);
+        if (!e) continue;
+        for (const pid of doc.pointIdsOf(e)) painter.marker(doc.point(pid), COLORS.selected);
+      }
     }
     state.overlay?.(painter);
     if (state.snap) painter.snap(state.snap);
-    return drawn;
+    return visible.length;
   }
 
-  /** Light tint over equipment footprints so they read as solid objects. */
-  private fillEquipment(batches: Map<string, { color: string; items: Entity[] }>): void {
+  private path(pts: Vec2[]): void {
     const { ctx, view } = this;
-    ctx.globalAlpha = 0.08;
-    for (const batch of batches.values()) {
+    pts.forEach((p, i) => {
+      const s = view.toScreen(p);
+      if (i === 0) ctx.moveTo(s.x, s.y);
+      else ctx.lineTo(s.x, s.y);
+    });
+    ctx.closePath();
+  }
+
+  /** Face of a shape, band of a styled line, or footprint of equipment. */
+  private fill(v: Styled, status: EntityStatus | undefined): void {
+    const { ctx, doc, view } = this;
+    const { e } = v;
+    const layerColor = doc.layers.get(e.layer)?.color ?? COLORS.text;
+    if (e.kind === 'shape') {
       ctx.beginPath();
-      let any = false;
-      for (const e of batch.items) {
-        if (e.kind !== 'equipment') continue;
-        const cs = this.doc.cornersOf(e).map((c) => view.toScreen(c));
-        ctx.moveTo(cs[0].x, cs[0].y);
-        for (let i = 1; i < 4; i++) ctx.lineTo(cs[i].x, cs[i].y);
-        ctx.closePath();
-        any = true;
-      }
-      if (!any) continue;
-      ctx.fillStyle = batch.color;
+      this.path(doc.shapePolygon(e));
+      ctx.globalAlpha = status ? 0.55 : v.highlighted ? 0.18 : e.fill ? 0.35 : 0.06;
+      ctx.fillStyle = status?.color ?? (v.highlighted ? v.color : (e.fill ?? layerColor));
+      ctx.fill('evenodd');
+      ctx.globalAlpha = 1;
+    } else if (e.kind === 'line') {
+      const band = this.strokes.band(e.id);
+      if (!band) return;
+      ctx.beginPath();
+      this.path(band);
+      ctx.globalAlpha = v.highlighted ? 0.6 : 0.85;
+      ctx.fillStyle = v.highlighted ? v.color : (e.stroke?.color ?? layerColor);
       ctx.fill();
+      ctx.globalAlpha = 1;
+    } else if (e.kind === 'equipment') {
+      const sym = planSymbol(doc, e);
+      ctx.beginPath();
+      if (sym.outline === 'circle') {
+        const c = view.toScreen(doc.point(e.at));
+        const r = ((doc.equipmentTypes.get(e.type)?.width ?? 0) / 2) * view.scale;
+        ctx.arc(c.x, c.y, Math.max(r, 0.5), 0, Math.PI * 2);
+      } else this.path(doc.cornersOf(e));
+      ctx.globalAlpha = status ? 0.55 : sym.solid ? 0.7 : 0.08;
+      ctx.fillStyle = status?.color ?? v.color;
+      ctx.fill();
+      ctx.globalAlpha = 1;
     }
-    ctx.globalAlpha = 1;
   }
 
-  /** Name and tag in the middle of each piece of equipment that is big enough on screen to hold them. */
-  private labelEquipment(batches: Map<string, { color: string; items: Entity[] }>): void {
-    const { ctx, view } = this;
+  /** Stairs, ramps and lifts of another floor that reach this one, as faint dashed outlines. */
+  private drawGhosts(items: EquipmentEntity[]): void {
+    if (items.length === 0) return;
+    const { ctx } = this;
+    ctx.save();
+    ctx.setLineDash([6, 4]);
+    ctx.globalAlpha = 0.45;
+    this.strokeBatch(items, COLORS.axis, 1.25);
+    ctx.restore();
+  }
+
+  /** Equipment tags and names, shape names with their area, dimension values and live status values. */
+  private labelEntities(visible: Styled[], state: RenderState): void {
+    const { ctx, view, doc } = this;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    for (const batch of batches.values()) {
-      ctx.fillStyle = batch.color;
-      for (const e of batch.items) {
-        if (e.kind !== 'equipment') continue;
-        const type = this.doc.equipmentTypes.get(e.type);
+    for (const { e, color } of visible) {
+      const status = state.status?.get(e.id);
+      if (e.kind === 'equipment') {
+        const type = doc.equipmentTypes.get(e.type);
         if (!type) continue;
         const size = Math.min(type.width, type.depth) * view.scale;
         if (size < 22) continue;
-        const c = view.toScreen(this.doc.point(e.at));
+        const c = view.toScreen(doc.point(e.at));
         const font = Math.max(10, Math.min(14, size / 4));
         ctx.font = `${font}px system-ui, sans-serif`;
-        const lines = e.tag ? [e.tag, type.name] : [type.name];
+        const note = planSymbol(doc, e).note;
+        const lines = [e.tag, e.name || type.name, status?.text ?? note].filter((t): t is string => !!t);
         if (size < 40) lines.length = 1;
+        ctx.fillStyle = color;
         lines.forEach((text, i) => ctx.fillText(text, c.x, c.y + (i - (lines.length - 1) / 2) * (font + 2)));
+      } else if (e.kind === 'shape') {
+        this.labelShape(e, color, status);
+      } else if (e.kind === 'dimension') {
+        const a = doc.point(e.p1);
+        const b = doc.point(e.p2);
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'alphabetic';
+        labelDimension(ctx, view, a, b, e.offset, formatLength(Math.hypot(b.x - a.x, b.y - a.y), state.unit), color);
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
       }
     }
+    ctx.textAlign = 'left';
     ctx.textBaseline = 'alphabetic';
   }
 
-  /** Small symbols next to constrained entities, and a marker on fixed points. */
+  private labelShape(e: ShapeEntity, color: string, status: EntityStatus | undefined): void {
+    const { ctx, view, doc } = this;
+    const b = doc.bboxOf(e);
+    const size = Math.min(b.maxX - b.minX, b.maxY - b.minY) * view.scale;
+    if (size < 40) return;
+    // Area-weighted centroid would be nicer for L-shapes, but the box centre is stable while dragging.
+    const c = view.toScreen({ x: (b.minX + b.maxX) / 2, y: (b.minY + b.maxY) / 2 });
+    const lines = [e.name ?? '', formatArea(doc.shapeArea(e)), status?.text ?? ''].filter(Boolean);
+    ctx.font = '12px system-ui, sans-serif';
+    ctx.fillStyle = color === COLORS.selected || color === COLORS.hover ? color : COLORS.text;
+    lines.forEach((text, i) => ctx.fillText(text, c.x, c.y + (i - (lines.length - 1) / 2) * 15));
+  }
+
   private drawConstraintBadges(visible: ReadonlySet<Id>): void {
     if (this.doc.constraints.size === 0) return;
     const { ctx, view } = this;
@@ -507,32 +607,36 @@ export class Renderer {
   }
 
   private strokeBatch(items: Entity[], color: string, width: number): void {
-    const { ctx, view } = this;
+    const { ctx, view, doc } = this;
     ctx.beginPath();
     for (const e of items) {
       if (e.kind === 'line') {
-        const a = view.toScreen(this.doc.point(e.p1));
-        const b = view.toScreen(this.doc.point(e.p2));
+        const a = view.toScreen(doc.point(e.p1));
+        const b = view.toScreen(doc.point(e.p2));
         ctx.moveTo(a.x, a.y);
         ctx.lineTo(b.x, b.y);
+        const band = this.strokes.band(e.id);
+        if (band) this.path(band);
       } else if (e.kind === 'dimension') {
-        traceDimension(ctx, view, this.doc.point(e.p1), this.doc.point(e.p2), e.offset);
+        traceDimension(ctx, view, doc.point(e.p1), doc.point(e.p2), e.offset);
+      } else if (e.kind === 'shape') {
+        this.path(doc.shapePolygon(e));
       } else if (e.kind === 'equipment') {
-        const cs = this.doc.cornersOf(e).map((c) => view.toScreen(c));
-        ctx.moveTo(cs[0].x, cs[0].y);
-        for (let i = 1; i < 4; i++) ctx.lineTo(cs[i].x, cs[i].y);
-        ctx.closePath();
-        // Front marker: a short tick into the footprint from the middle of the front edge.
-        const mid = { x: (cs[0].x + cs[1].x) / 2, y: (cs[0].y + cs[1].y) / 2 };
-        const back = { x: (cs[2].x + cs[3].x) / 2, y: (cs[2].y + cs[3].y) / 2 };
-        const len = Math.hypot(back.x - mid.x, back.y - mid.y);
-        if (len > 1) {
-          const t = Math.min(10, len * 0.25) / len;
-          ctx.moveTo(mid.x, mid.y);
-          ctx.lineTo(mid.x + (back.x - mid.x) * t, mid.y + (back.y - mid.y) * t);
+        const sym = planSymbol(doc, e);
+        if (sym.outline === 'circle') {
+          const c = view.toScreen(doc.point(e.at));
+          const r = Math.max(((doc.equipmentTypes.get(e.type)?.width ?? 0) / 2) * view.scale, 0.5);
+          ctx.moveTo(c.x + r, c.y);
+          ctx.arc(c.x, c.y, r, 0, Math.PI * 2);
+        } else this.path(doc.cornersOf(e));
+        for (const [p, q] of sym.segments) {
+          const a = view.toScreen(p);
+          const b = view.toScreen(q);
+          ctx.moveTo(a.x, a.y);
+          ctx.lineTo(b.x, b.y);
         }
       } else {
-        const c = view.toScreen(this.doc.point(e.center));
+        const c = view.toScreen(doc.point(e.center));
         const r = Math.max(e.radius * view.scale, 0.5);
         ctx.moveTo(c.x + r, c.y);
         ctx.arc(c.x, c.y, r, 0, Math.PI * 2);

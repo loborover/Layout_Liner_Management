@@ -59,6 +59,7 @@ export class SidePanel {
       color: LAYER_COLORS[doc.layers.size % LAYER_COLORS.length],
       visible: true,
       locked: false,
+      floor: doc.activeFloor,
     };
     this.setLayers('레이어 추가', [...this.layers(), layer]);
     this.host.setCurrentLayer(layer.id);

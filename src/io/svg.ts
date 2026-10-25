@@ -35,12 +35,15 @@ export function drawingSvg(doc: DocumentModel): string | null {
     );
   }
   for (const layer of doc.layers.values()) {
-    if (!layer.visible) continue;
+    if (!doc.isLayerVisible(layer.id)) continue;
     const shapes: string[] = [];
     const labels: string[] = [];
     for (const e of doc.entities.values()) {
       if (e.layer !== layer.id) continue;
-      if (e.kind === 'line') {
+      if (e.kind === 'shape') {
+        const pts = doc.shapePolygon(e).map((c) => `${n(c.x)},${y(c.y)}`).join(' ');
+        shapes.push(`<polygon points="${pts}" fill="${e.fill ?? layer.color}" fill-opacity="${e.fill ? 0.35 : 0.08}" stroke="none"/>`);
+      } else if (e.kind === 'line') {
         const a = doc.point(e.p1);
         const b = doc.point(e.p2);
         shapes.push(`<line x1="${n(a.x)}" y1="${y(a.y)}" x2="${n(b.x)}" y2="${y(b.y)}"/>`);
@@ -102,7 +105,7 @@ function visibleExtents(doc: DocumentModel): Box | null {
       ? { minX: Math.min(box.minX, b.minX), minY: Math.min(box.minY, b.minY), maxX: Math.max(box.maxX, b.maxX), maxY: Math.max(box.maxY, b.maxY) }
       : b;
   };
-  for (const e of doc.entities.values()) if (doc.layers.get(e.layer)?.visible !== false) grow(doc.bboxOf(e));
+  for (const e of doc.entities.values()) if (doc.isVisible(e)) grow(doc.bboxOf(e));
   const u = doc.underlay;
   if (u?.visible) grow({ minX: u.x, minY: u.y, maxX: u.x + u.width, maxY: u.y + u.height });
   return box;

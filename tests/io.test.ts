@@ -130,7 +130,7 @@ describe('DXF import into the drawing', () => {
 
 function plan() {
   const doc = new DocumentModel();
-  doc.layers.set('l2', { id: 'l2', name: '설비', color: '#16a34a', visible: true, locked: false });
+  doc.layers.set('l2', { id: 'l2', name: '설비', color: '#16a34a', visible: true, locked: false, floor: 'floor-1' });
   new History(doc).execute(
     new AddItems(
       [

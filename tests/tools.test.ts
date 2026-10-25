@@ -52,15 +52,22 @@ function setup() {
 
 describe('line tool', () => {
   it('closes a room outline on its first point with shared corners', () => {
-    const { doc, ctx, click } = setup();
+    const { doc, ctx, click, history } = setup();
     const line = new LineTool(ctx);
     click(line, 0, 0);
     click(line, 4000, 0);
     click(line, 4000, 3000);
     click(line, 0, 3000);
     click(line, 3, -2); // snaps to the first point and closes
-    expect(doc.entities.size).toBe(4);
+    const kinds = [...doc.entities.values()].map((e) => e.kind);
+    expect(kinds.filter((k) => k === 'line')).toHaveLength(4);
+    // The closed loop becomes a shape (face) over the four lines, in the same undo step.
+    const shape = [...doc.entities.values()].find((e) => e.kind === 'shape');
+    expect(shape?.kind === 'shape' && shape.edges).toHaveLength(4);
+    expect(shape?.kind === 'shape' && doc.shapeArea(shape)).toBeCloseTo(12e6);
     expect(doc.points.size).toBe(4);
+    history.undo();
+    expect([...doc.entities.values()].some((e) => e.kind === 'shape')).toBe(false);
   });
 
   it('connects a new line to an existing endpoint instead of duplicating it', () => {
