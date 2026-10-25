@@ -22,6 +22,8 @@ export interface LineBatch {
   color: string;
   /** xyz pairs. */
   positions: number[];
+  /** Entity id of each segment (positions.length / 6 entries); null for solid outlines, which pick their face. */
+  ids: (Id | null)[];
 }
 
 export interface SceneBuffers {
@@ -36,7 +38,7 @@ export function sceneBuffers(scene: Scene3D, edgeColor: string | null): SceneBuf
   const lines = new Map<string, LineBatch>();
   const lineBatch = (color: string) => {
     let b = lines.get(color);
-    if (!b) lines.set(color, (b = { color, positions: [] }));
+    if (!b) lines.set(color, (b = { color, positions: [], ids: [] }));
     return b;
   };
   for (const s of scene.solids) {
@@ -52,6 +54,12 @@ export function sceneBuffers(scene: Scene3D, edgeColor: string | null): SceneBuf
 
 function addLine(b: LineBatch, l: Line3): void {
   b.positions.push(...l.a, ...l.b);
+  b.ids.push(l.id);
+}
+
+function edge(b: LineBatch, ...xyz: number[]): void {
+  b.positions.push(...xyz);
+  b.ids.push(null);
 }
 
 function tri(m: MeshBatch, id: Id, a: number[], b: number[], c: number[]): void {
@@ -86,12 +94,12 @@ function addOutline(b: LineBatch, s: Solid): void {
     const j = (i + 1) % n;
     const p = s.outline[i];
     const q = s.outline[j];
-    b.positions.push(p.x, p.y, s.top[i], q.x, q.y, s.top[j]);
+    edge(b, p.x, p.y, s.top[i], q.x, q.y, s.top[j]);
     if (flat) continue;
-    b.positions.push(p.x, p.y, s.bottom[i], q.x, q.y, s.bottom[j]);
+    edge(b, p.x, p.y, s.bottom[i], q.x, q.y, s.bottom[j]);
     // Vertical edges only at real corners, so cylinders don't turn into a picket fence.
     const prev = s.outline[(i - 1 + n) % n];
     const turn = Math.abs((p.x - prev.x) * (q.y - p.y) - (p.y - prev.y) * (q.x - p.x)) / (Math.hypot(p.x - prev.x, p.y - prev.y) * Math.hypot(q.x - p.x, q.y - p.y) || 1);
-    if (turn > 0.25) b.positions.push(p.x, p.y, s.bottom[i], p.x, p.y, s.top[i]);
+    if (turn > 0.25) edge(b, p.x, p.y, s.bottom[i], p.x, p.y, s.top[i]);
   }
 }

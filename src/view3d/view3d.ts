@@ -31,7 +31,7 @@ import {
 } from 'three';
 import type { Scene3D } from '../model/scene3d';
 import type { Id } from '../model/types';
-import { CANVAS, PALETTE } from '../theme';
+import { CANVAS, LIGHT, PALETTE } from '../theme';
 import { sceneBuffers } from './mesh';
 
 export type ViewName = 'top' | 'front' | 'side' | 'iso';
@@ -51,6 +51,8 @@ interface Pane {
 }
 
 const FAR = 1e7;
+/** How close a click must be to a 3D line to pick it, px. */
+const PICK_PX = 6;
 
 export class View3D {
   readonly canvas: HTMLCanvasElement;
@@ -58,6 +60,8 @@ export class View3D {
   private readonly scene = new Scene();
   private content = new Group();
   private meshes: { mesh: Mesh; ids: Id[] }[] = [];
+  /** Pickable 3D lines (unextruded lines, circles, point crosses), with the entity id of each segment. */
+  private lines: { lines: LineSegments; ids: (Id | null)[] }[] = [];
   private panes: Pane[] = [];
   private layout: Layout = 'iso';
   private width = 1;
@@ -79,8 +83,8 @@ export class View3D {
     this.renderer = new WebGLRenderer({ canvas: this.canvas, antialias: true });
     this.renderer.setScissorTest(true);
     this.scene.background = new Color(CANVAS.background);
-    this.scene.add(new AmbientLight(0xffffff, 1.6));
-    const sun = new DirectionalLight(0xffffff, 1.4);
+    this.scene.add(new AmbientLight(LIGHT.ambient, 1.6));
+    const sun = new DirectionalLight(LIGHT.sun, 1.4);
     sun.position.set(-0.5, -0.8, 1);
     this.scene.add(sun);
     this.scene.add(this.content);
@@ -99,6 +103,7 @@ export class View3D {
     });
     this.content = new Group();
     this.meshes = [];
+    this.lines = [];
     const buffers = sceneBuffers(s, PALETTE.charcoal);
     for (const b of buffers.meshes) {
       const g = new BufferGeometry();
@@ -123,7 +128,9 @@ export class View3D {
     for (const l of buffers.lines) {
       const g = new BufferGeometry();
       g.setAttribute('position', new BufferAttribute(new Float32Array(l.positions), 3));
-      this.content.add(new LineSegments(g, new LineBasicMaterial({ color: l.color })));
+      const lines = new LineSegments(g, new LineBasicMaterial({ color: l.color }));
+      this.content.add(lines);
+      this.lines.push({ lines, ids: l.ids });
     }
     this.scene.add(this.content);
     this.bounds.min.set(...s.min);
@@ -234,9 +241,23 @@ export class View3D {
   private fit(p: Pane): void {
     const { min, max } = this.bounds;
     p.target.set((min.x + max.x) / 2, (min.y + max.y) / 2, (min.z + max.z) / 2);
-    const size = Math.max(max.x - min.x, max.y - min.y, max.z - min.z, 1000);
     p.camera.zoom = 1;
-    p.camera.userData.size = size * 0.65;
+    p.camera.userData.size = 1;
+    this.frameCamera(p);
+    // Size the view from the bounds as the camera sees them (an iso box projects taller than any of its sides).
+    const right = new Vector3().setFromMatrixColumn(p.camera.matrixWorld, 0);
+    const up = new Vector3().setFromMatrixColumn(p.camera.matrixWorld, 1);
+    let halfW = 0;
+    let halfH = 0;
+    for (const x of [min.x, max.x])
+      for (const y of [min.y, max.y])
+        for (const z of [min.z, max.z]) {
+          const v = new Vector3(x, y, z).sub(p.target);
+          halfW = Math.max(halfW, Math.abs(v.dot(right)));
+          halfH = Math.max(halfH, Math.abs(v.dot(up)));
+        }
+    const aspect = p.rect.w / Math.max(1, p.rect.h);
+    p.camera.userData.size = Math.max(halfH, halfW / aspect, 500) * 1.1;
     this.frameCamera(p);
   }
 
@@ -354,10 +375,17 @@ export class View3D {
     const p = this.paneAt(at.x, at.y);
     const ray = new Raycaster();
     ray.setFromCamera(new Vector2(((at.x - p.rect.x) / p.rect.w) * 2 - 1, -((at.y - p.rect.y) / p.rect.h) * 2 + 1), p.camera);
-    const hits = ray.intersectObjects(this.meshes.map((m) => m.mesh), false);
-    for (const h of hits) {
+    // Lines are hit within a few pixels, converted to world units at the pane's current zoom.
+    const worldPerPx = (p.camera.top - p.camera.bottom) / p.camera.zoom / Math.max(1, p.rect.h);
+    ray.params.Line = { threshold: PICK_PX * worldPerPx };
+    const targets = [...this.meshes.map((m) => m.mesh), ...this.lines.map((l) => l.lines)];
+    // Hits come nearest first; outline segments carry no id, so the face or line behind them answers.
+    for (const h of ray.intersectObjects(targets, false)) {
       const m = this.meshes.find((x) => x.mesh === h.object);
       if (m && h.faceIndex !== undefined && h.faceIndex !== null) return m.ids[h.faceIndex] ?? null;
+      const l = this.lines.find((x) => x.lines === h.object);
+      const id = l && h.index !== undefined ? l.ids[Math.floor(h.index / 2)] : null;
+      if (id) return id;
     }
     return null;
   }

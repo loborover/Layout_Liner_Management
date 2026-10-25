@@ -70,6 +70,11 @@ describe('3D scene', () => {
     }
     const b = sceneBuffers(buildScene(doc), '#4A4A4A');
     for (const m of b.meshes) expect(m.ids.length * 9).toBe(m.positions.length);
+    for (const l of b.lines) expect(l.ids.length * 6).toBe(l.positions.length);
+    // Rectangle lines have no height: they stay pickable 3D lines with their own ids; outlines carry none.
+    const lineIds = new Set(b.lines.flatMap((l) => l.ids).filter(Boolean));
+    expect([...lineIds].every((id) => doc.entities.get(id!)?.kind === 'line')).toBe(true);
+    expect(lineIds.size).toBe(4);
     const benchTriangles = b.meshes.flatMap((m) => m.ids).filter((id) => doc.entities.get(id)?.kind === 'equipment');
     expect(benchTriangles.length).toBe(2 * 12); // two boxes, 12 triangles each
   });

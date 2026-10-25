@@ -99,6 +99,12 @@ export const CANVAS = {
 export const LAYER_DEFAULT = PALETTE.charcoal;
 export const LAYER_COLORS = [PALETTE.charcoal, PALETTE.slate, HUE.green, HUE.ochre, HUE.plum, HUE.red, HUE.teal];
 
+/** Lights of the 3D views: neutral white so faces keep their ink wash colours. */
+export const LIGHT = {
+  ambient: '#FFFFFF',
+  sun: '#FFFFFF',
+} as const;
+
 /** Default face fill of a shape and band colour of a styled line when the layer gives none. */
 export const SHAPE_FILL = '#A9B4BF';
 
