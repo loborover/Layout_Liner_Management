@@ -23,7 +23,17 @@ export interface CircleEntity {
   layer: Id;
 }
 
-export type Entity = LineEntity | CircleEntity;
+/** Aligned dimension. Points may be shared with measured geometry so the value follows edits. */
+export interface DimensionEntity {
+  id: Id;
+  kind: 'dimension';
+  p1: Id;
+  p2: Id;
+  offset: number; // mm, perpendicular to p1→p2, positive to the left
+  layer: Id;
+}
+
+export type Entity = LineEntity | CircleEntity | DimensionEntity;
 
 export interface Layer {
   id: Id;

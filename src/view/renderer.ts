@@ -1,8 +1,11 @@
+import { dimensionGeometry } from '../geom/dimension';
 import type { Vec2 } from '../geom/vec';
+import { SNAP_LABELS, type SnapResult } from '../snap/snap';
 import type { DocumentModel } from '../model/document';
 import type { Selection } from '../model/selection';
 import type { SpatialIndex } from '../model/spatial';
 import type { Entity, Id } from '../model/types';
+import { type DisplayUnit, formatLength } from './format';
 import { type Viewport, gridSpacing } from './viewport';
 
 export const COLORS = {
@@ -16,7 +19,66 @@ export const COLORS = {
   text: '#0f172a',
   window: 'rgba(37, 99, 235, 0.08)',
   crossing: 'rgba(22, 163, 74, 0.08)',
+  snap: '#16a34a',
+  guide: 'rgba(22, 163, 74, 0.6)',
+  dimension: '#0f766e',
 };
+
+const EXT_GAP_PX = 3;
+const EXT_OVERSHOOT_PX = 5;
+const TICK_PX = 5;
+
+/** Adds an aligned dimension's extension lines, dimension line and ticks to the current path. */
+function traceDimension(ctx: CanvasRenderingContext2D, view: Viewport, a: Vec2, b: Vec2, offset: number): void {
+  const { d1, d2, normal } = dimensionGeometry(a, b, offset);
+  const side = Math.sign(offset) || 1;
+  const sNormal = { x: normal.x * side, y: -normal.y * side }; // screen-space direction from a toward d1
+  for (const [p, d] of [
+    [a, d1],
+    [b, d2],
+  ] as const) {
+    const sp = view.toScreen(p);
+    const sd = view.toScreen(d);
+    const lenPx = Math.hypot(sd.x - sp.x, sd.y - sp.y);
+    if (lenPx > EXT_GAP_PX) {
+      ctx.moveTo(sp.x + sNormal.x * EXT_GAP_PX, sp.y + sNormal.y * EXT_GAP_PX);
+      ctx.lineTo(sd.x + sNormal.x * EXT_OVERSHOOT_PX, sd.y + sNormal.y * EXT_OVERSHOOT_PX);
+    }
+  }
+  const s1 = view.toScreen(d1);
+  const s2 = view.toScreen(d2);
+  ctx.moveTo(s1.x, s1.y);
+  ctx.lineTo(s2.x, s2.y);
+  // 45° architectural ticks.
+  const l = Math.hypot(s2.x - s1.x, s2.y - s1.y) || 1;
+  const u = { x: (s2.x - s1.x) / l, y: (s2.y - s1.y) / l };
+  const t = { x: (u.x - u.y) * Math.SQRT1_2 * TICK_PX, y: (u.y + u.x) * Math.SQRT1_2 * TICK_PX };
+  for (const s of [s1, s2]) {
+    ctx.moveTo(s.x - t.x, s.y - t.y);
+    ctx.lineTo(s.x + t.x, s.y + t.y);
+  }
+}
+
+/** Writes a dimension's value centred above its dimension line, kept upright. */
+function labelDimension(ctx: CanvasRenderingContext2D, view: Viewport, a: Vec2, b: Vec2, offset: number, text: string, color: string): void {
+  const { d1, d2 } = dimensionGeometry(a, b, offset);
+  const s1 = view.toScreen(d1);
+  const s2 = view.toScreen(d2);
+  let angle = Math.atan2(s2.y - s1.y, s2.x - s1.x);
+  if (angle > Math.PI / 2 || angle <= -Math.PI / 2) angle += Math.PI;
+  ctx.save();
+  ctx.translate((s1.x + s2.x) / 2, (s1.y + s2.y) / 2);
+  ctx.rotate(angle);
+  ctx.font = '12px system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'bottom';
+  const w = ctx.measureText(text).width;
+  ctx.fillStyle = 'rgba(248,250,252,0.85)';
+  ctx.fillRect(-w / 2 - 2, -17, w + 4, 14);
+  ctx.fillStyle = color;
+  ctx.fillText(text, 0, -4);
+  ctx.restore();
+}
 
 /** Thin wrapper that lets tools draw overlays in world coordinates with screen-constant line widths. */
 export class Painter {
@@ -71,11 +133,126 @@ export class Painter {
     ctx.setLineDash([]);
   }
 
+  /** Polyline or polygon through world points. */
+  polygon(pts: Vec2[], stroke: string, fill?: string, closed = true, dash: number[] = []): void {
+    if (pts.length === 0) return;
+    const { ctx } = this;
+    ctx.beginPath();
+    pts.forEach((p, i) => {
+      const s = this.view.toScreen(p);
+      if (i === 0) ctx.moveTo(s.x, s.y);
+      else ctx.lineTo(s.x, s.y);
+    });
+    if (closed) ctx.closePath();
+    if (fill && closed) {
+      ctx.fillStyle = fill;
+      ctx.fill();
+    }
+    ctx.setLineDash(dash);
+    ctx.strokeStyle = stroke;
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  /** Arc around a world centre with a screen radius, angles in degrees counter-clockwise from +X. */
+  arcPx(c: Vec2, radiusPx: number, fromDeg: number, toDeg: number, color: string): void {
+    const s = this.view.toScreen(c);
+    const { ctx } = this;
+    ctx.beginPath();
+    // Screen Y points down, so world counter-clockwise is canvas anticlockwise with negated angles.
+    ctx.arc(s.x, s.y, radiusPx, (-fromDeg * Math.PI) / 180, (-toDeg * Math.PI) / 180, true);
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+  }
+
   /** Small square marker at a world point. */
   marker(p: Vec2, color: string, sizePx = 6): void {
     const s = this.view.toScreen(p);
     this.ctx.fillStyle = color;
     this.ctx.fillRect(s.x - sizePx / 2, s.y - sizePx / 2, sizePx, sizePx);
+  }
+
+  dimension(a: Vec2, b: Vec2, offset: number, text: string, color = COLORS.preview): void {
+    const { ctx } = this;
+    ctx.beginPath();
+    traceDimension(ctx, this.view, a, b, offset);
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    labelDimension(ctx, this.view, a, b, offset, text, color);
+  }
+
+  /** Snap marker, its name, and the tracking guide when there is one. */
+  snap(s: SnapResult): void {
+    const { ctx, view } = this;
+    const p = view.toScreen(s.point);
+    if (s.guide) {
+      const g = view.toScreen(s.guide.from);
+      const rad = (s.guide.angleDeg * Math.PI) / 180;
+      const far = Math.hypot(view.width, view.height);
+      ctx.beginPath();
+      ctx.setLineDash([2, 4]);
+      ctx.strokeStyle = COLORS.guide;
+      ctx.lineWidth = 1;
+      ctx.moveTo(g.x, g.y);
+      ctx.lineTo(g.x + Math.cos(rad) * far, g.y - Math.sin(rad) * far);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    if (s.kind === 'grid') return;
+    ctx.beginPath();
+    ctx.strokeStyle = COLORS.snap;
+    ctx.lineWidth = 1.5;
+    const r = 6;
+    switch (s.kind) {
+      case 'endpoint':
+        ctx.rect(p.x - r, p.y - r, 2 * r, 2 * r);
+        break;
+      case 'midpoint':
+        ctx.moveTo(p.x, p.y - r);
+        ctx.lineTo(p.x + r, p.y + r);
+        ctx.lineTo(p.x - r, p.y + r);
+        ctx.closePath();
+        break;
+      case 'center':
+        ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+        break;
+      case 'quadrant':
+        ctx.moveTo(p.x, p.y - r);
+        ctx.lineTo(p.x + r, p.y);
+        ctx.lineTo(p.x, p.y + r);
+        ctx.lineTo(p.x - r, p.y);
+        ctx.closePath();
+        break;
+      case 'intersection':
+        ctx.moveTo(p.x - r, p.y - r);
+        ctx.lineTo(p.x + r, p.y + r);
+        ctx.moveTo(p.x + r, p.y - r);
+        ctx.lineTo(p.x - r, p.y + r);
+        break;
+      case 'perpendicular':
+        ctx.moveTo(p.x - r, p.y - r);
+        ctx.lineTo(p.x - r, p.y + r);
+        ctx.lineTo(p.x + r, p.y + r);
+        ctx.moveTo(p.x - r, p.y);
+        ctx.lineTo(p.x, p.y);
+        ctx.lineTo(p.x, p.y + r);
+        break;
+      default:
+        ctx.moveTo(p.x - r, p.y);
+        ctx.lineTo(p.x + r, p.y);
+        ctx.moveTo(p.x, p.y - r);
+        ctx.lineTo(p.x, p.y + r);
+    }
+    ctx.stroke();
+    // Below-left of the marker, clear of the tool labels drawn to the upper right.
+    ctx.font = '11px system-ui, sans-serif';
+    ctx.fillStyle = COLORS.snap;
+    ctx.textAlign = 'right';
+    ctx.fillText(SNAP_LABELS[s.kind], p.x - 9, p.y + 18);
+    ctx.textAlign = 'left';
   }
 
   /** Label with a light backing, offset from a world point in px. */
@@ -93,6 +270,8 @@ export class Painter {
 
 export interface RenderState {
   hover: Id | null;
+  unit: DisplayUnit;
+  snap?: SnapResult | null;
   overlay?: (p: Painter) => void;
 }
 
@@ -137,7 +316,8 @@ export class Renderer {
       if (layer && !layer.visible) continue;
       const selected = this.selection.has(e.id);
       const hovered = e.id === state.hover;
-      const color = selected ? COLORS.selected : hovered ? COLORS.hover : (layer?.color ?? COLORS.text);
+      const base = e.kind === 'dimension' ? COLORS.dimension : (layer?.color ?? COLORS.text);
+      const color = selected ? COLORS.selected : hovered ? COLORS.hover : base;
       const width = selected || hovered ? 2 : 1.25;
       const key = `${color}|${width}`;
       let batch = batches.get(key);
@@ -146,6 +326,14 @@ export class Renderer {
       drawn++;
     }
     for (const batch of batches.values()) this.strokeBatch(batch.items, batch.color, batch.width);
+    for (const batch of batches.values()) {
+      for (const e of batch.items) {
+        if (e.kind !== 'dimension') continue;
+        const a = this.doc.point(e.p1);
+        const b = this.doc.point(e.p2);
+        labelDimension(ctx, view, a, b, e.offset, formatLength(Math.hypot(b.x - a.x, b.y - a.y), state.unit), batch.color);
+      }
+    }
 
     const painter = new Painter(ctx, view);
     for (const id of this.selection.values()) {
@@ -154,6 +342,7 @@ export class Renderer {
       for (const pid of this.doc.pointIdsOf(e)) painter.marker(this.doc.point(pid), COLORS.selected);
     }
     state.overlay?.(painter);
+    if (state.snap) painter.snap(state.snap);
     return drawn;
   }
 
@@ -166,6 +355,8 @@ export class Renderer {
         const b = view.toScreen(this.doc.point(e.p2));
         ctx.moveTo(a.x, a.y);
         ctx.lineTo(b.x, b.y);
+      } else if (e.kind === 'dimension') {
+        traceDimension(ctx, view, this.doc.point(e.p1), this.doc.point(e.p2), e.offset);
       } else {
         const c = view.toScreen(this.doc.point(e.center));
         const r = Math.max(e.radius * view.scale, 0.5);

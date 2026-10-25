@@ -1,20 +1,28 @@
+import { offsetThrough } from '../geom/dimension';
 import { type Vec2, angleDeg, dist } from '../geom/vec';
 import { AddItems } from '../model/commands';
 import { newId } from '../model/ids';
 import { DEFAULT_LAYER_ID, type Id, type LineEntity, type Point } from '../model/types';
 import { formatAngle, formatLength } from '../view/format';
 import { COLORS, type Painter } from '../view/renderer';
+import type { SnapQuery } from '../snap/snap';
 import type { Tool, ToolContext, ToolPointer } from './tool';
 
 const DASH = [6, 4];
 
 const point = (p: Vec2): Point => ({ id: newId('p'), x: p.x, y: p.y });
+
+/** The document point the cursor snapped onto, if any. */
+export function existingPoint(ctx: ToolContext, p: ToolPointer): Point | null {
+  const id = p.snap?.pointId;
+  return id && ctx.doc.points.has(id) ? ctx.doc.point(id) : null;
+}
 const line = (p1: Id, p2: Id): LineEntity => ({ id: newId('e'), kind: 'line', p1, p2, layer: DEFAULT_LAYER_ID });
 
 /** Chained line tool: each click adds a segment joined to the previous one. */
 export class LineTool implements Tool {
   readonly id = 'line';
-  readonly hint = '클릭: 점 추가(연속 선) · 시작점 클릭: 닫기 · 우클릭/Esc: 종료';
+  readonly hint = '클릭: 점 추가(연속 선) · 기존 끝점 클릭: 연결 · 시작점 클릭: 닫기 · Shift: 수평/수직 · 우클릭/Esc: 종료';
   readonly cursor = 'crosshair';
   /** Start of the current segment. Not yet in the document when `pending` is true. */
   private start: Point | null = null;
@@ -30,32 +38,32 @@ export class LineTool implements Tool {
       return;
     }
     if (p.button !== 0) return;
+    const { doc } = this.ctx;
     // The chain's last point can disappear through undo; start a fresh chain then.
-    if (this.start && !this.pending && !this.ctx.doc.points.has(this.start.id)) this.reset();
+    if (this.start && !this.pending && !doc.points.has(this.start.id)) this.reset();
+    // Snapping onto an existing point connects to it instead of creating a coincident one.
+    const existing = existingPoint(this.ctx, p);
     if (!this.start) {
-      this.start = point(p.world);
+      this.start = existing ?? point(p.world);
       this.first = this.start;
-      this.pending = true;
+      this.pending = !existing;
       return;
     }
-    if (dist(p.world, this.start) < 1e-9) return;
-
-    // Clicking near the chain's first point closes the outline on that shared point.
-    const closing =
-      !this.pending &&
-      this.first !== null &&
-      this.ctx.doc.points.has(this.first.id) &&
-      dist(p.raw, this.first) <= this.ctx.pickTolerance();
-    const end = closing ? this.first! : point(p.world);
-    const newPoints = [...(this.pending ? [this.start] : []), ...(closing ? [] : [end])];
+    const end = existing ?? point(p.world);
+    if (end.id === this.start.id || dist(end, this.start) < 1e-9) return;
+    const newPoints = [...(this.pending ? [this.start] : []), ...(existing ? [] : [end])];
     this.ctx.history.execute(new AddItems(newPoints, [line(this.start.id, end.id)]));
-    if (closing) {
-      this.reset();
+    if (existing && existing.id === this.first?.id) {
+      this.reset(); // outline closed on its first point
     } else {
-      this.start = this.ctx.doc.point(end.id);
+      this.start = doc.point(end.id);
       this.pending = false;
     }
     this.ctx.requestRender();
+  }
+
+  snapQuery(): SnapQuery {
+    return { from: this.start };
   }
 
   move(p: ToolPointer): void {
@@ -101,6 +109,10 @@ export class RectTool implements Tool {
   private cursorPos: Vec2 | null = null;
 
   constructor(private readonly ctx: ToolContext) {}
+
+  snapQuery(): SnapQuery {
+    return { from: this.corner };
+  }
 
   down(p: ToolPointer): void {
     if (p.button === 2) {
@@ -161,6 +173,10 @@ export class CircleTool implements Tool {
 
   constructor(private readonly ctx: ToolContext) {}
 
+  snapQuery(): SnapQuery {
+    return { from: this.centre };
+  }
+
   down(p: ToolPointer): void {
     if (p.button === 2) {
       this.cancel();
@@ -206,5 +222,76 @@ export class CircleTool implements Tool {
     p.circle(this.centre, r, COLORS.preview, 1.5, DASH);
     p.line(this.centre, this.cursorPos, COLORS.preview, 1, DASH);
     p.label(this.cursorPos, `R ${formatLength(r, this.ctx.unit())}`);
+  }
+}
+
+/** Aligned dimension: two measured points, then the dimension line position. */
+export class DimensionTool implements Tool {
+  readonly id = 'dimension';
+  readonly hint = '클릭: 첫 점 → 클릭: 둘째 점 → 클릭: 치수선 위치 · 기존 끝점에 붙이면 형상을 따라 값이 갱신됨 · Esc: 취소';
+  readonly cursor = 'crosshair';
+  private p1: Point | null = null;
+  private p2: Point | null = null;
+  private cursorPos: Vec2 | null = null;
+
+  constructor(private readonly ctx: ToolContext) {}
+
+  snapQuery(): SnapQuery {
+    return { from: this.p2 ? null : this.p1 };
+  }
+
+  down(p: ToolPointer): void {
+    if (p.button === 2) {
+      this.cancel();
+      return;
+    }
+    if (p.button !== 0) return;
+    if (!this.p1) {
+      this.p1 = existingPoint(this.ctx, p) ?? point(p.world);
+      return;
+    }
+    if (!this.p2) {
+      const p2 = existingPoint(this.ctx, p) ?? point(p.world);
+      if (p2.id !== this.p1.id && dist(p2, this.p1) > 1e-9) this.p2 = p2;
+      return;
+    }
+    const { doc } = this.ctx;
+    const fresh = [this.p1, this.p2].filter((pt) => !doc.points.has(pt.id));
+    const offset = offsetThrough(this.p1, this.p2, p.world);
+    this.ctx.history.execute(
+      new AddItems(fresh, [{ id: newId('e'), kind: 'dimension', p1: this.p1.id, p2: this.p2.id, offset, layer: DEFAULT_LAYER_ID }]),
+    );
+    this.p1 = this.p2 = null;
+  }
+
+  move(p: ToolPointer): void {
+    this.cursorPos = p.world;
+    this.ctx.requestRender();
+  }
+
+  up(): void {}
+
+  cancel(): boolean {
+    const active = this.p1 !== null;
+    this.p1 = this.p2 = null;
+    this.ctx.requestRender();
+    return active;
+  }
+
+  deactivate(): void {
+    this.p1 = this.p2 = null;
+  }
+
+  overlay(p: Painter): void {
+    if (!this.cursorPos) return;
+    p.marker(this.cursorPos, COLORS.preview, 4);
+    if (!this.p1) return;
+    const unit = this.ctx.unit();
+    if (!this.p2) {
+      p.line(this.p1, this.cursorPos, COLORS.preview, 1, DASH);
+      p.label(this.cursorPos, formatLength(dist(this.p1, this.cursorPos), unit));
+      return;
+    }
+    p.dimension(this.p1, this.p2, offsetThrough(this.p1, this.p2, this.cursorPos), formatLength(dist(this.p1, this.p2), unit));
   }
 }

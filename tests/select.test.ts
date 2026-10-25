@@ -38,7 +38,7 @@ function setup() {
   );
   const at = (x: number, y: number): ToolPointer => {
     const w = { x, y };
-    return { world: w, raw: w, screen: view.toScreen(w), button: 0, shift: false };
+    return { world: w, raw: w, snap: null, screen: view.toScreen(w), button: 0, shift: false };
   };
   return { doc, history, tool, at };
 }

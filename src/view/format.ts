@@ -9,3 +9,8 @@ export function formatLength(mm: number, unit: DisplayUnit): string {
 export function formatAngle(deg: number): string {
   return `${deg.toFixed(1)}°`;
 }
+
+/** Area given in mm² shown in m², the usual unit for floor plans. */
+export function formatArea(mm2: number): string {
+  return `${(Math.abs(mm2) / 1e6).toFixed(2)} m²`;
+}

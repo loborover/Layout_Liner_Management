@@ -13,6 +13,12 @@
         <button data-tool="line" title="선 (L)">선</button>
         <button data-tool="rect" title="사각형 (R)">사각형</button>
         <button data-tool="circle" title="원 (C)">원</button>
+        <button data-tool="dimension" title="치수 (D)">치수</button>
+      </div>
+      <div class="group">
+        <button data-tool="measure-distance" title="거리 측정 (M)">거리</button>
+        <button data-tool="measure-angle" title="각도 측정 (N)">각도</button>
+        <button data-tool="measure-area" title="면적 측정 (A)">면적</button>
       </div>
       <div class="group">
         <button data-action="undo" title="실행 취소 (Ctrl+Z)">취소</button>
@@ -26,7 +32,9 @@
         <input id="file-input" type="file" accept=".json,application/json" hidden />
       </div>
       <div class="group">
-        <label><input id="grid-snap" type="checkbox" checked /> 그리드 스냅 (F9)</label>
+        <label title="끝점·중점·중심·교차점·수직·사분점 (F3)"><input id="snap-object" type="checkbox" /> 객체 스냅</label>
+        <label title="15° 단위 각도 추적, Shift: 수평/수직 고정 (F10)"><input id="snap-polar" type="checkbox" /> 각도 추적</label>
+        <label title="그리드 스냅 (F9)"><input id="snap-grid" type="checkbox" /> 그리드</label>
         <label>
           단위
           <select id="unit">

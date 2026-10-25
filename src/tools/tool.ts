@@ -2,6 +2,7 @@ import type { Vec2 } from '../geom/vec';
 import type { History } from '../model/commands';
 import type { DocumentModel } from '../model/document';
 import type { Selection } from '../model/selection';
+import type { SnapQuery, SnapResult } from '../snap/snap';
 import type { SpatialIndex } from '../model/spatial';
 import type { Id } from '../model/types';
 import type { DisplayUnit } from '../view/format';
@@ -23,8 +24,10 @@ export interface ToolContext {
 }
 
 export interface ToolPointer {
-  /** Cursor position in mm, after grid snapping when enabled. */
+  /** Cursor position in mm after snapping. */
   world: Vec2;
+  /** The snap that produced `world`, if any. */
+  snap: SnapResult | null;
   /** Cursor position in mm without snapping. */
   raw: Vec2;
   screen: Vec2;
@@ -41,6 +44,8 @@ export interface Tool {
   down(p: ToolPointer): void;
   move(p: ToolPointer): void;
   up(p: ToolPointer): void;
+  /** What the snap engine needs to know about the operation in progress. */
+  snapQuery?(): SnapQuery;
   /** Returns true when the key was handled. */
   key?(e: KeyboardEvent): boolean;
   /** Cancels the current operation; returns true if there was one. */

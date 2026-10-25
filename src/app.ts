@@ -4,16 +4,19 @@ import { History } from './model/commands';
 import { DocumentModel } from './model/document';
 import { Selection } from './model/selection';
 import { SpatialIndex } from './model/spatial';
+import { SnapEngine, type SnapResult, type SnapSettings } from './snap/snap';
 import type { Id } from './model/types';
-import { CircleTool, LineTool, RectTool } from './tools/draw';
+import { CircleTool, DimensionTool, LineTool, RectTool } from './tools/draw';
+import { MeasureAngleTool, MeasureAreaTool, MeasureDistanceTool } from './tools/measure';
 import { SelectTool } from './tools/select';
 import type { Tool, ToolContext, ToolPointer } from './tools/tool';
 import { type DisplayUnit, formatLength } from './view/format';
 import { Renderer } from './view/renderer';
-import { Viewport, gridSpacing, snapToGrid } from './view/viewport';
+import { Viewport, gridSpacing } from './view/viewport';
 
 const AUTOSAVE_KEY = 'layout-liner:autosave';
 const PICK_TOLERANCE_PX = 6;
+const SNAP_REACH_PX = 10;
 const WHEEL_ZOOM_STEP = 1.0015;
 
 const $ = <T extends HTMLElement>(sel: string): T => {
@@ -28,12 +31,14 @@ export class App {
   readonly selection = new Selection();
   readonly view = new Viewport();
   readonly index = new SpatialIndex(this.doc);
+  readonly snapper = new SnapEngine(this.doc, this.index);
   private renderer: Renderer;
   private tools: Record<string, Tool>;
   private tool: Tool;
   private hover: Id | null = null;
   private unit: DisplayUnit = 'mm';
-  private gridSnap = true;
+  private snapSettings: SnapSettings = { object: true, polar: true, grid: true, polarStep: 15 };
+  private lastSnap: SnapResult | null = null;
   private pan: { last: Vec2 } | null = null;
   private spaceHeld = false;
   private frameRequested = false;
@@ -67,6 +72,10 @@ export class App {
       line: new LineTool(ctx),
       rect: new RectTool(ctx),
       circle: new CircleTool(ctx),
+      dimension: new DimensionTool(ctx),
+      'measure-distance': new MeasureDistanceTool(ctx),
+      'measure-angle': new MeasureAngleTool(ctx),
+      'measure-area': new MeasureAreaTool(ctx),
     };
     this.tool = this.tools.select;
 
@@ -111,7 +120,12 @@ export class App {
     this.frameRequested = true;
     requestAnimationFrame(() => {
       this.frameRequested = false;
-      const drawn = this.renderer.render({ hover: this.hover, overlay: (p) => this.tool.overlay?.(p) });
+      const drawn = this.renderer.render({
+        hover: this.hover,
+        unit: this.unit,
+        snap: this.lastSnap,
+        overlay: (p) => this.tool.overlay?.(p),
+      });
       const sel = this.selection.size ? ` · 선택 ${this.selection.size}` : '';
       this.infoEl.textContent = `객체 ${this.doc.entities.size} (표시 ${drawn})${sel} · 그리드 ${formatLength(gridSpacing(this.view.scale).minor, this.unit)}`;
     });
@@ -137,8 +151,15 @@ export class App {
     const r = this.canvas.getBoundingClientRect();
     const screen = { x: e.clientX - r.left, y: e.clientY - r.top };
     const raw = this.view.toWorld(screen);
-    const world = this.gridSnap ? snapToGrid(raw, gridSpacing(this.view.scale).minor) : raw;
-    return { screen, raw, world, button: e.button, shift: e.shiftKey };
+    const q = this.tool.snapQuery?.() ?? {};
+    const snap = this.snapper.snap(
+      raw,
+      this.view.pxToMm(SNAP_REACH_PX),
+      gridSpacing(this.view.scale).minor,
+      this.snapSettings,
+      { ...q, ortho: e.shiftKey && !!q.from },
+    );
+    return { screen, raw, world: snap?.point ?? raw, snap, button: e.button, shift: e.shiftKey };
   }
 
   private bindCanvas(): void {
@@ -154,15 +175,20 @@ export class App {
       }
       this.tool.down(this.pointer(e));
     });
+    c.addEventListener('pointerleave', () => {
+      this.lastSnap = null;
+      this.requestRender();
+    });
     c.addEventListener('pointermove', (e) => {
-      const p = this.pointer(e);
-      this.posEl.textContent = `X ${formatLength(p.world.x, this.unit)}  Y ${formatLength(p.world.y, this.unit)}`;
       if (this.pan) {
         this.view.panBy(e.clientX - this.pan.last.x, e.clientY - this.pan.last.y);
         this.pan.last = { x: e.clientX, y: e.clientY };
         this.requestRender();
         return;
       }
+      const p = this.pointer(e);
+      this.setSnap(p.snap);
+      this.posEl.textContent = `X ${formatLength(p.world.x, this.unit)}  Y ${formatLength(p.world.y, this.unit)}`;
       this.tool.move(p);
     });
     c.addEventListener('pointerup', (e) => {
@@ -207,8 +233,15 @@ export class App {
       input.value = '';
       if (file) this.openText(await file.text());
     });
-    const snap = $<HTMLInputElement>('#grid-snap');
-    snap.addEventListener('change', () => (this.gridSnap = snap.checked));
+    for (const [sel, key] of [
+      ['#snap-object', 'object'],
+      ['#snap-polar', 'polar'],
+      ['#snap-grid', 'grid'],
+    ] as const) {
+      const box = $<HTMLInputElement>(sel);
+      box.checked = this.snapSettings[key];
+      box.addEventListener('change', () => (this.snapSettings[key] = box.checked));
+    }
     const unit = $<HTMLSelectElement>('#unit');
     unit.addEventListener('change', () => {
       this.unit = unit.value as DisplayUnit;
@@ -244,11 +277,11 @@ export class App {
           this.spaceHeld = true;
           this.canvas.style.cursor = 'grab';
         }
-      } else if (e.key === 'F9') {
+      } else if (e.key === 'F3' || e.key === 'F9' || e.key === 'F10') {
         e.preventDefault();
-        const snap = $<HTMLInputElement>('#grid-snap');
-        snap.checked = !snap.checked;
-        this.gridSnap = snap.checked;
+        const key = e.key === 'F3' ? 'object' : e.key === 'F9' ? 'grid' : 'polar';
+        this.snapSettings[key] = !this.snapSettings[key];
+        $<HTMLInputElement>(`#snap-${key}`).checked = this.snapSettings[key];
       } else if (this.tool.key?.(e)) {
         e.preventDefault();
       } else {
@@ -257,6 +290,10 @@ export class App {
           l: () => this.setTool('line'),
           r: () => this.setTool('rect'),
           c: () => this.setTool('circle'),
+          d: () => this.setTool('dimension'),
+          m: () => this.setTool('measure-distance'),
+          n: () => this.setTool('measure-angle'),
+          a: () => this.setTool('measure-area'),
           f: () => this.fitAll(),
         };
         shortcuts[key]?.();
@@ -279,6 +316,15 @@ export class App {
   private redo(): void {
     this.tool.interrupt?.();
     this.history.redo();
+  }
+
+  private setSnap(snap: SnapResult | null): void {
+    const same =
+      snap?.kind === this.lastSnap?.kind &&
+      snap?.point.x === this.lastSnap?.point.x &&
+      snap?.point.y === this.lastSnap?.point.y;
+    this.lastSnap = snap;
+    if (!same) this.requestRender();
   }
 
   private updateButtons(): void {

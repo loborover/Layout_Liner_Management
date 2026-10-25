@@ -8,6 +8,7 @@ import {
   distToSegment,
   segmentIntersectsBox,
 } from '../geom/vec';
+import { dimensionGeometry } from '../geom/dimension';
 import type { DocumentModel } from './document';
 import type { Entity, Id } from './types';
 
@@ -43,6 +44,10 @@ export class SpatialIndex {
   /** Distance from p to an entity's outline. */
   distanceTo(e: Entity, p: Vec2): number {
     if (e.kind === 'line') return distToSegment(p, this.doc.point(e.p1), this.doc.point(e.p2));
+    if (e.kind === 'dimension') {
+      const { d1, d2 } = dimensionGeometry(this.doc.point(e.p1), this.doc.point(e.p2), e.offset);
+      return distToSegment(p, d1, d2);
+    }
     return Math.abs(dist(p, this.doc.point(e.center)) - e.radius);
   }
 
@@ -70,6 +75,10 @@ export class SpatialIndex {
       if (!this.doc.isEditable(e)) return false;
       if (!crossing) return boxContainsBox(box, this.doc.bboxOf(e));
       if (e.kind === 'line') return segmentIntersectsBox(this.doc.point(e.p1), this.doc.point(e.p2), box);
+      if (e.kind === 'dimension') {
+        const { d1, d2 } = dimensionGeometry(this.doc.point(e.p1), this.doc.point(e.p2), e.offset);
+        return segmentIntersectsBox(d1, d2, box);
+      }
       return circleIntersectsBox(this.doc.point(e.center), e.radius, box);
     });
   }
