@@ -24,6 +24,8 @@ const AUTOSAVE_KEY = 'layout-liner:autosave';
 const PICK_TOLERANCE_PX = 6;
 const SNAP_REACH_PX = 10;
 const WHEEL_ZOOM_STEP = 1.0015;
+/** Tools that create geometry on the current layer. */
+const DRAWING_TOOLS = new Set(['line', 'rect', 'circle', 'dimension', 'equipment']);
 
 const $ = <T extends HTMLElement>(sel: string): T => {
   const el = document.querySelector<T>(sel);
@@ -221,6 +223,14 @@ export class App {
         this.pan = { last: { x: e.clientX, y: e.clientY } };
         c.style.cursor = 'grabbing';
         return;
+      }
+      if (DRAWING_TOOLS.has(this.tool.id) && e.button === 0) {
+        const layer = this.doc.layers.get(this.layerForDrawing());
+        if (layer && (layer.locked || !layer.visible)) {
+          // Geometry drawn there would be invisible or impossible to select, so don't create it.
+          this.notify(`현재 레이어(${layer.name})가 ${layer.locked ? '잠겨' : '숨겨져'} 있어 그릴 수 없습니다.`);
+          return;
+        }
       }
       this.tool.down(this.pointer(e));
     });
