@@ -85,6 +85,20 @@ export interface Layer {
   locked: boolean;
 }
 
+/** Scanned or exported floor plan shown under the drawing, to trace over. */
+export interface Underlay {
+  /** Image as a data: URL, so the drawing file stays self-contained. */
+  src: string;
+  /** World position (mm) of the image's bottom-left corner. */
+  x: number;
+  y: number;
+  /** Size in mm. */
+  width: number;
+  height: number;
+  opacity: number;
+  visible: boolean;
+}
+
 export interface DocumentData {
   format: 'layout-liner';
   version: 1;
@@ -94,6 +108,7 @@ export interface DocumentData {
   constraints: Constraint[];
   layers: Layer[];
   equipmentTypes: EquipmentType[];
+  underlay?: Underlay;
 }
 
 export const DEFAULT_LAYER_ID = 'layer-0';

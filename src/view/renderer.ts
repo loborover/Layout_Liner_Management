@@ -315,6 +315,29 @@ export class Renderer {
     this.view.resize(cssWidth, cssHeight);
   }
 
+  /** Called when an underlay image finishes loading, so the frame can be redrawn with it. */
+  onImageLoad: () => void = () => {};
+  private images = new Map<string, HTMLImageElement>();
+
+  private drawUnderlay(): void {
+    const u = this.doc.underlay;
+    if (!u?.visible) return;
+    let img = this.images.get(u.src);
+    if (!img) {
+      // Keep only the current image: an old one may be several megabytes.
+      this.images.clear();
+      img = new Image();
+      img.onload = () => this.onImageLoad();
+      img.src = u.src;
+      this.images.set(u.src, img);
+    }
+    if (!img.complete || img.naturalWidth === 0) return;
+    const topLeft = this.view.toScreen({ x: u.x, y: u.y + u.height });
+    this.ctx.globalAlpha = u.opacity;
+    this.ctx.drawImage(img, topLeft.x, topLeft.y, u.width * this.view.scale, u.height * this.view.scale);
+    this.ctx.globalAlpha = 1;
+  }
+
   /** Draws the frame and returns the number of entities drawn. */
   render(state: RenderState): number {
     const { ctx, view } = this;
@@ -322,6 +345,7 @@ export class Renderer {
     ctx.fillStyle = COLORS.background;
     ctx.fillRect(0, 0, view.width, view.height);
     this.drawGrid();
+    this.drawUnderlay();
 
     // Batch entities by stroke style so each style is one path and one stroke call.
     const batches = new Map<string, { color: string; width: number; items: Entity[] }>();

@@ -12,6 +12,7 @@ import {
   type Id,
   type Layer,
   type Point,
+  type Underlay,
 } from './types';
 
 type Listener = () => void;
@@ -27,6 +28,7 @@ export class DocumentModel {
   readonly constraints = new Map<Id, Constraint>();
   readonly layers = new Map<Id, Layer>();
   readonly equipmentTypes = new Map<Id, EquipmentType>();
+  underlay: Underlay | null = null;
   private listeners = new Set<Listener>();
   private revision = 0;
 
@@ -60,6 +62,7 @@ export class DocumentModel {
       visible: true,
       locked: false,
     });
+    this.underlay = null;
     this.equipmentTypes.clear();
     for (const t of DEFAULT_EQUIPMENT_TYPES) this.equipmentTypes.set(t.id, { ...t });
     this.changed();
@@ -159,7 +162,8 @@ export class DocumentModel {
   }
 
   extents(): Box | null {
-    let box: Box | null = null;
+    const u = this.underlay;
+    let box: Box | null = u?.visible ? { minX: u.x, minY: u.y, maxX: u.x + u.width, maxY: u.y + u.height } : null;
     for (const e of this.entities.values()) {
       const b = this.bboxOf(e);
       box = box
@@ -189,6 +193,7 @@ export class DocumentModel {
       constraints: [...this.constraints.values()].map((c) => ({ ...c, refs: [...c.refs] })),
       layers: [...this.layers.values()].map((l) => ({ ...l })),
       equipmentTypes: [...this.equipmentTypes.values()].map((t) => ({ ...t })),
+      ...(this.underlay ? { underlay: { ...this.underlay } } : {}),
     };
   }
 
@@ -197,6 +202,7 @@ export class DocumentModel {
     this.entities.clear();
     this.constraints.clear();
     this.layers.clear();
+    this.underlay = data.underlay ? { ...data.underlay } : null;
     this.equipmentTypes.clear();
     for (const t of data.equipmentTypes) this.equipmentTypes.set(t.id, { ...t });
     for (const l of data.layers) this.layers.set(l.id, { ...l });

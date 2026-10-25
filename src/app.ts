@@ -2,16 +2,21 @@ import type { Vec2 } from './geom/vec';
 import { FormatError, deserialize, serialize } from './io/serialize';
 import { hasConstraints } from './constraints/components';
 import { type ClusterStatus, ConstraintService } from './constraints/service';
-import { Batch, type Command, History, RemoveConstraints, SetDimensionValue } from './model/commands';
+import { Batch, type Command, History, RemoveConstraints, SetDimensionValue, SetUnderlay } from './model/commands';
 import { DocumentModel } from './model/document';
 import { arrayOffsets, copyItems, moveToLayer, rotateItems } from './model/edit';
 import { equipmentCsv } from './io/equipmentList';
+import { DxfError, parseDxf } from './io/dxf';
+import { writeDxf } from './io/dxfExport';
+import { importDxf } from './io/dxfImport';
+import { drawingSvg } from './io/svg';
+import { UnderlayTool } from './tools/underlay';
 import { EquipmentTool } from './tools/equipment';
 import { SidePanel } from './ui/panel';
 import { Selection } from './model/selection';
 import { SpatialIndex } from './model/spatial';
 import { SnapEngine, type SnapResult, type SnapSettings } from './snap/snap';
-import { type ConstraintKind, DEFAULT_LAYER_ID, type Id } from './model/types';
+import { type ConstraintKind, DEFAULT_LAYER_ID, type Id, type Underlay } from './model/types';
 import { CircleTool, DimensionTool, LineTool, RectTool } from './tools/draw';
 import { MeasureAngleTool, MeasureAreaTool, MeasureDistanceTool } from './tools/measure';
 import { SelectTool } from './tools/select';
@@ -58,6 +63,7 @@ export class App {
   private spaceHeld = false;
   private frameRequested = false;
   private autosaveTimer: number | undefined;
+  private underlayAutosaveWarned = false;
 
   private canvas = $<HTMLCanvasElement>('#canvas');
   private hintEl = $<HTMLSpanElement>('#status-hint');
@@ -67,6 +73,7 @@ export class App {
 
   constructor() {
     this.renderer = new Renderer(this.canvas, this.view, this.doc, this.index, this.selection);
+    this.renderer.onImageLoad = () => this.requestRender();
     const ctx: ToolContext = {
       doc: this.doc,
       history: this.history,
@@ -97,6 +104,7 @@ export class App {
       'measure-angle': new MeasureAngleTool(ctx),
       'measure-area': new MeasureAreaTool(ctx),
       equipment: (this.equipmentTool = new EquipmentTool(ctx)),
+      underlay: new UnderlayTool(ctx),
     };
     this.panel = new SidePanel(
       {
@@ -127,6 +135,7 @@ export class App {
         return !!e && this.doc.isEditable(e);
       });
       this.panel.refresh();
+      this.refreshUnderlayControls();
       this.scheduleAutosave();
       this.scheduleConstraintStatus();
       this.requestRender();
@@ -290,6 +299,13 @@ export class App {
       'add-layer': () => this.panel.addLayer(),
       'add-type': () => this.panel.addType(),
       'export-equipment': () => this.exportEquipment(),
+      'export-dxf': () => this.exportDxf(),
+      'export-svg': () => this.exportSvg(),
+      print: () => this.print(),
+      'load-underlay': () => $<HTMLInputElement>('#image-input').click(),
+      'remove-underlay': () => {
+        if (this.doc.underlay) this.history.execute(new SetUnderlay('밑그림 삭제', this.doc.underlay, null));
+      },
     };
     document.querySelectorAll<HTMLButtonElement>('[data-constraint]').forEach((b) => {
       b.addEventListener('click', () => void this.applyConstraint(b.dataset.constraint as ConstraintKind));
@@ -301,7 +317,37 @@ export class App {
       const input = e.target as HTMLInputElement;
       const file = input.files?.[0];
       input.value = '';
-      if (file) this.openText(await file.text());
+      if (!file) return;
+      if (/\.dxf$/i.test(file.name)) this.importDxfText(await file.text());
+      else this.openText(await file.text());
+    });
+    $<HTMLInputElement>('#image-input').addEventListener('change', (e) => {
+      const input = e.target as HTMLInputElement;
+      const file = input.files?.[0];
+      input.value = '';
+      if (file) void this.loadUnderlay(file);
+    });
+    const opacity = $<HTMLInputElement>('#underlay-opacity');
+    // Live while dragging, one undo step when let go.
+    let opacityBefore: Underlay | null = null;
+    opacity.addEventListener('input', () => {
+      const u = this.doc.underlay;
+      if (!u) return;
+      opacityBefore ??= { ...u };
+      u.opacity = Number(opacity.value) / 100;
+      this.requestRender();
+    });
+    opacity.addEventListener('change', () => {
+      const u = this.doc.underlay;
+      if (u && opacityBefore) this.history.record(new SetUnderlay('밑그림 투명도', opacityBefore, { ...u }));
+      opacityBefore = null;
+      this.doc.changed();
+    });
+    $<HTMLInputElement>('#underlay-visible').addEventListener('change', (e) => {
+      const u = this.doc.underlay;
+      if (!u) return;
+      u.visible = (e.target as HTMLInputElement).checked; // view state, like layer visibility
+      this.doc.changed();
     });
     for (const [sel, key] of [
       ['#snap-object', 'object'],
@@ -436,6 +482,104 @@ export class App {
     if (ids.length === 0) return this.notify('현재 레이어로 옮길 객체를 선택하십시오.');
     const cmd = moveToLayer(this.doc, ids, this.layerForDrawing());
     if (cmd) this.history.execute(cmd);
+  }
+
+  private refreshUnderlayControls(): void {
+    const u = this.doc.underlay;
+    $<HTMLDivElement>('#underlay-controls').hidden = !u;
+    if (!u) return;
+    const opacity = $<HTMLInputElement>('#underlay-opacity');
+    if (document.activeElement !== opacity) opacity.value = String(Math.round(u.opacity * 100));
+    $<HTMLInputElement>('#underlay-visible').checked = u.visible;
+    $<HTMLSpanElement>('#underlay-controls .name').textContent = `${formatLength(u.width, this.unit)} × ${formatLength(u.height, this.unit)}`;
+  }
+
+  /** Places an image under the drawing, sized to most of the current view; the user then scales it to real size. */
+  private async loadUnderlay(file: File): Promise<void> {
+    if (file.size > 8 * 1024 * 1024) return this.notify('8 MB 이하의 이미지를 사용하십시오. 큰 스캔은 해상도를 낮춰 주십시오.');
+    const src = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(file);
+    });
+    const img = new Image();
+    try {
+      await new Promise<void>((resolve, reject) => {
+        img.onload = () => resolve();
+        img.onerror = () => reject(new Error('decode'));
+        img.src = src;
+      });
+    } catch {
+      return this.notify('이미지를 읽을 수 없습니다. PNG, JPG, GIF, WebP 파일을 사용하십시오.');
+    }
+    const bounds = this.view.worldBounds();
+    const width = (bounds.maxX - bounds.minX) * 0.8;
+    const height = (width * img.naturalHeight) / img.naturalWidth;
+    const cx = (bounds.minX + bounds.maxX) / 2;
+    const cy = (bounds.minY + bounds.maxY) / 2;
+    const underlay: Underlay = { src, x: cx - width / 2, y: cy - height / 2, width, height, opacity: 0.5, visible: true };
+    this.history.execute(new SetUnderlay('밑그림 불러오기', this.doc.underlay, underlay));
+    this.setTool('underlay');
+    this.notify('밑그림을 불러왔습니다. 실제 거리를 아는 두 점을 클릭해 축척을 맞추십시오.');
+  }
+
+  private importDxfText(text: string): void {
+    let dxf;
+    try {
+      dxf = parseDxf(text);
+    } catch (err) {
+      return alert(err instanceof DxfError ? `DXF를 읽을 수 없습니다: ${err.message}` : `DXF를 읽을 수 없습니다: ${String(err)}`);
+    }
+    let mmPerUnit = dxf.unitScale;
+    if (!dxf.unitsKnown) {
+      const answer = window.prompt('DXF에 도면 단위가 없습니다. 도면 1단위가 몇 mm입니까? (mm 도면: 1, m 도면: 1000, 인치: 25.4)', '1');
+      if (answer === null) return;
+      mmPerUnit = Number(answer);
+      if (!(mmPerUnit > 0)) return this.notify('0보다 큰 숫자를 입력하십시오.');
+    }
+    const result = importDxf(this.doc, dxf, mmPerUnit);
+    if (!result) return this.notify('가져올 선이나 원이 없습니다.');
+    this.tool.cancel();
+    this.history.execute(result.command);
+    this.fitAll();
+    const skipped = [...dxf.skipped].map(([t, c]) => `${t} ${c}`).join(', ');
+    this.notify(`DXF 가져오기: 선 ${result.lines}개, 원 ${result.circles}개${skipped ? ` (제외: ${skipped})` : ''}`);
+  }
+
+  private exportDxf(): void {
+    if (this.doc.entities.size === 0) return this.notify('내보낼 객체가 없습니다.');
+    this.download(new Blob([writeDxf(this.doc)], { type: 'application/dxf' }), `layout-${new Date().toISOString().slice(0, 10)}.dxf`);
+  }
+
+  private exportSvg(): void {
+    const svg = drawingSvg(this.doc);
+    if (!svg) return this.notify('내보낼 객체가 없습니다.');
+    this.download(new Blob([svg], { type: 'image/svg+xml' }), `layout-${new Date().toISOString().slice(0, 10)}.svg`);
+  }
+
+  /** Prints the whole drawing fitted to the page, through a hidden frame; the browser's dialog can save it as PDF. */
+  private print(): void {
+    const svg = drawingSvg(this.doc);
+    if (!svg) return this.notify('인쇄할 객체가 없습니다.');
+    const frame = document.createElement('iframe');
+    frame.style.cssText = 'position:fixed;width:0;height:0;border:0;visibility:hidden';
+    document.body.append(frame);
+    const page = frame.contentDocument!;
+    page.open();
+    page.write(
+      `<!doctype html><html><head><meta charset="utf-8"><title>Layout</title><style>@page{size:landscape;margin:10mm}html,body{margin:0;height:100%}svg{width:100%;height:100%}</style></head><body>${svg}</body></html>`,
+    );
+    page.close();
+    const go = () => {
+      frame.contentWindow!.focus();
+      frame.contentWindow!.print();
+      setTimeout(() => frame.remove(), 1000);
+    };
+    // Wait for an embedded underlay image to decode before printing.
+    const img = page.querySelector('image');
+    if (img) setTimeout(go, 300);
+    else go();
   }
 
   private exportEquipment(): void {
@@ -582,10 +726,23 @@ export class App {
   private scheduleAutosave(): void {
     window.clearTimeout(this.autosaveTimer);
     this.autosaveTimer = window.setTimeout(() => {
+      const data = this.doc.toData();
       try {
-        localStorage.setItem(AUTOSAVE_KEY, serialize(this.doc.toData()));
+        localStorage.setItem(AUTOSAVE_KEY, serialize(data));
+        return;
       } catch {
-        // Storage can be unavailable (private mode, quota); autosave is a convenience only.
+        // Storage can be unavailable (private mode) or full; a large underlay image is the usual cause.
+      }
+      if (!data.underlay) return;
+      try {
+        const { underlay: _, ...rest } = data;
+        localStorage.setItem(AUTOSAVE_KEY, serialize(rest));
+        if (!this.underlayAutosaveWarned) {
+          this.underlayAutosaveWarned = true;
+          this.notify('밑그림 이미지가 커서 자동 저장에서 제외했습니다. 파일로 저장(Ctrl+S)하면 함께 저장됩니다.');
+        }
+      } catch {
+        // Autosave is a convenience only.
       }
     }, 500);
   }

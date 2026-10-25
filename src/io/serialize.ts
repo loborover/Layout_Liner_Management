@@ -8,6 +8,7 @@ import {
   type EquipmentType,
   type Layer,
   type Point,
+  type Underlay,
 } from '../model/types';
 
 const CONSTRAINT_KINDS: ConstraintKind[] = ['horizontal', 'vertical', 'parallel', 'perpendicular', 'equal', 'fixed', 'radius'];
@@ -113,5 +114,27 @@ export function deserialize(text: string): DocumentData {
     return out;
   });
 
-  return { format: 'layout-liner', version: 1, units: 'mm', points, entities, constraints, layers, equipmentTypes };
+  let underlay: Underlay | undefined;
+  if (obj.underlay !== undefined && obj.underlay !== null) {
+    const u = obj.underlay;
+    // Only embedded images: a URL would make opening a drawing fetch from wherever the file points.
+    const embedded = typeof u.src === 'string' && /^data:image\/(png|jpeg|gif|webp);base64,/.test(u.src);
+    if (!embedded || ![u.x, u.y, u.width, u.height].every(isNum) || !(u.width > 0) || !(u.height > 0)) {
+      throw new FormatError('밑그림 이미지 데이터가 잘못되었습니다.');
+    }
+    const opacity = isNum(u.opacity) ? Math.min(1, Math.max(0.05, u.opacity)) : 0.5;
+    underlay = { src: u.src, x: u.x, y: u.y, width: u.width, height: u.height, opacity, visible: u.visible !== false };
+  }
+
+  return {
+    format: 'layout-liner',
+    version: 1,
+    units: 'mm',
+    points,
+    entities,
+    constraints,
+    layers,
+    equipmentTypes,
+    ...(underlay ? { underlay } : {}),
+  };
 }
