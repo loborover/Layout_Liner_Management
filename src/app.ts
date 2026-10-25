@@ -30,6 +30,8 @@ import { PropertyPanel } from './ui/properties';
 import { fillInspector } from './ui/inspector';
 import { hydrateIcons } from './ui/icons';
 import type { LiveValue, Mode, UiHost } from './ui/host';
+import { buildScene } from './model/scene3d';
+import type { Layout, View3D } from './view3d/view3d';
 import { equipmentCsv } from './io/equipmentList';
 import { DxfError, parseDxf } from './io/dxf';
 import { writeDxf } from './io/dxfExport';
@@ -49,7 +51,7 @@ import type { Tool, ToolContext, ToolPointer } from './tools/tool';
 import { type DisplayUnit, formatLength } from './view/format';
 import { type EntityStatus, Renderer } from './view/renderer';
 import { Viewport, gridSpacing } from './view/viewport';
-import { STATUS } from './theme';
+import { CANVAS, STATUS } from './theme';
 
 const AUTOSAVE_KEY = 'layout-liner:autosave';
 const PICK_TOLERANCE_PX = 6;
@@ -85,6 +87,10 @@ export class App implements UiHost {
   private tools: Record<string, Tool>;
   private tool: Tool;
   private hover: Id | null = null;
+  private view3d: View3D | null = null;
+  private currentView: 'plan' | Layout = 'plan';
+  private scene3dRequested = false;
+  private fit3dPending = false;
   private currentLayerId: Id = DEFAULT_LAYER_ID;
   private library: Library;
   private tree: ObjectTree;
@@ -171,6 +177,7 @@ export class App implements UiHost {
         return !!e && (view ? this.doc.isVisible(e) : this.doc.isEditable(e));
       });
       this.refreshPanels();
+      this.refresh3d();
       this.refreshInspector();
       this.refreshUnderlayControls();
       this.refreshFloorSelect();
@@ -181,6 +188,7 @@ export class App implements UiHost {
     this.selection.onChange(() => {
       this.tree.refresh();
       this.props.refresh();
+      this.refresh3d();
       // Selecting from the tree should show the selection's properties when the bar shows nothing else useful.
       this.requestRender();
     });
@@ -378,7 +386,61 @@ export class App implements UiHost {
   private resize(): void {
     const r = this.canvas.parentElement!.getBoundingClientRect();
     this.renderer.resize(r.width, r.height, window.devicePixelRatio || 1);
+    this.view3d?.resize(r.width, r.height, window.devicePixelRatio || 1);
     this.requestRender();
+  }
+
+  // ---------- 3D views ----------
+
+  /**
+   * Switches between the 2D plan editor and the 3D views. three.js and the 3D code are fetched the first time a
+   * 3D view opens (dynamic import), so the plan editor never pays for them.
+   */
+  async setView(view: 'plan' | Layout): Promise<void> {
+    document.querySelectorAll<HTMLButtonElement>('[data-view]').forEach((b) => b.setAttribute('aria-checked', String(b.dataset.view === view)));
+    if (view === 'plan') {
+      this.currentView = 'plan';
+      document.body.classList.remove('view-3d');
+      this.hintEl.textContent = this.tool.hint;
+      this.resize();
+      return;
+    }
+    const first = !this.view3d;
+    if (first) {
+      this.notify('3D 보기를 불러오는 중…');
+      try {
+        const { View3D } = await import('./view3d/view3d');
+        this.view3d ??= new View3D(this.canvas.parentElement!, (id) => (id ? this.selection.set([id]) : this.selection.clear()));
+        this.notify('');
+      } catch (err) {
+        this.notify(`3D 보기를 열 수 없습니다(WebGL 필요): ${err instanceof Error ? err.message : String(err)}`);
+        return this.setView('plan');
+      }
+    }
+    this.currentView = view;
+    this.setTool('select');
+    document.body.classList.add('view-3d');
+    this.view3d!.setLayout(view);
+    this.resize();
+    this.refresh3d(first);
+    this.hintEl.textContent = '3D 보기: 클릭 선택 · 휠 확대 · 드래그 이동(등각: 회전, Shift+드래그 이동) · 더블클릭 맞춤 · 편집은 평면 보기에서';
+  }
+
+  /** Rebuilds the 3D scene (debounced to one per frame) when the drawing, selection or live values change. */
+  private refresh3d(fit = false): void {
+    if (this.currentView === 'plan' || !this.view3d) return;
+    if (fit) this.fit3dPending = true;
+    if (this.scene3dRequested) return;
+    this.scene3dRequested = true;
+    requestAnimationFrame(() => {
+      this.scene3dRequested = false;
+      const colors = new Map<Id, string>();
+      for (const [id, st] of this.liveStatus() ?? []) colors.set(id, st.color);
+      for (const id of this.selection.values()) if (this.doc.entities.has(id)) colors.set(id, CANVAS.selected);
+      const allFloors = document.querySelector<HTMLInputElement>('#view3d-all-floors')?.checked !== false;
+      this.view3d!.setScene(buildScene(this.doc, { floors: allFloors ? 'all' : 'active', colors }), this.fit3dPending);
+      this.fit3dPending = false;
+    });
   }
 
   private pointer(e: PointerEvent | MouseEvent): ToolPointer {
@@ -467,6 +529,10 @@ export class App implements UiHost {
     document.querySelectorAll<HTMLButtonElement>('[data-tool]').forEach((b) => {
       b.addEventListener('click', () => this.setTool(b.dataset.tool!));
     });
+    document.querySelectorAll<HTMLButtonElement>('[data-view]').forEach((b) => {
+      b.addEventListener('click', () => void this.setView(b.dataset.view as 'plan' | Layout));
+    });
+    document.querySelector<HTMLInputElement>('#view3d-all-floors')?.addEventListener('change', () => this.refresh3d(true));
     document.querySelectorAll<HTMLButtonElement>('[data-mode]').forEach((b) => {
       b.addEventListener('click', () => this.setMode(b.dataset.mode as Mode));
     });
@@ -484,7 +550,8 @@ export class App implements UiHost {
     const actions: Record<string, () => void> = {
       undo: e(() => this.undo()),
       redo: e(() => this.redo()),
-      fit: () => this.fitAll(),
+      fit: () => (this.currentView === 'plan' ? this.fitAll() : this.view3d?.fitAll()),
+      'view3d-fit': () => this.view3d?.fitAll(),
       new: e(() => this.newDrawing()),
       open: e(() => $<HTMLInputElement>('#file-input').click()),
       save: () => this.save(),
@@ -644,6 +711,11 @@ export class App implements UiHost {
               f: () => this.fitAll(),
             }
           : { f: () => this.fitAll(), m: () => this.setTool('measure-distance'), v: () => this.setTool('inspect') };
+        // 3D views: drawing tools act on the hidden plan, so only fitting works there (Delete/undo go through above).
+        if (this.currentView !== 'plan') {
+          if (key === 'f') this.view3d?.fitAll();
+          return;
+        }
         shortcuts[key]?.();
       }
     });

@@ -254,6 +254,12 @@ export const METHODS: Record<string, MethodSpec> = {
     mutates: false,
     run: (api) => api.presetSchema(),
   },
+  scene3d: {
+    description: '3D 장면(벽·설비·계단 등을 높이 있는 입체와 3D 선으로 바꾼 것, mm, Z 위쪽)을 반환합니다. 호스트 서버에서 렌더링하거나 glTF 등으로 변환할 때 씁니다.',
+    params: obj({ floors: { enum: ['all', 'active'], description: "all: 모든 층을 표고대로 쌓음(기본), active: 현재 층만" } }),
+    mutates: false,
+    run: (api, p) => api.scene3d(p as never),
+  },
   undo: { description: '실행 취소.', params: obj({}), mutates: true, run: (api) => api.undo() },
   redo: { description: '다시 실행.', params: obj({}), mutates: true, run: (api) => api.redo() },
   batch: {

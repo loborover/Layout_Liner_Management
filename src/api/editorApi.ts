@@ -31,6 +31,7 @@ import {
 import { type DocumentModel, cloneEntity } from '../model/document';
 import { arrayOffsets, copyItems, makeShapes, nextTag, type ReorderMove, reorderItems, rotateItems } from '../model/edit';
 import { heightOf } from '../model/heights';
+import { buildScene } from '../model/scene3d';
 import { newId } from '../model/ids';
 import { CATEGORY_LABELS, PROP_DEFS, categoryOf, cleanProps, presetInfo } from '../model/presets';
 import type { DocumentData, Entity, EquipmentType, Floor, Folder, Id, Layer, LineEntity, Point, ShapeEntity, StructureCategory } from '../model/types';
@@ -531,6 +532,12 @@ export class EditorApi {
     }
     this.history.squash(start, '일괄 작업');
     return { results };
+  }
+
+  /** Renderer-independent 3D scene (src/model/scene3d.ts) for host-side rendering or conversion. */
+  scene3d(p: { floors?: 'all' | 'active' } = {}) {
+    if (p.floors !== undefined && p.floors !== 'all' && p.floors !== 'active') throw new ApiError("floors는 'all' 또는 'active'입니다.");
+    return buildScene(this.doc, { floors: p.floors });
   }
 
   exportSvg() {

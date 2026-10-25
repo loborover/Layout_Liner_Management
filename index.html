@@ -36,6 +36,14 @@
         <label title="그리드 스냅 (F9)"><input id="snap-grid" type="checkbox" /> 그리드</label>
       </div>
       <span class="spacer"></span>
+      <div class="mode-switch view-switch" role="radiogroup" aria-label="보기">
+        <button data-view="plan" role="radio" data-icon="layers" title="평면 편집 (2D)">평면</button>
+        <button data-view="iso" role="radio" data-icon="box" title="3D 등각 보기: 드래그 회전, Shift+드래그 이동, 휠 확대">등각</button>
+        <button data-view="top" role="radio" title="3D 위에서 본 직교 보기">위</button>
+        <button data-view="front" role="radio" title="3D 정면(남쪽, -Y)에서 본 직교 보기">정면</button>
+        <button data-view="side" role="radio" title="3D 측면(동쪽, +X)에서 본 직교 보기">측면</button>
+        <button data-view="quad" role="radio" title="위·등각·정면·측면 4분할 보기">4분할</button>
+      </div>
       <div class="mode-switch" role="radiogroup" aria-label="모드">
         <button data-mode="edit" role="radio" data-icon="edit" title="편집 모드: 그리고 고칩니다">편집</button>
         <button data-mode="view" role="radio" data-icon="view" title="뷰어 모드: 도면을 둘러보고 객체 정보를 확인합니다 (편집 불가)">뷰어</button>
@@ -171,6 +179,13 @@
             <button data-action="floor-up" data-icon="up" title="위 층 (PageUp)">위 층</button>
           </div>
           <span class="glabel">화면</span>
+        </div>
+        <div class="rgroup">
+          <div class="items">
+            <label title="3D 보기에 모든 층을 쌓아서 보여 줄지, 현재 층만 보여 줄지"><input id="view3d-all-floors" type="checkbox" checked /> 모든 층</label>
+            <button data-action="view3d-fit" title="3D 보기 전체 맞춤 (더블클릭도 같음)">3D 맞춤</button>
+          </div>
+          <span class="glabel">3D 보기 (빠른 실행 바에서 전환)</span>
         </div>
         <div class="rgroup">
           <div class="items">

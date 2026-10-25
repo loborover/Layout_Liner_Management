@@ -270,6 +270,60 @@ select {
   min-width: 0;
 }
 
+/* 3D views (src/view3d/view3d.ts) replace the plan canvas while active. */
+body.view-3d #canvas {
+  display: none;
+}
+
+.stage .view3d {
+  position: absolute;
+  inset: 0;
+  display: block;
+  touch-action: none;
+}
+
+body:not(.view-3d) .view3d,
+body:not(.view-3d) .view3d-labels {
+  display: none;
+}
+
+.view3d-labels span {
+  position: absolute;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ink-muted);
+  pointer-events: none;
+}
+
+/* Hairline cross between the four panes of the 4-up layout. */
+.view3d-labels.quad::before,
+.view3d-labels.quad::after {
+  content: '';
+  position: absolute;
+  background: var(--line);
+  pointer-events: none;
+}
+
+.view3d-labels.quad::before {
+  left: 50%;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+}
+
+.view3d-labels.quad::after {
+  top: 50%;
+  left: 0;
+  right: 0;
+  height: 1px;
+}
+
+.view3d-labels {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
 #canvas {
   position: absolute;
   inset: 0;
