@@ -7,6 +7,7 @@ import { SnapEngine } from '../src/snap/snap';
 import { DimensionTool, LineTool } from '../src/tools/draw';
 import { SelectTool } from '../src/tools/select';
 import type { Tool, ToolContext, ToolPointer } from '../src/tools/tool';
+import { ConstraintService } from '../src/constraints/service';
 import { Viewport } from '../src/view/viewport';
 import { deserialize, serialize } from '../src/io/serialize';
 
@@ -29,6 +30,9 @@ function setup() {
     setHover: () => {},
     setHint: () => {},
     requestRender: () => {},
+    constraints: new ConstraintService(doc, history, () => Promise.reject(new Error('solver not used here'))),
+    notify: () => {},
+    ask: () => null,
   };
   const engine = new SnapEngine(doc, index);
   // Mirrors App.pointer(): object snaps only, 10 mm reach.

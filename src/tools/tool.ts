@@ -1,4 +1,5 @@
 import type { Vec2 } from '../geom/vec';
+import type { ConstraintService } from '../constraints/service';
 import type { History } from '../model/commands';
 import type { DocumentModel } from '../model/document';
 import type { Selection } from '../model/selection';
@@ -15,11 +16,16 @@ export interface ToolContext {
   index: SpatialIndex;
   selection: Selection;
   view: Viewport;
+  constraints: ConstraintService;
   unit: () => DisplayUnit;
   /** Pick tolerance in mm for the current zoom. */
   pickTolerance: () => number;
   setHover: (id: Id | null) => void;
   setHint: (text: string) => void;
+  /** Shows a short message to the user (e.g. why a constraint was rejected). */
+  notify: (text: string) => void;
+  /** Asks for a value; null when cancelled. */
+  ask: (question: string, initial: string) => string | null;
   requestRender: () => void;
 }
 
@@ -44,6 +50,7 @@ export interface Tool {
   down(p: ToolPointer): void;
   move(p: ToolPointer): void;
   up(p: ToolPointer): void;
+  doubleClick?(p: ToolPointer): void;
   /** What the snap engine needs to know about the operation in progress. */
   snapQuery?(): SnapQuery;
   /** Returns true when the key was handled. */

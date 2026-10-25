@@ -2,21 +2,32 @@ import { type Vec2, boxFromPoints, dist, sub } from '../geom/vec';
 import { dimensionGeometry } from '../geom/dimension';
 import { Batch, type Command, MovePoints, RemoveEntities, SetDimensionOffsets } from '../model/commands';
 import type { Id } from '../model/types';
+import type { ConstrainedDrag } from '../constraints/service';
 import type { SnapQuery } from '../snap/snap';
+import { formatLength } from '../view/format';
 import { COLORS, type Painter } from '../view/renderer';
 import type { Tool, ToolContext, ToolPointer } from './tool';
 
 type State =
   | { kind: 'idle' }
   | { kind: 'press'; start: Vec2; startRaw: Vec2; startScreen: Vec2; onEntity: boolean }
-  | { kind: 'move'; start: Vec2; applied: Vec2; pointIds: Id[]; dims: { id: Id; before: number }[] }
+  | {
+      kind: 'move';
+      start: Vec2;
+      applied: Vec2;
+      pointIds: Id[];
+      dims: { id: Id; before: number }[];
+      /** Set when the moved points belong to constrained geometry. */
+      drag: ConstrainedDrag | null;
+    }
   | { kind: 'box'; start: Vec2; end: Vec2; additive: boolean };
 
 const DRAG_THRESHOLD_PX = 4;
 
 export class SelectTool implements Tool {
   readonly id = 'select';
-  readonly hint = '클릭: 선택 · Shift+클릭: 추가/해제 · 드래그: 이동(잡은 점 기준 스냅) 또는 영역 선택(→ 완전 포함, ← 걸침) · Delete: 삭제';
+  readonly hint =
+    '클릭: 선택 · Shift+클릭: 추가/해제 · 드래그: 이동 또는 영역 선택(→ 포함, ← 걸침) · 더블클릭: 치수 값/반지름 입력 · Delete: 삭제';
   readonly cursor = 'default';
   private state: State = { kind: 'idle' };
 
@@ -53,7 +64,14 @@ export class SelectTool implements Tool {
       if (dist(p.screen, s.startScreen) < DRAG_THRESHOLD_PX) return;
       if (s.onEntity) {
         const pointIds = this.selectedPointIds();
-        this.state = { kind: 'move', start: s.start, applied: { x: 0, y: 0 }, pointIds, dims: this.attachedDimensions(pointIds) };
+        this.state = {
+          kind: 'move',
+          start: s.start,
+          applied: { x: 0, y: 0 },
+          pointIds,
+          dims: this.attachedDimensions(pointIds),
+          drag: ctx.constraints.beginDrag(pointIds),
+        };
       } else {
         this.state = { kind: 'box', start: s.startRaw, end: p.raw, additive: p.shift };
         ctx.setHover(null);
@@ -62,7 +80,8 @@ export class SelectTool implements Tool {
     const t = this.state;
     if (t.kind === 'move') {
       const total = sub(p.world, t.start);
-      ctx.doc.translatePoints(t.pointIds, sub(total, t.applied));
+      if (t.drag) t.drag.update(total);
+      else ctx.doc.translatePoints(t.pointIds, sub(total, t.applied));
       t.applied = total;
       this.applyDimensionOffsets(t.dims, total);
       ctx.doc.changed();
@@ -80,7 +99,7 @@ export class SelectTool implements Tool {
       ctx.selection.clear();
     } else if (s.kind === 'move') {
       if (s.applied.x !== 0 || s.applied.y !== 0) {
-        const steps: Command[] = [new MovePoints(s.pointIds, s.applied)];
+        const steps: Command[] = [s.drag ? s.drag.finish() : new MovePoints(s.pointIds, s.applied)];
         if (s.dims.length > 0) steps.push(new SetDimensionOffsets(s.dims.map((d) => ({ ...d, after: this.offsetOf(d.id) }))));
         ctx.history.record(new Batch('이동', steps));
       }
@@ -91,6 +110,32 @@ export class SelectTool implements Tool {
       else ctx.selection.set(ids);
     }
     ctx.requestRender();
+  }
+
+  /** Double-click a dimension to drive it with a value, or a circle to set its radius. */
+  doubleClick(p: ToolPointer): void {
+    const { ctx } = this;
+    const hit = ctx.index.pick(p.raw, ctx.pickTolerance());
+    if (hit?.kind === 'dimension') {
+      const a = ctx.doc.point(hit.p1);
+      const b = ctx.doc.point(hit.p2);
+      const current = hit.value ?? Math.hypot(b.x - a.x, b.y - a.y);
+      const answer = ctx.ask('치수 값(mm)을 입력하십시오. 비워 두면 참조 치수(측정만)로 바뀝니다.', current.toFixed(1));
+      if (answer === null) return;
+      const value = answer.trim() === '' ? undefined : Number(answer);
+      if (value !== undefined && !(value > 0)) return ctx.notify('0보다 큰 숫자를 입력하십시오.');
+      void ctx.constraints.setDimensionValue(hit.id, value).then((r) => {
+        if (!r.ok) ctx.notify(r.message);
+      });
+    } else if (hit?.kind === 'circle') {
+      const answer = ctx.ask(`반지름(mm)을 입력하십시오. 현재 ${formatLength(hit.radius, 'mm')}`, hit.radius.toFixed(1));
+      if (answer === null) return;
+      const value = Number(answer);
+      if (!(value > 0)) return ctx.notify('0보다 큰 숫자를 입력하십시오.');
+      void ctx.constraints.setRadius(hit.id, value).then((r) => {
+        if (!r.ok) ctx.notify(r.message);
+      });
+    }
   }
 
   key(e: KeyboardEvent): boolean {
@@ -109,7 +154,8 @@ export class SelectTool implements Tool {
     this.state = { kind: 'idle' };
     if (s.kind === 'move') {
       // Revert the live preview of the drag; nothing has been recorded yet.
-      this.ctx.doc.translatePoints(s.pointIds, { x: -s.applied.x, y: -s.applied.y });
+      if (s.drag) s.drag.cancel();
+      else this.ctx.doc.translatePoints(s.pointIds, { x: -s.applied.x, y: -s.applied.y });
       for (const d of s.dims) this.setOffset(d.id, d.before);
       this.ctx.doc.changed();
     } else if (s.kind === 'box') {

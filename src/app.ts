@@ -1,11 +1,13 @@
 import type { Vec2 } from './geom/vec';
 import { FormatError, deserialize, serialize } from './io/serialize';
-import { History } from './model/commands';
+import { hasConstraints } from './constraints/components';
+import { type ClusterStatus, ConstraintService } from './constraints/service';
+import { Batch, type Command, History, RemoveConstraints, SetDimensionValue } from './model/commands';
 import { DocumentModel } from './model/document';
 import { Selection } from './model/selection';
 import { SpatialIndex } from './model/spatial';
 import { SnapEngine, type SnapResult, type SnapSettings } from './snap/snap';
-import type { Id } from './model/types';
+import type { ConstraintKind, Id } from './model/types';
 import { CircleTool, DimensionTool, LineTool, RectTool } from './tools/draw';
 import { MeasureAngleTool, MeasureAreaTool, MeasureDistanceTool } from './tools/measure';
 import { SelectTool } from './tools/select';
@@ -32,6 +34,10 @@ export class App {
   readonly view = new Viewport();
   readonly index = new SpatialIndex(this.doc);
   readonly snapper = new SnapEngine(this.doc, this.index);
+  readonly constraints = new ConstraintService(this.doc, this.history);
+  private constraintStatus: ClusterStatus | null = null;
+  private statusTimer: number | undefined;
+  private messageTimer: number | undefined;
   private renderer: Renderer;
   private tools: Record<string, Tool>;
   private tool: Tool;
@@ -48,6 +54,7 @@ export class App {
   private hintEl = $<HTMLSpanElement>('#status-hint');
   private infoEl = $<HTMLSpanElement>('#status-info');
   private posEl = $<HTMLSpanElement>('#status-pos');
+  private msgEl = $<HTMLSpanElement>('#status-msg');
 
   constructor() {
     this.renderer = new Renderer(this.canvas, this.view, this.doc, this.index, this.selection);
@@ -65,6 +72,9 @@ export class App {
         this.requestRender();
       },
       setHint: (text) => (this.hintEl.textContent = text),
+      constraints: this.constraints,
+      notify: (text) => this.notify(text),
+      ask: (question, initial) => window.prompt(question, initial),
       requestRender: () => this.requestRender(),
     };
     this.tools = {
@@ -82,6 +92,7 @@ export class App {
     this.doc.onChange(() => {
       this.selection.prune((id) => this.doc.entities.has(id));
       this.scheduleAutosave();
+      this.scheduleConstraintStatus();
       this.requestRender();
     });
     this.selection.onChange(() => this.requestRender());
@@ -124,10 +135,13 @@ export class App {
         hover: this.hover,
         unit: this.unit,
         snap: this.lastSnap,
+        fullyConstrained: this.constraintStatus?.fullyConstrained,
         overlay: (p) => this.tool.overlay?.(p),
       });
       const sel = this.selection.size ? ` · 선택 ${this.selection.size}` : '';
-      this.infoEl.textContent = `객체 ${this.doc.entities.size} (표시 ${drawn})${sel} · 그리드 ${formatLength(gridSpacing(this.view.scale).minor, this.unit)}`;
+      const cs = this.constraintStatus;
+      const dof = cs && cs.clusters > 0 ? ` · 구속 자유도 ${cs.dof}${cs.dof === 0 ? ' (완전 구속)' : ''}` : '';
+      this.infoEl.textContent = `객체 ${this.doc.entities.size} (표시 ${drawn})${sel}${dof} · 그리드 ${formatLength(gridSpacing(this.view.scale).minor, this.unit)}`;
     });
   }
 
@@ -191,6 +205,7 @@ export class App {
       this.posEl.textContent = `X ${formatLength(p.world.x, this.unit)}  Y ${formatLength(p.world.y, this.unit)}`;
       this.tool.move(p);
     });
+    c.addEventListener('dblclick', (e) => this.tool.doubleClick?.(this.pointer(e)));
     c.addEventListener('pointerup', (e) => {
       if (this.pan) {
         this.pan = null;
@@ -223,7 +238,11 @@ export class App {
       new: () => this.newDrawing(),
       open: () => $<HTMLInputElement>('#file-input').click(),
       save: () => this.save(),
+      unconstrain: () => this.unconstrain(),
     };
+    document.querySelectorAll<HTMLButtonElement>('[data-constraint]').forEach((b) => {
+      b.addEventListener('click', () => void this.applyConstraint(b.dataset.constraint as ConstraintKind));
+    });
     document.querySelectorAll<HTMLButtonElement>('[data-action]').forEach((b) => {
       b.addEventListener('click', () => actions[b.dataset.action!]?.());
     });
@@ -251,7 +270,9 @@ export class App {
 
   private bindKeyboard(): void {
     window.addEventListener('keydown', (e) => {
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
+      // Typing into a field must not trigger shortcuts; a toggled checkbox should not swallow them.
+      const t = e.target;
+      if ((t instanceof HTMLInputElement && t.type !== 'checkbox') || t instanceof HTMLSelectElement) return;
       const mod = e.ctrlKey || e.metaKey;
       const key = e.key.toLowerCase();
       if (mod && key === 'z') {
@@ -316,6 +337,93 @@ export class App {
   private redo(): void {
     this.tool.interrupt?.();
     this.history.redo();
+  }
+
+  /** Applies a constraint to the current selection. */
+  private async applyConstraint(kind: ConstraintKind): Promise<void> {
+    const selected = this.selection.values().flatMap((id) => {
+      const e = this.doc.entities.get(id);
+      return e ? [e] : [];
+    });
+    const lines = selected.filter((e) => e.kind === 'line').map((e) => e.id);
+    const circles = selected.filter((e) => e.kind === 'circle').map((e) => e.id);
+    let refs: Id[][] = [];
+    switch (kind) {
+      case 'horizontal':
+      case 'vertical':
+        if (lines.length === 0) return this.notify('선을 하나 이상 선택하십시오.');
+        refs = lines.map((l) => [l]);
+        break;
+      case 'parallel':
+      case 'perpendicular':
+        if (lines.length !== 2) return this.notify('선 두 개를 선택하십시오.');
+        refs = [lines];
+        break;
+      case 'equal': {
+        const group = lines.length >= 2 ? lines : circles;
+        if (group.length < 2 || (lines.length > 0 && circles.length > 0)) {
+          return this.notify('같은 종류(선끼리 또는 원끼리)를 두 개 이상 선택하십시오.');
+        }
+        refs = group.slice(1).map((id) => [group[0], id]);
+        break;
+      }
+      case 'fixed': {
+        const points = [...new Set(selected.filter((e) => e.kind !== 'dimension').flatMap((e) => this.doc.pointIdsOf(e)))];
+        if (points.length === 0) return this.notify('고정할 선이나 원을 선택하십시오.');
+        refs = [points];
+        break;
+      }
+      default:
+        return;
+    }
+    try {
+      const r = await this.constraints.add(kind, refs);
+      if (!r.ok) this.notify(r.message);
+    } catch (err) {
+      this.notify(`구속 솔버를 불러오지 못했습니다: ${String(err)}`);
+    }
+  }
+
+  /** Removes constraints on the selected geometry and turns selected driving dimensions into reference ones. */
+  private unconstrain(): void {
+    const ids = this.selection.values();
+    if (ids.length === 0) return this.notify('구속을 해제할 객체를 선택하십시오.');
+    const pointIds = ids.flatMap((id) => {
+      const e = this.doc.entities.get(id);
+      return e && e.kind !== 'dimension' ? this.doc.pointIdsOf(e) : [];
+    });
+    const steps: Command[] = [];
+    const constraints = this.doc.constraintsOn([...ids, ...pointIds]);
+    if (constraints.length > 0) steps.push(new RemoveConstraints(constraints.map((c) => c.id)));
+    for (const id of ids) {
+      const e = this.doc.entities.get(id);
+      if (e?.kind === 'dimension' && e.value !== undefined) steps.push(new SetDimensionValue(id, e.value, undefined));
+    }
+    if (steps.length === 0) return this.notify('선택한 객체에 구속이 없습니다.');
+    this.history.execute(new Batch('구속 해제', steps));
+  }
+
+  private notify(text: string): void {
+    this.msgEl.textContent = text;
+    window.clearTimeout(this.messageTimer);
+    this.messageTimer = window.setTimeout(() => (this.msgEl.textContent = ''), 5000);
+  }
+
+  private scheduleConstraintStatus(): void {
+    window.clearTimeout(this.statusTimer);
+    if (!hasConstraints(this.doc)) {
+      this.constraintStatus = null;
+      return;
+    }
+    this.statusTimer = window.setTimeout(() => {
+      this.constraints
+        .ensure()
+        .then(() => {
+          this.constraintStatus = this.constraints.status();
+          this.requestRender();
+        })
+        .catch((err) => this.notify(`구속 솔버를 불러오지 못했습니다: ${String(err)}`));
+    }, 120);
   }
 
   private setSnap(snap: SnapResult | null): void {
