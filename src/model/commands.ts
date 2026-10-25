@@ -1,6 +1,6 @@
 import type { Vec2 } from '../geom/vec';
 import type { DocumentModel } from './document';
-import type { Constraint, Entity, EquipmentType, Id, Layer, Point } from './types';
+import type { Constraint, Entity, EquipmentType, Id, Layer, Point, Underlay } from './types';
 
 export interface Command {
   readonly label: string;
@@ -363,4 +363,21 @@ export class SetEquipmentTypes implements Command {
 function replace<T extends { id: Id }>(map: Map<Id, T>, items: T[]): void {
   map.clear();
   for (const it of items) map.set(it.id, { ...it });
+}
+
+/** Adds, changes or removes the underlay image. */
+export class SetUnderlay implements Command {
+  constructor(
+    readonly label: string,
+    private readonly before: Underlay | null,
+    private readonly after: Underlay | null,
+  ) {}
+
+  apply(doc: DocumentModel): void {
+    doc.underlay = this.after ? { ...this.after } : null;
+  }
+
+  revert(doc: DocumentModel): void {
+    doc.underlay = this.before ? { ...this.before } : null;
+  }
 }

@@ -43,7 +43,11 @@
         <button data-action="new" title="새 도면">새로</button>
         <button data-action="open" title="열기 (Ctrl+O)">열기</button>
         <button data-action="save" title="저장 (Ctrl+S)">저장</button>
-        <input id="file-input" type="file" accept=".json,application/json" hidden />
+        <button data-action="export-dxf" title="DXF(R12)로 내보내기: AutoCAD 등에서 열 수 있습니다">DXF</button>
+        <button data-action="export-svg" title="SVG 이미지로 내보내기">SVG</button>
+        <button data-action="print" title="인쇄 (PDF로 저장 가능)">인쇄</button>
+        <input id="file-input" type="file" accept=".json,.dxf,application/json" hidden />
+        <input id="image-input" type="file" accept="image/png,image/jpeg,image/gif,image/webp" hidden />
       </div>
       <div class="group">
         <label title="끝점·중점·중심·교차점·수직·사분점 (F3)"><input id="snap-object" type="checkbox" /> 객체 스냅</label>
@@ -78,6 +82,21 @@
           </header>
           <ul id="type-list" class="list"></ul>
           <button data-action="export-equipment" class="wide" title="배치된 설비 목록을 CSV(엑셀)로 저장">설비 목록 CSV</button>
+        </section>
+        <section>
+          <header>
+            <h2>밑그림</h2>
+            <button data-action="load-underlay" title="평면도 이미지(PNG, JPG)를 밑그림으로 불러오기">불러오기</button>
+          </header>
+          <div id="underlay-controls" class="stack" hidden>
+            <button data-tool="underlay" class="wide" title="두 점과 실제 거리로 축척을 맞추고 위치를 옮깁니다">축척·위치 맞추기</button>
+            <label class="row">투명도 <input id="underlay-opacity" type="range" min="5" max="100" step="5" /></label>
+            <div class="row">
+              <label class="toggle"><input id="underlay-visible" type="checkbox" /> 표시</label>
+              <span class="name"></span>
+              <button data-action="remove-underlay" title="밑그림 삭제">삭제</button>
+            </div>
+          </div>
         </section>
       </aside>
     </div>
