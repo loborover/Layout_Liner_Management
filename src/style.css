@@ -108,3 +108,8 @@ body {
   min-width: 200px;
   text-align: right;
 }
+
+#status-msg {
+  color: #b91c1c;
+  font-weight: 600;
+}

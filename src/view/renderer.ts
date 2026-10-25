@@ -4,7 +4,7 @@ import { SNAP_LABELS, type SnapResult } from '../snap/snap';
 import type { DocumentModel } from '../model/document';
 import type { Selection } from '../model/selection';
 import type { SpatialIndex } from '../model/spatial';
-import type { Entity, Id } from '../model/types';
+import type { ConstraintKind, Entity, Id } from '../model/types';
 import { type DisplayUnit, formatLength } from './format';
 import { type Viewport, gridSpacing } from './viewport';
 
@@ -20,6 +20,9 @@ export const COLORS = {
   window: 'rgba(37, 99, 235, 0.08)',
   crossing: 'rgba(22, 163, 74, 0.08)',
   snap: '#16a34a',
+  constrained: '#15803d',
+  driving: '#be123c',
+  badge: '#7c3aed',
   guide: 'rgba(22, 163, 74, 0.6)',
   dimension: '#0f766e',
 };
@@ -272,8 +275,20 @@ export interface RenderState {
   hover: Id | null;
   unit: DisplayUnit;
   snap?: SnapResult | null;
+  /** Entities with no remaining degrees of freedom, drawn in the constrained colour. */
+  fullyConstrained?: ReadonlySet<Id>;
   overlay?: (p: Painter) => void;
 }
+
+const BADGES: Record<ConstraintKind, string> = {
+  horizontal: 'H',
+  vertical: 'V',
+  parallel: '∥',
+  perpendicular: '⊥',
+  equal: '=',
+  fixed: '',
+  radius: 'R',
+};
 
 export class Renderer {
   private ctx: CanvasRenderingContext2D;
@@ -310,13 +325,22 @@ export class Renderer {
 
     // Batch entities by stroke style so each style is one path and one stroke call.
     const batches = new Map<string, { color: string; width: number; items: Entity[] }>();
+    const visibleIds = new Set<Id>();
     let drawn = 0;
     for (const e of this.index.query(view.worldBounds())) {
+      visibleIds.add(e.id);
       const layer = this.doc.layers.get(e.layer);
       if (layer && !layer.visible) continue;
       const selected = this.selection.has(e.id);
       const hovered = e.id === state.hover;
-      const base = e.kind === 'dimension' ? COLORS.dimension : (layer?.color ?? COLORS.text);
+      const base =
+        e.kind === 'dimension'
+          ? e.value !== undefined
+            ? COLORS.driving
+            : COLORS.dimension
+          : state.fullyConstrained?.has(e.id)
+            ? COLORS.constrained
+            : (layer?.color ?? COLORS.text);
       const color = selected ? COLORS.selected : hovered ? COLORS.hover : base;
       const width = selected || hovered ? 2 : 1.25;
       const key = `${color}|${width}`;
@@ -336,6 +360,7 @@ export class Renderer {
     }
 
     const painter = new Painter(ctx, view);
+    this.drawConstraintBadges(visibleIds);
     for (const id of this.selection.values()) {
       const e = this.doc.entities.get(id);
       if (!e) continue;
@@ -344,6 +369,63 @@ export class Renderer {
     state.overlay?.(painter);
     if (state.snap) painter.snap(state.snap);
     return drawn;
+  }
+
+  /** Small symbols next to constrained entities, and a marker on fixed points. */
+  private drawConstraintBadges(visible: ReadonlySet<Id>): void {
+    if (this.doc.constraints.size === 0) return;
+    const { ctx, view } = this;
+    const perEntity = new Map<Id, string[]>();
+    for (const c of this.doc.constraints.values()) {
+      if (c.kind === 'fixed') {
+        for (const pid of c.refs) {
+          const pt = this.doc.points.get(pid);
+          if (!pt) continue;
+          const s = view.toScreen(pt);
+          ctx.beginPath();
+          ctx.strokeStyle = COLORS.driving;
+          ctx.lineWidth = 1.5;
+          ctx.moveTo(s.x - 6, s.y + 8);
+          ctx.lineTo(s.x, s.y);
+          ctx.lineTo(s.x + 6, s.y + 8);
+          ctx.closePath();
+          ctx.stroke();
+        }
+        continue;
+      }
+      const text = c.kind === 'radius' ? `R${Math.round(c.value ?? 0)}` : BADGES[c.kind];
+      for (const id of c.refs) {
+        if (!visible.has(id)) continue;
+        const list = perEntity.get(id) ?? [];
+        list.push(text);
+        perEntity.set(id, list);
+      }
+    }
+    ctx.font = '11px system-ui, sans-serif';
+    ctx.textAlign = 'left';
+    for (const [id, texts] of perEntity) {
+      const e = this.doc.entities.get(id);
+      if (!e) continue;
+      let anchor: Vec2;
+      if (e.kind === 'line') {
+        const a = this.doc.point(e.p1);
+        const b = this.doc.point(e.p2);
+        anchor = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+      } else if (e.kind === 'circle') {
+        const c = this.doc.point(e.center);
+        anchor = { x: c.x + e.radius * Math.SQRT1_2, y: c.y + e.radius * Math.SQRT1_2 };
+      } else continue;
+      const s = view.toScreen(anchor);
+      const label = texts.join(' ');
+      const w = ctx.measureText(label).width + 6;
+      ctx.fillStyle = 'rgba(255,255,255,0.9)';
+      ctx.fillRect(s.x + 6, s.y + 4, w, 15);
+      ctx.strokeStyle = COLORS.badge;
+      ctx.lineWidth = 1;
+      ctx.strokeRect(s.x + 6.5, s.y + 4.5, w, 15);
+      ctx.fillStyle = COLORS.badge;
+      ctx.fillText(label, s.x + 9, s.y + 16);
+    }
   }
 
   private strokeBatch(items: Entity[], color: string, width: number): void {

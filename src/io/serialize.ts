@@ -1,4 +1,14 @@
-import { DEFAULT_LAYER_ID, type DocumentData, type Entity, type Layer, type Point } from '../model/types';
+import {
+  type Constraint,
+  type ConstraintKind,
+  DEFAULT_LAYER_ID,
+  type DocumentData,
+  type Entity,
+  type Layer,
+  type Point,
+} from '../model/types';
+
+const CONSTRAINT_KINDS: ConstraintKind[] = ['horizontal', 'vertical', 'parallel', 'perpendicular', 'equal', 'fixed', 'radius'];
 
 export class FormatError extends Error {}
 
@@ -56,10 +66,27 @@ export function deserialize(text: string): DocumentData {
     }
     if (e.kind === 'dimension') {
       if (!isNum(e.offset)) throw new FormatError(`치수 #${i}의 간격 값이 잘못되었습니다.`);
-      return { id: e.id, kind: 'dimension', p1: ref(e.p1, i), p2: ref(e.p2, i), offset: e.offset, layer };
+      if (e.value !== undefined && (!isNum(e.value) || e.value <= 0)) throw new FormatError(`치수 #${i}의 값이 잘못되었습니다.`);
+      const dim: Entity = { id: e.id, kind: 'dimension', p1: ref(e.p1, i), p2: ref(e.p2, i), offset: e.offset, layer };
+      if (e.value !== undefined) dim.value = e.value;
+      return dim;
     }
     throw new FormatError(`알 수 없는 엔티티 종류 (#${i})`);
   });
 
-  return { format: 'layout-liner', version: 1, units: 'mm', points, entities, layers };
+  const known = new Set<string>([...pointIds, ...entities.map((e) => e.id)]);
+  const constraints: Constraint[] = (Array.isArray(obj.constraints) ? obj.constraints : []).map((c, i) => {
+    if (!isStr(c?.id) || !CONSTRAINT_KINDS.includes(c.kind)) throw new FormatError(`잘못된 구속 데이터 (#${i})`);
+    if (!Array.isArray(c.refs) || !c.refs.every((r) => isStr(r) && known.has(r))) {
+      throw new FormatError(`구속 #${i}가 없는 객체를 참조합니다.`);
+    }
+    const out: Constraint = { id: c.id, kind: c.kind, refs: [...c.refs] };
+    if (c.value !== undefined) {
+      if (!isNum(c.value) || c.value <= 0) throw new FormatError(`구속 #${i}의 값이 잘못되었습니다.`);
+      out.value = c.value;
+    }
+    return out;
+  });
+
+  return { format: 'layout-liner', version: 1, units: 'mm', points, entities, constraints, layers };
 }

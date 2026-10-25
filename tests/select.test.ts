@@ -5,6 +5,7 @@ import { Selection } from '../src/model/selection';
 import { SpatialIndex } from '../src/model/spatial';
 import { SelectTool } from '../src/tools/select';
 import type { ToolPointer } from '../src/tools/tool';
+import { ConstraintService } from '../src/constraints/service';
 import { Viewport } from '../src/view/viewport';
 
 function setup() {
@@ -26,6 +27,9 @@ function setup() {
     setHover: () => {},
     setHint: () => {},
     requestRender: () => {},
+    constraints: new ConstraintService(doc, history, () => Promise.reject(new Error('solver not used here'))),
+    notify: () => {},
+    ask: () => null,
   });
   history.execute(
     new AddItems(

@@ -30,10 +30,26 @@ export interface DimensionEntity {
   p1: Id;
   p2: Id;
   offset: number; // mm, perpendicular to p1→p2, positive to the left
+  /** When set, the dimension drives the geometry: the distance between p1 and p2 is held at this value (mm). */
+  value?: number;
   layer: Id;
 }
 
 export type Entity = LineEntity | CircleEntity | DimensionEntity;
+
+export type ConstraintKind = 'horizontal' | 'vertical' | 'parallel' | 'perpendicular' | 'equal' | 'fixed' | 'radius';
+
+/**
+ * Geometric constraint solved by planegcs.
+ * `refs` are entity ids (lines/circles), except for 'fixed', which references point ids.
+ */
+export interface Constraint {
+  id: Id;
+  kind: ConstraintKind;
+  refs: Id[];
+  /** Radius in mm for 'radius'. */
+  value?: number;
+}
 
 export interface Layer {
   id: Id;
@@ -49,6 +65,7 @@ export interface DocumentData {
   units: 'mm';
   points: Point[];
   entities: Entity[];
+  constraints: Constraint[];
   layers: Layer[];
 }
 

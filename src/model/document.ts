@@ -1,6 +1,14 @@
 import { dimensionGeometry } from '../geom/dimension';
 import type { Box, Vec2 } from '../geom/vec';
-import { DEFAULT_LAYER_ID, type DocumentData, type Entity, type Id, type Layer, type Point } from './types';
+import {
+  type Constraint,
+  DEFAULT_LAYER_ID,
+  type DocumentData,
+  type Entity,
+  type Id,
+  type Layer,
+  type Point,
+} from './types';
 
 type Listener = () => void;
 
@@ -12,6 +20,7 @@ type Listener = () => void;
 export class DocumentModel {
   readonly points = new Map<Id, Point>();
   readonly entities = new Map<Id, Entity>();
+  readonly constraints = new Map<Id, Constraint>();
   readonly layers = new Map<Id, Layer>();
   private listeners = new Set<Listener>();
   private revision = 0;
@@ -37,6 +46,7 @@ export class DocumentModel {
   reset(): void {
     this.points.clear();
     this.entities.clear();
+    this.constraints.clear();
     this.layers.clear();
     this.layers.set(DEFAULT_LAYER_ID, {
       id: DEFAULT_LAYER_ID,
@@ -68,6 +78,20 @@ export class DocumentModel {
 
   removePoints(ids: Iterable<Id>): void {
     for (const id of ids) this.points.delete(id);
+  }
+
+  addConstraints(constraints: Constraint[]): void {
+    for (const c of constraints) this.constraints.set(c.id, { ...c, refs: [...c.refs] });
+  }
+
+  removeConstraints(ids: Iterable<Id>): void {
+    for (const id of ids) this.constraints.delete(id);
+  }
+
+  /** Constraints that reference any of the given entity or point ids. */
+  constraintsOn(ids: Iterable<Id>): Constraint[] {
+    const set = new Set(ids);
+    return [...this.constraints.values()].filter((c) => c.refs.some((r) => set.has(r)));
   }
 
   translatePoints(ids: Iterable<Id>, d: Vec2): void {
@@ -141,6 +165,7 @@ export class DocumentModel {
       units: 'mm',
       points: [...this.points.values()].map((p) => ({ ...p })),
       entities: [...this.entities.values()].map((e) => ({ ...e })),
+      constraints: [...this.constraints.values()].map((c) => ({ ...c, refs: [...c.refs] })),
       layers: [...this.layers.values()].map((l) => ({ ...l })),
     };
   }
@@ -148,10 +173,12 @@ export class DocumentModel {
   load(data: DocumentData): void {
     this.points.clear();
     this.entities.clear();
+    this.constraints.clear();
     this.layers.clear();
     for (const l of data.layers) this.layers.set(l.id, { ...l });
     this.addPoints(data.points);
     this.addEntities(data.entities);
+    this.addConstraints(data.constraints);
     this.changed();
   }
 }

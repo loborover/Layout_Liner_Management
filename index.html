@@ -20,6 +20,15 @@
         <button data-tool="measure-angle" title="각도 측정 (N)">각도</button>
         <button data-tool="measure-area" title="면적 측정 (A)">면적</button>
       </div>
+      <div class="group" aria-label="구속 (선택한 객체에 적용)">
+        <button data-constraint="horizontal" title="수평 구속: 선택한 선">수평</button>
+        <button data-constraint="vertical" title="수직 구속: 선택한 선">수직</button>
+        <button data-constraint="parallel" title="평행 구속: 선 두 개">평행</button>
+        <button data-constraint="perpendicular" title="직각 구속: 선 두 개">직각</button>
+        <button data-constraint="equal" title="같은 길이/반지름: 선 또는 원 두 개 이상">동일</button>
+        <button data-constraint="fixed" title="위치 고정: 선택한 객체의 점">고정</button>
+        <button data-action="unconstrain" title="선택한 객체의 구속 해제">해제</button>
+      </div>
       <div class="group">
         <button data-action="undo" title="실행 취소 (Ctrl+Z)">취소</button>
         <button data-action="redo" title="다시 실행 (Ctrl+Y)">다시</button>
@@ -49,6 +58,7 @@
     </main>
     <footer class="statusbar">
       <span id="status-hint"></span>
+      <span id="status-msg" role="status"></span>
       <span class="spacer"></span>
       <span id="status-info"></span>
       <span id="status-pos"></span>

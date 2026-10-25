@@ -1,6 +1,6 @@
 import type { Vec2 } from '../geom/vec';
 import type { DocumentModel } from './document';
-import type { Entity, Id, Point } from './types';
+import type { Constraint, Entity, Id, Point } from './types';
 
 export interface Command {
   readonly label: string;
@@ -26,11 +26,12 @@ export class AddItems implements Command {
   }
 }
 
-/** Removes entities and any points left without an entity. */
+/** Removes entities, any points left without an entity, and constraints on what was removed. */
 export class RemoveEntities implements Command {
   readonly label = '삭제';
   private removedEntities: Entity[] = [];
   private removedPoints: Point[] = [];
+  private removedConstraints: Constraint[] = [];
 
   constructor(private readonly ids: Id[]) {}
 
@@ -43,11 +44,121 @@ export class RemoveEntities implements Command {
     doc.removeEntities(this.ids);
     this.removedPoints = doc.orphanPoints(candidates).map((id) => ({ ...doc.point(id) }));
     doc.removePoints(this.removedPoints.map((p) => p.id));
+    this.removedConstraints = doc.constraintsOn([...this.ids, ...this.removedPoints.map((p) => p.id)]);
+    doc.removeConstraints(this.removedConstraints.map((c) => c.id));
   }
 
   revert(doc: DocumentModel): void {
     doc.addPoints(this.removedPoints);
     doc.addEntities(this.removedEntities);
+    doc.addConstraints(this.removedConstraints);
+  }
+}
+
+export class AddConstraints implements Command {
+  readonly label = '구속 추가';
+  constructor(private readonly constraints: Constraint[]) {}
+
+  apply(doc: DocumentModel): void {
+    doc.addConstraints(this.constraints);
+  }
+
+  revert(doc: DocumentModel): void {
+    doc.removeConstraints(this.constraints.map((c) => c.id));
+  }
+}
+
+export class RemoveConstraints implements Command {
+  readonly label = '구속 해제';
+  private removed: Constraint[] = [];
+  constructor(private readonly ids: Id[]) {}
+
+  apply(doc: DocumentModel): void {
+    this.removed = this.ids.flatMap((id) => {
+      const c = doc.constraints.get(id);
+      return c ? [{ ...c, refs: [...c.refs] }] : [];
+    });
+    doc.removeConstraints(this.ids);
+  }
+
+  revert(doc: DocumentModel): void {
+    doc.addConstraints(this.removed);
+  }
+}
+
+/** Point positions and circle radii, captured before and after a solve. */
+export interface GeometryState {
+  points: Map<Id, { x: number; y: number }>;
+  radii: Map<Id, number>;
+}
+
+export function captureGeometry(doc: DocumentModel, pointIds: Iterable<Id>, circleIds: Iterable<Id> = []): GeometryState {
+  const points = new Map<Id, { x: number; y: number }>();
+  for (const id of pointIds) {
+    const p = doc.points.get(id);
+    if (p) points.set(id, { x: p.x, y: p.y });
+  }
+  const radii = new Map<Id, number>();
+  for (const id of circleIds) {
+    const e = doc.entities.get(id);
+    if (e?.kind === 'circle') radii.set(id, e.radius);
+  }
+  return { points, radii };
+}
+
+export function restoreGeometry(doc: DocumentModel, state: GeometryState): void {
+  for (const [id, v] of state.points) {
+    const p = doc.points.get(id);
+    if (p) {
+      p.x = v.x;
+      p.y = v.y;
+    }
+  }
+  for (const [id, r] of state.radii) {
+    const e = doc.entities.get(id);
+    if (e?.kind === 'circle') e.radius = r;
+  }
+}
+
+/** Sets geometry to a captured state (used for solver results and constrained drags). */
+export class SetGeometry implements Command {
+  constructor(
+    readonly label: string,
+    private readonly before: GeometryState,
+    private readonly after: GeometryState,
+  ) {}
+
+  apply(doc: DocumentModel): void {
+    restoreGeometry(doc, this.after);
+  }
+
+  revert(doc: DocumentModel): void {
+    restoreGeometry(doc, this.before);
+  }
+}
+
+/** Sets or clears a dimension's driving value. */
+export class SetDimensionValue implements Command {
+  readonly label = '치수 값 변경';
+  constructor(
+    private readonly id: Id,
+    private readonly before: number | undefined,
+    private readonly after: number | undefined,
+  ) {}
+
+  apply(doc: DocumentModel): void {
+    this.set(doc, this.after);
+  }
+
+  revert(doc: DocumentModel): void {
+    this.set(doc, this.before);
+  }
+
+  private set(doc: DocumentModel, v: number | undefined): void {
+    const e = doc.entities.get(this.id);
+    if (e?.kind !== 'dimension') return;
+    if (v === undefined) delete e.value;
+    else e.value = v;
   }
 }
 
@@ -169,5 +280,25 @@ export class Batch implements Command {
 
   revert(doc: DocumentModel): void {
     for (const c of [...this.commands].reverse()) c.revert(doc);
+  }
+}
+
+/** Changes a constraint's value (e.g. a radius). */
+export class SetConstraintValue implements Command {
+  readonly label = '구속 값 변경';
+  constructor(
+    private readonly id: Id,
+    private readonly before: number | undefined,
+    private readonly after: number | undefined,
+  ) {}
+
+  apply(doc: DocumentModel): void {
+    const c = doc.constraints.get(this.id);
+    if (c) c.value = this.after;
+  }
+
+  revert(doc: DocumentModel): void {
+    const c = doc.constraints.get(this.id);
+    if (c) c.value = this.before;
   }
 }
