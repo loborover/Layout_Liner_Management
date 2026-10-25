@@ -45,5 +45,7 @@ export interface Tool {
   key?(e: KeyboardEvent): boolean;
   /** Cancels the current operation; returns true if there was one. */
   cancel(): boolean;
+  /** Abandons a pointer gesture in progress (e.g. before undo), leaving the document as it was before it. */
+  interrupt?(): void;
   overlay?(p: Painter): void;
 }

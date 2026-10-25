@@ -87,18 +87,23 @@ export class SelectTool implements Tool {
     return false;
   }
 
-  cancel(): boolean {
+  interrupt(): void {
     const s = this.state;
     this.state = { kind: 'idle' };
     if (s.kind === 'move') {
-      // Undo the live preview of the drag.
+      // Revert the live preview of the drag; nothing has been recorded yet.
       this.ctx.doc.translatePoints(s.pointIds, { x: -s.applied.x, y: -s.applied.y });
       this.ctx.doc.changed();
-      return true;
-    }
-    if (s.kind === 'box') {
+    } else if (s.kind === 'box') {
       this.ctx.requestRender();
-      return true;
+    }
+  }
+
+  cancel(): boolean {
+    if (this.state.kind !== 'idle') {
+      const gesture = this.state.kind === 'move' || this.state.kind === 'box';
+      this.interrupt();
+      if (gesture) return true;
     }
     if (this.ctx.selection.size > 0) {
       this.ctx.selection.clear();

@@ -191,8 +191,8 @@ export class App {
       b.addEventListener('click', () => this.setTool(b.dataset.tool!));
     });
     const actions: Record<string, () => void> = {
-      undo: () => this.history.undo(),
-      redo: () => this.history.redo(),
+      undo: () => this.undo(),
+      redo: () => this.redo(),
       fit: () => this.fitAll(),
       new: () => this.newDrawing(),
       open: () => $<HTMLInputElement>('#file-input').click(),
@@ -223,11 +223,11 @@ export class App {
       const key = e.key.toLowerCase();
       if (mod && key === 'z') {
         e.preventDefault();
-        if (e.shiftKey) this.history.redo();
-        else this.history.undo();
+        if (e.shiftKey) this.redo();
+        else this.undo();
       } else if (mod && key === 'y') {
         e.preventDefault();
-        this.history.redo();
+        this.redo();
       } else if (mod && key === 's') {
         e.preventDefault();
         this.save();
@@ -268,6 +268,17 @@ export class App {
         if (!this.pan) this.canvas.style.cursor = this.tool.cursor;
       }
     });
+  }
+
+  // A live drag must not straddle an undo: its preview would be recorded against changed geometry.
+  private undo(): void {
+    this.tool.interrupt?.();
+    this.history.undo();
+  }
+
+  private redo(): void {
+    this.tool.interrupt?.();
+    this.history.redo();
   }
 
   private updateButtons(): void {
