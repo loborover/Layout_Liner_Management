@@ -15,6 +15,12 @@ function gitSha(): string {
 }
 
 export default defineConfig(({ command }) => ({
+  // Two pages: the editor and the read-only monitoring viewer app.
+  build: {
+    rollupOptions: {
+      input: { main: 'index.html', viewer: 'viewer.html' },
+    },
+  },
   define: {
     __APP_VERSION__: JSON.stringify(pkg.version),
     __GIT_SHA__: JSON.stringify(command === 'serve' ? 'dev' : gitSha()),

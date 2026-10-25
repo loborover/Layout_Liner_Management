@@ -1,6 +1,14 @@
+/**
+ * @file commands.ts
+ *
+ * Command pattern for undo/redo. Every user-visible document edit is a Command applied through History, so it
+ * can be undone. Commands store what they need to revert (snapshots or before/after values).
+ * Rule: tools, UI and the API never mutate the document directly except for live previews later recorded with
+ * `History.record`.
+ */
 import type { Vec2 } from '../geom/vec';
-import type { DocumentModel } from './document';
-import type { Constraint, Entity, EquipmentType, Id, Layer, Point, Underlay } from './types';
+import { type DocumentModel, cloneEntity } from './document';
+import type { Constraint, Entity, EquipmentType, Floor, Folder, Id, Layer, Point, Underlay } from './types';
 
 export interface Command {
   readonly label: string;
@@ -26,7 +34,11 @@ export class AddItems implements Command {
   }
 }
 
-/** Removes entities, any points left without an entity, and constraints on what was removed. */
+/**
+ * Removes entities, any points left without an entity, and constraints on what was removed.
+ * Removal cascades through the shape hierarchy: removing a shape removes its edge lines, and removing a line
+ * removes the shapes built on it (a shape can't exist without a closed loop of lines).
+ */
 export class RemoveEntities implements Command {
   readonly label = '삭제';
   private removedEntities: Entity[] = [];
@@ -36,22 +48,47 @@ export class RemoveEntities implements Command {
   constructor(private readonly ids: Id[]) {}
 
   apply(doc: DocumentModel): void {
-    this.removedEntities = this.ids.flatMap((id) => {
+    const ids = new Set(this.ids);
+    for (const id of this.ids) {
       const e = doc.entities.get(id);
-      return e ? [{ ...e }] : [];
-    });
+      if (e?.kind === 'shape') for (const edge of e.edges) ids.add(edge);
+    }
+    for (const s of doc.shapesUsing(ids)) ids.add(s.id);
+    // Keep document order so undo restores the drawing order.
+    this.removedEntities = [...doc.entities.values()].filter((e) => ids.has(e.id)).map(cloneEntity);
+    this.order = [...doc.entities.keys()];
     const candidates = this.removedEntities.flatMap((e) => doc.pointIdsOf(e));
-    doc.removeEntities(this.ids);
+    doc.removeEntities(ids);
     this.removedPoints = doc.orphanPoints(candidates).map((id) => ({ ...doc.point(id) }));
     doc.removePoints(this.removedPoints.map((p) => p.id));
-    this.removedConstraints = doc.constraintsOn([...this.ids, ...this.removedPoints.map((p) => p.id)]);
+    this.removedConstraints = doc.constraintsOn([...ids, ...this.removedPoints.map((p) => p.id)]);
     doc.removeConstraints(this.removedConstraints.map((c) => c.id));
   }
+
+  private order: Id[] = [];
 
   revert(doc: DocumentModel): void {
     doc.addPoints(this.removedPoints);
     doc.addEntities(this.removedEntities);
+    doc.reorder(this.order);
     doc.addConstraints(this.removedConstraints);
+  }
+}
+
+/** Changes the drawing order of entities (tree order and which entity is drawn on top). */
+export class ReorderEntities implements Command {
+  constructor(
+    readonly label: string,
+    private readonly before: Id[],
+    private readonly after: Id[],
+  ) {}
+
+  apply(doc: DocumentModel): void {
+    doc.reorder(this.after);
+  }
+
+  revert(doc: DocumentModel): void {
+    doc.reorder(this.before);
   }
 }
 
@@ -235,6 +272,19 @@ export class History {
     this.emit();
   }
 
+  /** Number of steps that can be undone. */
+  get size(): number {
+    return this.done.length;
+  }
+
+  /** Merges the steps recorded since `start` (a previous `size`) into one undo step. */
+  squash(start: number, label: string): void {
+    if (this.done.length - start < 2) return;
+    const steps = this.done.splice(start);
+    this.done.push(new Batch(label, steps));
+    this.emit();
+  }
+
   clear(): void {
     this.done = [];
     this.undone = [];
@@ -313,8 +363,8 @@ export class UpdateEntities implements Command {
     after: Entity[],
   ) {
     // Copies: the live entities may be edited in place later (e.g. a dimension offset drag).
-    this.before = before.map((e) => ({ ...e }));
-    this.after = after.map((e) => ({ ...e }));
+    this.before = before.map(cloneEntity);
+    this.after = after.map(cloneEntity);
   }
 
   apply(doc: DocumentModel): void {
@@ -362,7 +412,46 @@ export class SetEquipmentTypes implements Command {
 
 function replace<T extends { id: Id }>(map: Map<Id, T>, items: T[]): void {
   map.clear();
-  for (const it of items) map.set(it.id, { ...it });
+  for (const it of items) map.set(it.id, structuredClone(it));
+}
+
+/** Floors, folders and layers: the part of the object tree above entities. */
+export interface LayerTree {
+  floors: Floor[];
+  folders: Folder[];
+  layers: Layer[];
+}
+
+export function captureLayerTree(doc: DocumentModel): LayerTree {
+  return {
+    floors: [...doc.floors.values()].map((f) => ({ ...f })),
+    folders: [...doc.folders.values()].map((f) => ({ ...f })),
+    layers: [...doc.layers.values()].map((l) => ({ ...l })),
+  };
+}
+
+/** Replaces floors, folders and layers together (adding a floor also adds its first layer, for example). */
+export class SetLayerTree implements Command {
+  constructor(
+    readonly label: string,
+    private readonly before: LayerTree,
+    private readonly after: LayerTree,
+  ) {}
+
+  apply(doc: DocumentModel): void {
+    this.set(doc, this.after);
+  }
+
+  revert(doc: DocumentModel): void {
+    this.set(doc, this.before);
+  }
+
+  private set(doc: DocumentModel, t: LayerTree): void {
+    replace(doc.floors, t.floors);
+    replace(doc.folders, t.folders);
+    replace(doc.layers, t.layers);
+    if (!doc.floors.has(doc.activeFloor)) doc.activeFloor = doc.floors.keys().next().value ?? doc.activeFloor;
+  }
 }
 
 /** Adds, changes or removes the underlay image. */

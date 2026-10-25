@@ -1,10 +1,35 @@
-import type { Vec2 } from './geom/vec';
+/**
+ * @file app.ts
+ *
+ * Editor application shell. Owns the document, history, selection, viewport, spatial index, snap engine,
+ * constraint service, tools and the editing API, and wires them to the DOM: canvas events, quick bar and ribbon
+ * buttons (data-tool / data-action / data-constraint / data-preset attributes in index.html), keyboard shortcuts,
+ * side bar (object tree, properties, library, underlay), status bar, autosave and the MCP live bridge.
+ * Start here to find where a user action enters the system.
+ *
+ * Modes: 'edit' (all tools) and 'view' (InspectTool only: look, pan, click for information; nothing can change).
+ * `?mode=view` in the URL opens in viewer mode.
+ * Related: src/tools/* (pointer interaction), src/model/commands.ts (every undoable edit), src/view/renderer.ts,
+ * src/api/editorApi.ts (scripted/AI edits).
+ */
+import type { Box, Vec2 } from './geom/vec';
 import { FormatError, deserialize, serialize } from './io/serialize';
 import { hasConstraints } from './constraints/components';
 import { type ClusterStatus, ConstraintService } from './constraints/service';
-import { Batch, type Command, History, RemoveConstraints, SetDimensionValue, SetUnderlay } from './model/commands';
-import { DocumentModel } from './model/document';
-import { arrayOffsets, copyItems, moveToLayer, rotateItems } from './model/edit';
+import { Batch, type Command, History, RemoveConstraints, RemoveEntities, SetDimensionValue, SetUnderlay, UpdateEntities } from './model/commands';
+import { DocumentModel, cloneEntity } from './model/document';
+import { arrayOffsets, copyItems, makeShapes, moveToLayer, type ReorderMove, reorderItems, rotateItems } from './model/edit';
+import { EditorApi } from './api/editorApi';
+import { METHODS, dispatch } from './api/rpc';
+import { BridgeClient } from './api/bridge';
+import { InspectTool } from './tools/inspect';
+import { Ribbon } from './ui/ribbon';
+import { Sidebar } from './ui/sidebar';
+import { ObjectTree } from './ui/tree';
+import { PropertyPanel } from './ui/properties';
+import { fillInspector } from './ui/inspector';
+import { hydrateIcons } from './ui/icons';
+import type { LiveValue, Mode, UiHost } from './ui/host';
 import { equipmentCsv } from './io/equipmentList';
 import { DxfError, parseDxf } from './io/dxf';
 import { writeDxf } from './io/dxfExport';
@@ -12,17 +37,17 @@ import { importDxf } from './io/dxfImport';
 import { drawingSvg } from './io/svg';
 import { UnderlayTool } from './tools/underlay';
 import { EquipmentTool } from './tools/equipment';
-import { SidePanel } from './ui/panel';
+import { Library } from './ui/library';
 import { Selection } from './model/selection';
 import { SpatialIndex } from './model/spatial';
 import { SnapEngine, type SnapResult, type SnapSettings } from './snap/snap';
-import { type ConstraintKind, DEFAULT_LAYER_ID, type Id, type Underlay } from './model/types';
+import { type ConstraintKind, DEFAULT_LAYER_ID, type Id, type StrokeStyle, type Underlay } from './model/types';
 import { CircleTool, DimensionTool, LineTool, RectTool } from './tools/draw';
 import { MeasureAngleTool, MeasureAreaTool, MeasureDistanceTool } from './tools/measure';
 import { SelectTool } from './tools/select';
 import type { Tool, ToolContext, ToolPointer } from './tools/tool';
 import { type DisplayUnit, formatLength } from './view/format';
-import { Renderer } from './view/renderer';
+import { type EntityStatus, Renderer } from './view/renderer';
 import { Viewport, gridSpacing } from './view/viewport';
 
 const AUTOSAVE_KEY = 'layout-liner:autosave';
@@ -31,6 +56,8 @@ const SNAP_REACH_PX = 10;
 const WHEEL_ZOOM_STEP = 1.0015;
 /** Tools that create geometry on the current layer. */
 const DRAWING_TOOLS = new Set(['line', 'rect', 'circle', 'dimension', 'equipment']);
+/** Monitoring status → fill colour (docs/VIEWER.md). */
+const STATUS_COLORS: Record<string, string> = { ok: '#16a34a', warn: '#f59e0b', alarm: '#dc2626', offline: '#94a3b8' };
 
 const $ = <T extends HTMLElement>(sel: string): T => {
   const el = document.querySelector<T>(sel);
@@ -38,7 +65,7 @@ const $ = <T extends HTMLElement>(sel: string): T => {
   return el;
 };
 
-export class App {
+export class App implements UiHost {
   readonly doc = new DocumentModel();
   readonly history = new History(this.doc);
   readonly selection = new Selection();
@@ -46,6 +73,10 @@ export class App {
   readonly index = new SpatialIndex(this.doc);
   readonly snapper = new SnapEngine(this.doc, this.index);
   readonly constraints = new ConstraintService(this.doc, this.history);
+  /** Scripted/AI editing API; also exposed as window.layoutLiner (src/main.ts). */
+  readonly api: EditorApi;
+  /** Live monitoring values by binding key, fed by a data source (the viewer app uses the same shape). */
+  readonly liveValues = new Map<string, LiveValue>();
   private constraintStatus: ClusterStatus | null = null;
   private statusTimer: number | undefined;
   private messageTimer: number | undefined;
@@ -53,10 +84,17 @@ export class App {
   private tools: Record<string, Tool>;
   private tool: Tool;
   private hover: Id | null = null;
-  private currentLayer: Id = DEFAULT_LAYER_ID;
-  private panel: SidePanel;
+  private currentLayerId: Id = DEFAULT_LAYER_ID;
+  private library: Library;
+  private tree: ObjectTree;
+  private props: PropertyPanel;
+  private ribbon: Ribbon;
+  private sidebar: Sidebar;
+  private bridge: BridgeClient;
   private equipmentTool: EquipmentTool;
-  private unit: DisplayUnit = 'mm';
+  private displayUnit: DisplayUnit = 'mm';
+  private currentMode: Mode = 'edit';
+  private inspected: Id | null = null;
   private snapSettings: SnapSettings = { object: true, polar: true, grid: true, polarStep: 15 };
   private lastSnap: SnapResult | null = null;
   private pan: { last: Vec2 } | null = null;
@@ -70,18 +108,22 @@ export class App {
   private infoEl = $<HTMLSpanElement>('#status-info');
   private posEl = $<HTMLSpanElement>('#status-pos');
   private msgEl = $<HTMLSpanElement>('#status-msg');
+  private inspectorEl = $<HTMLDivElement>('#inspector');
 
   constructor() {
+    hydrateIcons();
     this.renderer = new Renderer(this.canvas, this.view, this.doc, this.index, this.selection);
     this.renderer.onImageLoad = () => this.requestRender();
+    this.api = new EditorApi(this.doc, this.history, { currentLayer: () => this.currentLayer() });
     const ctx: ToolContext = {
       doc: this.doc,
       history: this.history,
       index: this.index,
       selection: this.selection,
       view: this.view,
-      unit: () => this.unit,
-      layer: () => this.layerForDrawing(),
+      unit: () => this.displayUnit,
+      layer: () => this.currentLayer(),
+      lineStyle: () => this.newLineStyle(),
       pickTolerance: () => this.view.pxToMm(PICK_TOLERANCE_PX),
       setHover: (id) => {
         if (id === this.hover) return;
@@ -105,26 +147,17 @@ export class App {
       'measure-area': new MeasureAreaTool(ctx),
       equipment: (this.equipmentTool = new EquipmentTool(ctx)),
       underlay: new UnderlayTool(ctx),
+      inspect: new InspectTool(ctx, (id, at) => this.showInspector(id, at)),
     };
-    this.panel = new SidePanel(
-      {
-        doc: this.doc,
-        history: this.history,
-        currentLayer: () => this.layerForDrawing(),
-        setCurrentLayer: (id) => {
-          this.currentLayer = id;
-          this.panel.refresh();
-        },
-        activeType: () => (this.tool === this.equipmentTool ? this.equipmentTool.typeId : null),
-        placeEquipment: (type) => {
-          this.equipmentTool.setType(type);
-          this.setTool('equipment');
-        },
-        notify: (text) => this.notify(text),
-        ask: (question, initial) => window.prompt(question, initial),
-      },
-      $<HTMLUListElement>('#layer-list'),
-      $<HTMLUListElement>('#type-list'),
+    this.library = new Library(this, $<HTMLUListElement>('#type-list'));
+    this.tree = new ObjectTree(this, $<HTMLDivElement>('#tree'));
+    this.props = new PropertyPanel(this, $<HTMLDivElement>('#props'));
+    this.ribbon = new Ribbon($<HTMLElement>('.ribbon'));
+    this.sidebar = new Sidebar($<HTMLElement>('.sidebar'), () => this.resize());
+    this.bridge = new BridgeClient(
+      this.api,
+      (state, detail) => this.bridgeState(state, detail),
+      (method) => METHODS[method]?.mutates && this.notify(`AI가 실행함: ${method}`),
     );
     this.tool = this.tools.select;
 
@@ -132,15 +165,22 @@ export class App {
       // Hidden or locked geometry can't stay selected: it could otherwise still be moved or deleted.
       this.selection.prune((id) => {
         const e = this.doc.entities.get(id);
-        return !!e && this.doc.isEditable(e);
+        return !!e && (this.currentMode === 'view' ? this.doc.isVisible(e) : this.doc.isEditable(e));
       });
-      this.panel.refresh();
+      this.refreshPanels();
+      this.refreshInspector();
       this.refreshUnderlayControls();
+      this.refreshFloorSelect();
       this.scheduleAutosave();
       this.scheduleConstraintStatus();
       this.requestRender();
     });
-    this.selection.onChange(() => this.requestRender());
+    this.selection.onChange(() => {
+      this.tree.refresh();
+      this.props.refresh();
+      // Selecting from the tree should show the selection's properties when the bar shows nothing else useful.
+      this.requestRender();
+    });
     this.history.onChange(() => this.updateButtons());
 
     this.bindCanvas();
@@ -151,13 +191,117 @@ export class App {
     this.view.centreOn({ x: 0, y: 0 });
 
     this.restoreAutosave();
-    this.setTool('select');
+    this.refreshFloorSelect();
+    this.refreshPanels();
+    this.tree.render();
+    this.props.render();
+    this.setMode(new URLSearchParams(location.search).get('mode') === 'view' ? 'view' : 'edit');
     this.updateButtons();
+  }
+
+  // ---------- UiHost ----------
+
+  mode(): Mode {
+    return this.currentMode;
+  }
+
+  unit(): DisplayUnit {
+    return this.displayUnit;
+  }
+
+  /** Current layer, falling back to the first layer of the active floor (e.g. after undo, opening a file or a floor change). */
+  currentLayer(): Id {
+    const layer = this.doc.layers.get(this.currentLayerId);
+    if (!layer || layer.floor !== this.doc.activeFloor) {
+      this.currentLayerId = [...this.doc.layers.values()].find((l) => l.floor === this.doc.activeFloor)?.id ?? this.doc.layers.keys().next().value ?? DEFAULT_LAYER_ID;
+    }
+    return this.currentLayerId;
+  }
+
+  setCurrentLayer(id: Id): void {
+    this.currentLayerId = id;
+    this.refreshPanels();
+  }
+
+  setFloor(id: Id): void {
+    if (!this.doc.floors.has(id) || id === this.doc.activeFloor) return;
+    this.tool.cancel();
+    this.selection.clear();
+    this.showInspector(null, { x: 0, y: 0 });
+    this.doc.activeFloor = id;
+    this.doc.changed();
+  }
+
+  activeType(): Id | null {
+    return this.tool === this.equipmentTool ? this.equipmentTool.typeId : null;
+  }
+
+  placeEquipment(type: Id): void {
+    if (this.currentMode !== 'edit') return;
+    this.equipmentTool.setType(type);
+    this.setTool('equipment');
+  }
+
+  zoomTo(ids: Id[]): void {
+    let box: Box | null = null;
+    for (const id of ids) {
+      const e = this.doc.entities.get(id);
+      if (!e) continue;
+      const b = this.doc.bboxOf(e);
+      box = box ? { minX: Math.min(box.minX, b.minX), minY: Math.min(box.minY, b.minY), maxX: Math.max(box.maxX, b.maxX), maxY: Math.max(box.maxY, b.maxY) } : b;
+    }
+    if (!box) return;
+    const pad = Math.max(box.maxX - box.minX, box.maxY - box.minY, 1000) * 0.5;
+    this.view.fit({ minX: box.minX - pad, minY: box.minY - pad, maxX: box.maxX + pad, maxY: box.maxY + pad });
+    this.requestRender();
+  }
+
+  live(binding: string): LiveValue | undefined {
+    return this.liveValues.get(binding);
+  }
+
+  ask(question: string, initial: string): string | null {
+    return window.prompt(question, initial);
+  }
+
+  confirm(question: string): boolean {
+    return window.confirm(question);
+  }
+
+  /** Runs an API method by name (same as the MCP tools); throws ApiError on invalid input. */
+  call(method: string, params: Record<string, unknown> = {}): unknown {
+    if (this.currentMode !== 'edit' && METHODS[method]?.mutates) throw new Error('뷰어 모드에서는 도면을 바꿀 수 없습니다. 편집 모드로 바꾸십시오.');
+    this.tool.interrupt?.();
+    return dispatch(this.api, method, params);
+  }
+
+  // ---------- modes and tools ----------
+
+  /** Switches between editing and viewing. Viewer mode can't change the drawing. */
+  setMode(mode: Mode): void {
+    this.currentMode = mode;
+    document.body.classList.toggle('mode-view', mode === 'view');
+    document.querySelectorAll<HTMLButtonElement>('[data-mode]').forEach((b) => b.setAttribute('aria-checked', String(b.dataset.mode === mode)));
+    $<HTMLSpanElement>('#status-mode').textContent = mode === 'view' ? '뷰어 모드' : '편집 모드';
+    this.showInspector(null, { x: 0, y: 0 });
+    this.selection.clear();
+    if (mode === 'view' && this.bridge.state !== 'closed') this.bridge.disconnect();
+    this.setTool(mode === 'view' ? 'inspect' : 'select');
+    this.ribbon.refresh();
+    this.refreshPanels();
+    this.tree.render();
+    this.props.render();
+    const url = new URL(location.href);
+    if (mode === 'view') url.searchParams.set('mode', 'view');
+    else url.searchParams.delete('mode');
+    history.replaceState(null, '', url);
   }
 
   setTool(id: string): void {
     const next = this.tools[id];
     if (!next) return;
+    // Viewer mode only inspects and measures; editing tools stay out of reach.
+    if (this.currentMode === 'view' && !['inspect', 'measure-distance', 'measure-angle', 'measure-area'].includes(id)) return;
     this.tool.cancel();
     this.tool.deactivate?.();
     this.tool = next;
@@ -168,7 +312,7 @@ export class App {
     document.querySelectorAll<HTMLButtonElement>('[data-tool]').forEach((b) => {
       b.setAttribute('aria-pressed', String(b.dataset.tool === id));
     });
-    this.panel?.refresh();
+    this.library?.refresh();
     this.requestRender();
   }
 
@@ -179,16 +323,30 @@ export class App {
       this.frameRequested = false;
       const drawn = this.renderer.render({
         hover: this.hover,
-        unit: this.unit,
-        snap: this.lastSnap,
+        unit: this.displayUnit,
+        snap: this.currentMode === 'edit' ? this.lastSnap : null,
         fullyConstrained: this.constraintStatus?.fullyConstrained,
+        status: this.liveStatus(),
+        clean: this.currentMode === 'view',
         overlay: (p) => this.tool.overlay?.(p),
       });
       const sel = this.selection.size ? ` · 선택 ${this.selection.size}` : '';
       const cs = this.constraintStatus;
       const dof = cs && cs.clusters > 0 ? ` · 구속 자유도 ${cs.dof}${cs.dof === 0 ? ' (완전 구속)' : ''}` : '';
-      this.infoEl.textContent = `객체 ${this.doc.entities.size} (표시 ${drawn})${sel}${dof} · 그리드 ${formatLength(gridSpacing(this.view.scale).minor, this.unit)}`;
+      const floor = this.doc.floors.get(this.doc.activeFloor)?.name ?? '';
+      this.infoEl.textContent = `${floor} · 객체 ${drawn}/${this.doc.entities.size}${sel}${dof} · 그리드 ${formatLength(gridSpacing(this.view.scale).minor, this.displayUnit)}`;
     });
+  }
+
+  /** Render colours for entities with a live value (status ok/warn/alarm/offline). */
+  private liveStatus(): Map<Id, EntityStatus> | undefined {
+    if (this.liveValues.size === 0) return undefined;
+    const out = new Map<Id, EntityStatus>();
+    for (const e of this.doc.entities.values()) {
+      const v = e.binding ? this.liveValues.get(e.binding) : undefined;
+      if (v) out.set(e.id, { color: STATUS_COLORS[v.status ?? 'ok'] ?? STATUS_COLORS.ok, text: `${String(v.value)}${v.unit ? ` ${v.unit}` : ''}` });
+    }
+    return out;
   }
 
   fitAll(): void {
@@ -199,6 +357,12 @@ export class App {
       this.view.centreOn({ x: 0, y: 0 });
     }
     this.requestRender();
+  }
+
+  private refreshPanels(): void {
+    this.library?.refresh();
+    this.tree?.refresh();
+    this.props?.refresh();
   }
 
   private resize(): void {
@@ -212,13 +376,10 @@ export class App {
     const screen = { x: e.clientX - r.left, y: e.clientY - r.top };
     const raw = this.view.toWorld(screen);
     const q = this.tool.snapQuery?.() ?? {};
-    const snap = this.snapper.snap(
-      raw,
-      this.view.pxToMm(SNAP_REACH_PX),
-      gridSpacing(this.view.scale).minor,
-      this.snapSettings,
-      { ...q, ortho: e.shiftKey && !!q.from },
-    );
+    const snap =
+      this.currentMode === 'edit' || this.tool.id.startsWith('measure')
+        ? this.snapper.snap(raw, this.view.pxToMm(SNAP_REACH_PX), gridSpacing(this.view.scale).minor, this.snapSettings, { ...q, ortho: e.shiftKey && !!q.from })
+        : null;
     return { screen, raw, world: snap?.point ?? raw, snap, button: e.button, shift: e.shiftKey };
   }
 
@@ -233,13 +394,11 @@ export class App {
         c.style.cursor = 'grabbing';
         return;
       }
-      if (DRAWING_TOOLS.has(this.tool.id) && e.button === 0) {
-        const layer = this.doc.layers.get(this.layerForDrawing());
-        if (layer && (layer.locked || !layer.visible)) {
-          // Geometry drawn there would be invisible or impossible to select, so don't create it.
-          this.notify(`현재 레이어(${layer.name})가 ${layer.locked ? '잠겨' : '숨겨져'} 있어 그릴 수 없습니다.`);
-          return;
-        }
+      if (DRAWING_TOOLS.has(this.tool.id) && e.button === 0 && !this.doc.isLayerEditable(this.currentLayer())) {
+        // Geometry drawn there would be invisible or impossible to select, so don't create it.
+        const layer = this.doc.layers.get(this.currentLayer());
+        this.notify(`현재 레이어(${layer?.name ?? ''})나 그 폴더가 잠겨 있거나 숨겨져 있어 그릴 수 없습니다.`);
+        return;
       }
       this.tool.down(this.pointer(e));
     });
@@ -256,7 +415,7 @@ export class App {
       }
       const p = this.pointer(e);
       this.setSnap(p.snap);
-      this.posEl.textContent = `X ${formatLength(p.world.x, this.unit)}  Y ${formatLength(p.world.y, this.unit)}`;
+      this.posEl.textContent = `X ${formatLength(p.world.x, this.displayUnit)}  Y ${formatLength(p.world.y, this.displayUnit)}`;
       this.tool.move(p);
     });
     c.addEventListener('dblclick', (e) => this.tool.doubleClick?.(this.pointer(e)));
@@ -281,34 +440,77 @@ export class App {
     );
   }
 
+  /** Runs an editing action only in edit mode. */
+  private edit(fn: () => void): () => void {
+    return () => {
+      if (this.currentMode !== 'edit') return this.notify('뷰어 모드에서는 편집할 수 없습니다.');
+      fn();
+    };
+  }
+
   private bindToolbar(): void {
     document.querySelectorAll<HTMLButtonElement>('[data-tool]').forEach((b) => {
       b.addEventListener('click', () => this.setTool(b.dataset.tool!));
     });
+    document.querySelectorAll<HTMLButtonElement>('[data-mode]').forEach((b) => {
+      b.addEventListener('click', () => this.setMode(b.dataset.mode as Mode));
+    });
+    document.querySelectorAll<HTMLButtonElement>('[data-preset]').forEach((b) => {
+      b.addEventListener(
+        'click',
+        this.edit(() => {
+          const id = b.dataset.preset!;
+          if (!this.doc.equipmentTypes.has(id)) return this.notify('라이브러리에 이 프리셋이 없습니다. 라이브러리에서 직접 고르십시오.');
+          this.placeEquipment(id);
+        }),
+      );
+    });
+    const e = (fn: () => void) => this.edit(fn);
     const actions: Record<string, () => void> = {
-      undo: () => this.undo(),
-      redo: () => this.redo(),
+      undo: e(() => this.undo()),
+      redo: e(() => this.redo()),
       fit: () => this.fitAll(),
-      new: () => this.newDrawing(),
-      open: () => $<HTMLInputElement>('#file-input').click(),
+      new: e(() => this.newDrawing()),
+      open: e(() => $<HTMLInputElement>('#file-input').click()),
       save: () => this.save(),
-      unconstrain: () => this.unconstrain(),
-      rotate: () => this.rotateSelection(),
-      array: () => this.arraySelection(),
-      'to-layer': () => this.selectionToLayer(),
-      'add-layer': () => this.panel.addLayer(),
-      'add-type': () => this.panel.addType(),
+      delete: e(() => this.deleteSelection()),
+      unconstrain: e(() => this.unconstrain()),
+      rotate: e(() => this.rotateSelection()),
+      array: e(() => this.arraySelection()),
+      'to-layer': e(() => this.selectionToLayer()),
+      'make-shape': e(() => this.makeShapeFromSelection()),
+      unshape: e(() => this.unshapeSelection()),
+      'order-front': e(() => this.reorderSelection('front')),
+      'order-forward': e(() => this.reorderSelection('forward')),
+      'order-backward': e(() => this.reorderSelection('backward')),
+      'order-back': e(() => this.reorderSelection('back')),
+      'style-apply': e(() => this.applyStyle(this.ribbonStyle())),
+      'style-clear': e(() => this.applyStyle(undefined)),
+      'add-floor': e(() => this.tree.addFloor()),
+      'add-folder': e(() => this.tree.addFolder()),
+      'add-layer': e(() => this.tree.addLayer()),
+      'add-type': e(() => this.library.addType()),
       'export-equipment': () => this.exportEquipment(),
       'export-dxf': () => this.exportDxf(),
       'export-svg': () => this.exportSvg(),
       print: () => void this.print(),
-      'load-underlay': () => $<HTMLInputElement>('#image-input').click(),
-      'remove-underlay': () => {
+      'load-underlay': e(() => $<HTMLInputElement>('#image-input').click()),
+      'remove-underlay': e(() => {
         if (this.doc.underlay) this.history.execute(new SetUnderlay('밑그림 삭제', this.doc.underlay, null));
-      },
+      }),
+      'floor-up': () => this.stepFloor(1),
+      'floor-down': () => this.stepFloor(-1),
+      'sidebar-min': () => this.sidebar.setState('collapsed'),
+      'sidebar-normal': () => this.sidebar.setState('normal'),
+      'sidebar-max': () => this.sidebar.setState(this.sidebar.state === 'wide' ? 'normal' : 'wide'),
+      'toggle-ribbon': () => this.ribbon.toggle(),
+      'bridge-toggle': e(() => {
+        if (this.bridge.state === 'closed') this.bridge.connect($<HTMLInputElement>('#bridge-url').value.trim());
+        else this.bridge.disconnect();
+      }),
     };
     document.querySelectorAll<HTMLButtonElement>('[data-constraint]').forEach((b) => {
-      b.addEventListener('click', () => void this.applyConstraint(b.dataset.constraint as ConstraintKind));
+      b.addEventListener('click', e(() => void this.applyConstraint(b.dataset.constraint as ConstraintKind)));
     });
     document.querySelectorAll<HTMLButtonElement>('[data-action]').forEach((b) => {
       b.addEventListener('click', () => actions[b.dataset.action!]?.());
@@ -360,62 +562,73 @@ export class App {
     }
     const unit = $<HTMLSelectElement>('#unit');
     unit.addEventListener('change', () => {
-      this.unit = unit.value as DisplayUnit;
+      this.displayUnit = unit.value as DisplayUnit;
+      this.refreshPanels();
       this.requestRender();
     });
+    const floor = $<HTMLSelectElement>('#floor-select');
+    floor.addEventListener('change', () => this.setFloor(floor.value));
   }
 
   private bindKeyboard(): void {
     window.addEventListener('keydown', (e) => {
       // Typing into a field must not trigger shortcuts; a clicked checkbox, radio or colour swatch should not swallow them.
       const t = e.target;
-      const typing = t instanceof HTMLInputElement && !['checkbox', 'radio', 'color'].includes(t.type);
+      const typing = (t instanceof HTMLInputElement && !['checkbox', 'radio', 'color'].includes(t.type)) || t instanceof HTMLTextAreaElement;
       if (typing || t instanceof HTMLSelectElement) return;
       const mod = e.ctrlKey || e.metaKey;
       const key = e.key.toLowerCase();
-      if (mod && key === 'z') {
+      const editing = this.currentMode === 'edit';
+      if (mod && key === 'z' && editing) {
         e.preventDefault();
         if (e.shiftKey) this.redo();
         else this.undo();
-      } else if (mod && key === 'y') {
+      } else if (mod && key === 'y' && editing) {
         e.preventDefault();
         this.redo();
       } else if (mod && key === 's') {
         e.preventDefault();
         this.save();
-      } else if (mod && key === 'o') {
+      } else if (mod && key === 'o' && editing) {
         e.preventDefault();
         $<HTMLInputElement>('#file-input').click();
       } else if (mod) {
         return;
       } else if (e.key === 'Escape') {
-        if (!this.tool.cancel() && this.tool !== this.tools.select) this.setTool('select');
+        const home = editing ? 'select' : 'inspect';
+        if (!this.tool.cancel() && this.tool !== this.tools[home]) this.setTool(home);
+        this.showInspector(null, { x: 0, y: 0 });
       } else if (e.key === ' ') {
         e.preventDefault();
         if (!this.spaceHeld) {
           this.spaceHeld = true;
           this.canvas.style.cursor = 'grab';
         }
-      } else if (e.key === 'F3' || e.key === 'F9' || e.key === 'F10') {
+      } else if (e.key === 'PageUp' || e.key === 'PageDown') {
+        e.preventDefault();
+        this.stepFloor(e.key === 'PageUp' ? 1 : -1);
+      } else if (editing && (e.key === 'F3' || e.key === 'F9' || e.key === 'F10')) {
         e.preventDefault();
         const key = e.key === 'F3' ? 'object' : e.key === 'F9' ? 'grid' : 'polar';
         this.snapSettings[key] = !this.snapSettings[key];
         $<HTMLInputElement>(`#snap-${key}`).checked = this.snapSettings[key];
-      } else if (this.tool.key?.(e)) {
+      } else if (editing && this.tool.key?.(e)) {
         e.preventDefault();
       } else {
-        const shortcuts: Record<string, () => void> = {
-          v: () => this.setTool('select'),
-          l: () => this.setTool('line'),
-          r: () => this.setTool('rect'),
-          c: () => this.setTool('circle'),
-          d: () => this.setTool('dimension'),
-          m: () => this.setTool('measure-distance'),
-          n: () => this.setTool('measure-angle'),
-          a: () => this.setTool('measure-area'),
-          e: () => this.setTool('equipment'),
-          f: () => this.fitAll(),
-        };
+        const shortcuts: Record<string, () => void> = editing
+          ? {
+              v: () => this.setTool('select'),
+              l: () => this.setTool('line'),
+              r: () => this.setTool('rect'),
+              c: () => this.setTool('circle'),
+              d: () => this.setTool('dimension'),
+              m: () => this.setTool('measure-distance'),
+              n: () => this.setTool('measure-angle'),
+              a: () => this.setTool('measure-area'),
+              e: () => this.setTool('equipment'),
+              f: () => this.fitAll(),
+            }
+          : { f: () => this.fitAll(), m: () => this.setTool('measure-distance'), v: () => this.setTool('inspect') };
         shortcuts[key]?.();
       }
     });
@@ -427,6 +640,141 @@ export class App {
     });
   }
 
+  // ---------- floors, styles, shapes, order ----------
+
+  private refreshFloorSelect(): void {
+    const sel = $<HTMLSelectElement>('#floor-select');
+    const floors = [...this.doc.floors.values()].sort((a, b) => b.elevation - a.elevation);
+    const key = JSON.stringify([floors, this.doc.activeFloor]);
+    if (sel.dataset.key === key) return;
+    sel.dataset.key = key;
+    sel.replaceChildren(...floors.map((f) => new Option(f.name, f.id, false, f.id === this.doc.activeFloor)));
+  }
+
+  /** Next floor up (+1) or down (-1) by elevation. */
+  private stepFloor(dir: 1 | -1): void {
+    const floors = [...this.doc.floors.values()].sort((a, b) => a.elevation - b.elevation);
+    const i = floors.findIndex((f) => f.id === this.doc.activeFloor);
+    const next = floors[i + dir];
+    if (next) this.setFloor(next.id);
+  }
+
+  private ribbonStyle(): StrokeStyle {
+    const width = Number($<HTMLInputElement>('#style-width').value);
+    return {
+      width: width >= 0 ? width : 0,
+      align: $<HTMLSelectElement>('#style-align').value as StrokeStyle['align'],
+      color: $<HTMLInputElement>('#style-color').value,
+    };
+  }
+
+  private newLineStyle(): StrokeStyle | undefined {
+    return $<HTMLInputElement>('#style-new').checked ? this.ribbonStyle() : undefined;
+  }
+
+  /** Applies (or clears) a line style on selected lines and on the edges of selected shapes. */
+  private applyStyle(style: StrokeStyle | undefined): void {
+    const ids = new Set<Id>();
+    for (const id of this.selection.values()) {
+      const e = this.doc.entities.get(id);
+      if (e?.kind === 'line') ids.add(id);
+      if (e?.kind === 'shape') for (const edge of e.edges) ids.add(edge);
+    }
+    const before = [...ids].flatMap((id) => {
+      const e = this.doc.entities.get(id);
+      return e?.kind === 'line' ? [e] : [];
+    });
+    if (before.length === 0) return this.notify('선 양식을 적용할 선이나 도형을 선택하십시오.');
+    const after = before.map((l) => {
+      const c = cloneEntity(l);
+      if (style) c.stroke = { ...style };
+      else delete c.stroke;
+      return c;
+    });
+    this.history.execute(new UpdateEntities(style ? '선 양식' : '선 양식 지우기', before, after));
+  }
+
+  private makeShapeFromSelection(): void {
+    const lines = this.selection.values().filter((id) => this.doc.entities.get(id)?.kind === 'line');
+    if (lines.length < 3) return this.notify('닫힌 고리를 이루는 선을 세 개 이상 선택하십시오.');
+    const r = makeShapes(this.doc, lines);
+    if (!r) return this.notify('선택한 선이 닫힌 고리를 이루지 않거나 이미 도형입니다. 끝점이 서로 이어져 있어야 합니다.');
+    this.history.execute(r.command);
+    this.selection.set(r.shapes.map((s) => s.id));
+    this.notify(`도형 ${r.shapes.length}개를 만들었습니다.`);
+  }
+
+  /** Removes selected shapes but keeps their lines. */
+  private unshapeSelection(): void {
+    const shapes = this.selection.values().filter((id) => this.doc.entities.get(id)?.kind === 'shape');
+    if (shapes.length === 0) return this.notify('해제할 도형을 선택하십시오.');
+    const removed = shapes.map((id) => cloneEntity(this.doc.entities.get(id)!));
+    const order = [...this.doc.entities.keys()];
+    this.history.execute({
+      label: '도형 해제',
+      apply: (doc) => doc.removeEntities(shapes),
+      revert: (doc) => {
+        doc.addEntities(removed);
+        doc.reorder(order);
+      },
+    });
+  }
+
+  private reorderSelection(move: ReorderMove): void {
+    const cmd = reorderItems(this.doc, this.selection.values(), move);
+    if (!cmd) return this.notify(this.selection.size === 0 ? '순서를 바꿀 객체를 선택하십시오.' : '이미 그 위치입니다.');
+    this.history.execute(cmd);
+  }
+
+  private deleteSelection(): void {
+    const ids = this.selection.values();
+    if (ids.length === 0) return this.notify('삭제할 객체를 선택하십시오.');
+    this.tool.interrupt?.();
+    this.selection.clear();
+    this.history.execute(new RemoveEntities(ids));
+  }
+
+  // ---------- viewer inspector and AI bridge ----------
+
+  private showInspector(id: Id | null, at: Vec2): void {
+    this.inspected = id;
+    const card = this.inspectorEl;
+    const e = id ? this.doc.entities.get(id) : undefined;
+    if (!e) {
+      card.hidden = true;
+      return;
+    }
+    fillInspector(card, this.doc, e, this.displayUnit, e.binding ? this.liveValues.get(e.binding) : undefined, () => {
+      this.selection.clear();
+      this.showInspector(null, at);
+    });
+    card.hidden = false;
+    const stage = this.canvas.parentElement!.getBoundingClientRect();
+    const w = card.offsetWidth;
+    const h = card.offsetHeight;
+    card.style.left = `${Math.max(8, Math.min(at.x + 14, stage.width - w - 8))}px`;
+    card.style.top = `${Math.max(8, Math.min(at.y + 14, stage.height - h - 8))}px`;
+    this.sidebar.open('props');
+  }
+
+  /** Re-fills an open information card after the drawing or a live value changed. */
+  refreshInspector(): void {
+    if (!this.inspected || this.inspectorEl.hidden) return;
+    const e = this.doc.entities.get(this.inspected);
+    if (!e || !this.doc.isVisible(e)) return this.showInspector(null, { x: 0, y: 0 });
+    fillInspector(this.inspectorEl, this.doc, e, this.displayUnit, e.binding ? this.liveValues.get(e.binding) : undefined, () => {
+      this.selection.clear();
+      this.showInspector(null, { x: 0, y: 0 });
+    });
+  }
+
+  private bridgeState(state: 'closed' | 'connecting' | 'open', detail?: string): void {
+    const el = $<HTMLSpanElement>('#bridge-status');
+    el.textContent = state === 'open' ? '연결됨: AI가 이 도면을 편집할 수 있습니다' : state === 'connecting' ? '연결 중…' : '연결 안 됨';
+    $<HTMLButtonElement>('[data-action="bridge-toggle"]').setAttribute('aria-pressed', String(state === 'open'));
+    if (detail) this.notify(detail);
+  }
+
   // A live drag must not straddle an undo: its preview would be recorded against changed geometry.
   private undo(): void {
     this.tool.interrupt?.();
@@ -436,12 +784,6 @@ export class App {
   private redo(): void {
     this.tool.interrupt?.();
     this.history.redo();
-  }
-
-  /** Current layer, falling back to the first one if it was deleted (e.g. by undo or opening a file). */
-  private layerForDrawing(): Id {
-    if (!this.doc.layers.has(this.currentLayer)) this.currentLayer = this.doc.layers.keys().next().value ?? DEFAULT_LAYER_ID;
-    return this.currentLayer;
   }
 
   private rotateSelection(): void {
@@ -480,18 +822,23 @@ export class App {
   private selectionToLayer(): void {
     const ids = this.selection.values();
     if (ids.length === 0) return this.notify('현재 레이어로 옮길 객체를 선택하십시오.');
-    const cmd = moveToLayer(this.doc, ids, this.layerForDrawing());
+    const target = this.currentLayer();
+    if (ids.some((id) => this.doc.floorOf(this.doc.entities.get(id)!) !== this.doc.layers.get(target)?.floor)) {
+      return this.notify('다른 층의 레이어로는 옮길 수 없습니다.');
+    }
+    const cmd = moveToLayer(this.doc, ids, target);
     if (cmd) this.history.execute(cmd);
   }
 
   private refreshUnderlayControls(): void {
     const u = this.doc.underlay;
     $<HTMLDivElement>('#underlay-controls').hidden = !u;
+    $<HTMLParagraphElement>('#underlay-empty').hidden = !!u;
     if (!u) return;
     const opacity = $<HTMLInputElement>('#underlay-opacity');
     if (document.activeElement !== opacity) opacity.value = String(Math.round(u.opacity * 100));
     $<HTMLInputElement>('#underlay-visible').checked = u.visible;
-    $<HTMLSpanElement>('#underlay-controls .name').textContent = `${formatLength(u.width, this.unit)} × ${formatLength(u.height, this.unit)}`;
+    $<HTMLSpanElement>('#underlay-controls .name').textContent = `${formatLength(u.width, this.displayUnit)} × ${formatLength(u.height, this.displayUnit)}`;
   }
 
   /** Places an image under the drawing, sized to most of the current view; the user then scales it to real size. */
@@ -668,7 +1015,7 @@ export class App {
     this.history.execute(new Batch('구속 해제', steps));
   }
 
-  private notify(text: string): void {
+  notify(text: string): void {
     this.msgEl.textContent = text;
     window.clearTimeout(this.messageTimer);
     this.messageTimer = window.setTimeout(() => (this.msgEl.textContent = ''), 5000);
@@ -701,8 +1048,8 @@ export class App {
   }
 
   private updateButtons(): void {
-    $<HTMLButtonElement>('[data-action="undo"]').disabled = !this.history.canUndo;
-    $<HTMLButtonElement>('[data-action="redo"]').disabled = !this.history.canRedo;
+    document.querySelectorAll<HTMLButtonElement>('[data-action="undo"]').forEach((b) => (b.disabled = !this.history.canUndo));
+    document.querySelectorAll<HTMLButtonElement>('[data-action="redo"]').forEach((b) => (b.disabled = !this.history.canRedo));
   }
 
   private newDrawing(): void {

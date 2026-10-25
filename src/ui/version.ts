@@ -1,3 +1,8 @@
+/**
+ * @file version.ts
+ *
+ * Shows version, commit and build time in the status bar (values from vite.config.ts).
+ */
 /** Fills the status bar label with the build's version, commit and build time. */
 export function showVersion(el: HTMLElement): void {
   const built = new Date(__BUILD_TIME__);

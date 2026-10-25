@@ -1,3 +1,8 @@
+/**
+ * @file equipment.ts
+ *
+ * Pure geometry of rectangular equipment footprints: rotated corners, point-in-convex test, edge list.
+ */
 import type { Vec2 } from './vec';
 
 /** Corners of a width × depth rectangle centred on `c` and rotated by `rotationDeg`, counter-clockwise from front-left. */

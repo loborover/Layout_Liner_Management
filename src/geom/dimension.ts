@@ -1,3 +1,9 @@
+/**
+ * @file dimension.ts
+ *
+ * Pure geometry of aligned dimensions: where the dimension line sits for a given offset, and the offset
+ * that passes through a cursor point. No document or DOM access.
+ */
 import { type Vec2, add, dot, len, scale, sub } from './vec';
 
 export interface DimensionGeometry {

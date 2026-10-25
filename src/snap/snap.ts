@@ -1,3 +1,9 @@
+/**
+ * @file snap.ts
+ *
+ * Snap engine: object snaps (endpoint, midpoint, centre, quadrant, intersection, perpendicular), polar/ortho
+ * tracking and grid snapping. Given a raw cursor position it returns the snapped point and why.
+ */
 import { type Vec2, add, closestOnSegment, dist, dot, scale, sub } from '../geom/vec';
 import type { DocumentModel } from '../model/document';
 import type { SpatialIndex } from '../model/spatial';
@@ -112,7 +118,8 @@ export class SnapEngine {
   private objectSnap(raw: Vec2, tol: number, q: SnapQuery): SnapResult | null {
     const near = this.index
       .query({ minX: raw.x - tol, minY: raw.y - tol, maxX: raw.x + tol, maxY: raw.y + tol })
-      .filter((e) => e.kind !== 'dimension' && !q.exclude?.has(e.id) && this.visible(e));
+      // Shapes snap through their edge lines.
+      .filter((e) => e.kind !== 'dimension' && e.kind !== 'shape' && !q.exclude?.has(e.id) && this.visible(e));
 
     const candidates: Candidate[] = [];
     for (const e of near) this.collect(e, q.from ?? null, candidates);
@@ -136,8 +143,7 @@ export class SnapEngine {
   }
 
   private visible(e: Entity): boolean {
-    const layer = this.doc.layers.get(e.layer);
-    return !layer || layer.visible;
+    return this.doc.isVisible(e);
   }
 
   private collect(e: Entity, from: Vec2 | null, out: Candidate[]): void {

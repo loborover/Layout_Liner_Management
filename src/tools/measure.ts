@@ -1,3 +1,8 @@
+/**
+ * @file measure.ts
+ *
+ * Measuring tools (distance, angle, area/perimeter). They only draw overlays and never change the document.
+ */
 import { type Vec2, angleDeg, dist } from '../geom/vec';
 import { polygonArea, polygonPerimeter } from '../geom/polygon';
 import type { SnapQuery } from '../snap/snap';

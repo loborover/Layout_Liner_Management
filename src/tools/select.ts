@@ -1,3 +1,9 @@
+/**
+ * @file select.ts
+ *
+ * Selection tool: click/shift-click/window selection, dragging (with constrained drag support), dimension-line
+ * drag, double-click value editing and Delete.
+ */
 import { type Vec2, boxFromPoints, dist, sub } from '../geom/vec';
 import { dimensionGeometry } from '../geom/dimension';
 import { Batch, type Command, MovePoints, RemoveEntities, SetDimensionOffsets, UpdateEntities } from '../model/commands';

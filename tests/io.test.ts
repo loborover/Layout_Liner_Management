@@ -130,7 +130,7 @@ describe('DXF import into the drawing', () => {
 
 function plan() {
   const doc = new DocumentModel();
-  doc.layers.set('l2', { id: 'l2', name: '설비', color: '#16a34a', visible: true, locked: false });
+  doc.layers.set('l2', { id: 'l2', name: '설비', color: '#16a34a', visible: true, locked: false, floor: 'floor-1' });
   new History(doc).execute(
     new AddItems(
       [
@@ -158,9 +158,9 @@ describe('exports', () => {
     expect(back.unitScale).toBe(1);
     expect(back.layers.map((l) => l.name).sort()).toEqual(['0', '설비']);
     expect(back.circles).toEqual([{ c: { x: 2500, y: 2000 }, r: 300, layer: '설비' }]);
-    // wall + 3 dimension lines on layer 0; machine outline (4 edges) on 설비
+    // wall + 3 dimension lines on layer 0; machine outline (4 edges) + its front tick (plan symbol) on 설비
     expect(back.segments.filter((s) => s.layer === '0')).toHaveLength(4);
-    expect(back.segments.filter((s) => s.layer === '설비')).toHaveLength(4);
+    expect(back.segments.filter((s) => s.layer === '설비')).toHaveLength(5);
     expect(back.skipped.get('TEXT')).toBe(2);
   });
 

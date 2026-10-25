@@ -1,3 +1,9 @@
+/**
+ * @file dxfImport.ts
+ *
+ * Converts a parsed DxfDrawing into points/entities/layers as one undoable command, merging coincident endpoints
+ * into shared points.
+ */
 import { AddItems, Batch, type Command, SetLayers } from '../model/commands';
 import type { DocumentModel } from '../model/document';
 import { newId } from '../model/ids';
@@ -18,10 +24,11 @@ export function importDxf(doc: DocumentModel, dxf: DxfDrawing, mmPerUnit = dxf.u
   const k = mmPerUnit / dxf.unitScale; // the drawing is already in mm for its own unit guess
   const before: Layer[] = [...doc.layers.values()].map((l) => ({ ...l }));
   const after = before.map((l) => ({ ...l }));
-  const layerId = new Map<string, Id>(after.map((l) => [l.name, l.id]));
+  // Layers are matched by name on the floor being edited; new ones are added to that floor.
+  const layerId = new Map<string, Id>(after.filter((l) => l.floor === doc.activeFloor).map((l) => [l.name, l.id]));
   for (const l of dxf.layers) {
     if (layerId.has(l.name)) continue;
-    const layer: Layer = { id: newId('layer'), ...l };
+    const layer: Layer = { id: newId('layer'), ...l, floor: doc.activeFloor };
     after.push(layer);
     layerId.set(l.name, layer.id);
   }

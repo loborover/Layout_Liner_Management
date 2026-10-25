@@ -1,3 +1,8 @@
+/**
+ * @file intersect.ts
+ *
+ * Pure intersection routines (segment/segment, segment/circle, circle/circle) used by the snap engine.
+ */
 import { type Vec2, dot, sub } from './vec';
 
 const EPS = 1e-9;

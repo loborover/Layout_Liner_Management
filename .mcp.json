@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "layout-liner": {
+      "command": "npx",
+      "args": ["tsx", "mcp/server.ts", "--file", "drawing.json"]
+    }
+  }
+}
