@@ -74,10 +74,19 @@ export class SpatialIndex {
    * of equipment inside a room is picked before the room; among overlapping faces the topmost (latest) wins.
    */
   pick(p: Vec2, tol: number): Entity | null {
+    return this.pickWhere(p, tol, (e) => this.doc.isEditable(e));
+  }
+
+  /** Like pick, but any visible entity, locked or not (viewer mode inspects without editing). */
+  pickVisible(p: Vec2, tol: number): Entity | null {
+    return this.pickWhere(p, tol, (e) => this.doc.isVisible(e));
+  }
+
+  private pickWhere(p: Vec2, tol: number, accept: (e: Entity) => boolean): Entity | null {
     let best: Entity | null = null;
     let bestD = tol + 1e-9;
     for (const e of this.query({ minX: p.x - tol, minY: p.y - tol, maxX: p.x + tol, maxY: p.y + tol })) {
-      if (!this.doc.isEditable(e)) continue;
+      if (!accept(e)) continue;
       const d = e.kind === 'shape' ? (this.distanceTo(e, p) === 0 ? tol * 0.999 : Infinity) : this.distanceTo(e, p);
       if (d < bestD || (d === bestD && best?.kind === 'shape' && e.kind === 'shape' && this.later(e, best))) {
         best = e;

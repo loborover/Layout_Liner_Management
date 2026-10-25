@@ -11,7 +11,7 @@ import type { DocumentModel } from '../model/document';
 import type { Selection } from '../model/selection';
 import type { SnapQuery, SnapResult } from '../snap/snap';
 import type { SpatialIndex } from '../model/spatial';
-import type { Id } from '../model/types';
+import type { Id, StrokeStyle } from '../model/types';
 import type { DisplayUnit } from '../view/format';
 import type { Painter } from '../view/renderer';
 import type { Viewport } from '../view/viewport';
@@ -26,6 +26,8 @@ export interface ToolContext {
   unit: () => DisplayUnit;
   /** Layer new geometry goes on. */
   layer: () => Id;
+  /** Line style given to newly drawn lines, if the user chose one (ribbon "새 선에 적용"). */
+  lineStyle?: () => StrokeStyle | undefined;
   /** Pick tolerance in mm for the current zoom. */
   pickTolerance: () => number;
   setHover: (id: Id | null) => void;

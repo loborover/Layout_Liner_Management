@@ -22,7 +22,10 @@ export function existingPoint(ctx: ToolContext, p: ToolPointer): Point | null {
   const id = p.snap?.pointId;
   return id && ctx.doc.points.has(id) ? ctx.doc.point(id) : null;
 }
-const line = (ctx: ToolContext, p1: Id, p2: Id): LineEntity => ({ id: newId('e'), kind: 'line', p1, p2, layer: ctx.layer() });
+function line(ctx: ToolContext, p1: Id, p2: Id): LineEntity {
+  const stroke = ctx.lineStyle?.();
+  return { id: newId('e'), kind: 'line', p1, p2, layer: ctx.layer(), ...(stroke ? { stroke: { ...stroke } } : {}) };
+}
 
 /** Shape over a closed chain of lines: `points[i]` → `points[i+1]` is `lines[i]`. */
 function shapeOf(ctx: ToolContext, points: Id[], lines: Id[]): ShapeEntity {

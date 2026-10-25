@@ -272,6 +272,19 @@ export class History {
     this.emit();
   }
 
+  /** Number of steps that can be undone. */
+  get size(): number {
+    return this.done.length;
+  }
+
+  /** Merges the steps recorded since `start` (a previous `size`) into one undo step. */
+  squash(start: number, label: string): void {
+    if (this.done.length - start < 2) return;
+    const steps = this.done.splice(start);
+    this.done.push(new Batch(label, steps));
+    this.emit();
+  }
+
   clear(): void {
     this.done = [];
     this.undone = [];

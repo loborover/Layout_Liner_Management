@@ -6,101 +6,299 @@
     <title>Layout Liner</title>
     <link rel="stylesheet" href="/src/style.css" />
   </head>
+  <!--
+    Editor page. Layout: fixed quick bar (always visible main actions), Excel-style ribbon (tabs of grouped
+    commands), workspace (canvas + side rail/panel) and status bar. Buttons are wired by data attributes in
+    src/app.ts: data-tool (switch tool), data-action (run an action), data-constraint (add a constraint),
+    data-preset (place a structural preset). Elements marked .edit-only are hidden in viewer mode.
+  -->
   <body>
-    <header class="toolbar" role="toolbar" aria-label="도구">
-      <div class="group">
-        <button data-tool="select" title="선택 (V)">선택</button>
-        <button data-tool="line" title="선 (L)">선</button>
-        <button data-tool="rect" title="사각형 (R)">사각형</button>
-        <button data-tool="circle" title="원 (C)">원</button>
-        <button data-tool="dimension" title="치수 (D)">치수</button>
-        <button data-tool="equipment" title="설비 배치 (E): 오른쪽 설비 목록에서 종류 선택">설비</button>
-      </div>
-      <div class="group" aria-label="편집 (선택한 객체에 적용)">
-        <button data-action="rotate" title="선택한 객체 90° 회전 (설비만 선택하면 제자리에서 회전)">90° 회전</button>
-        <button data-action="array" title="선택한 객체를 행·열로 배열 복사">배열 복사</button>
-      </div>
-      <div class="group">
-        <button data-tool="measure-distance" title="거리 측정 (M)">거리</button>
-        <button data-tool="measure-angle" title="각도 측정 (N)">각도</button>
-        <button data-tool="measure-area" title="면적 측정 (A)">면적</button>
-      </div>
-      <div class="group" aria-label="구속 (선택한 객체에 적용)">
-        <button data-constraint="horizontal" title="수평 구속: 선택한 선">수평</button>
-        <button data-constraint="vertical" title="수직 구속: 선택한 선">수직</button>
-        <button data-constraint="parallel" title="평행 구속: 선 두 개">평행</button>
-        <button data-constraint="perpendicular" title="직각 구속: 선 두 개">직각</button>
-        <button data-constraint="equal" title="같은 길이/반지름: 선 또는 원 두 개 이상">동일</button>
-        <button data-constraint="fixed" title="위치 고정: 선택한 객체의 점">고정</button>
-        <button data-action="unconstrain" title="선택한 객체의 구속 해제">해제</button>
-      </div>
-      <div class="group">
-        <button data-action="undo" title="실행 취소 (Ctrl+Z)">취소</button>
-        <button data-action="redo" title="다시 실행 (Ctrl+Y)">다시</button>
-        <button data-action="fit" title="전체 보기 (F)">전체 보기</button>
-      </div>
-      <div class="group">
+    <header class="quickbar" role="toolbar" aria-label="고정 도구">
+      <span class="brand">Layout Liner</span>
+      <div class="group edit-only">
         <button data-action="new" title="새 도면">새로</button>
         <button data-action="open" title="열기 (Ctrl+O)">열기</button>
         <button data-action="save" title="저장 (Ctrl+S)">저장</button>
-        <button data-action="export-dxf" title="DXF(R12)로 내보내기: AutoCAD 등에서 열 수 있습니다">DXF</button>
-        <button data-action="export-svg" title="SVG 이미지로 내보내기">SVG</button>
-        <button data-action="print" title="인쇄 (PDF로 저장 가능)">인쇄</button>
-        <input id="file-input" type="file" accept=".json,.dxf,application/json" hidden />
-        <input id="image-input" type="file" accept="image/png,image/jpeg,image/gif,image/webp" hidden />
+      </div>
+      <div class="group edit-only">
+        <button data-action="undo" title="실행 취소 (Ctrl+Z)">취소</button>
+        <button data-action="redo" title="다시 실행 (Ctrl+Y)">다시</button>
+        <button data-tool="select" title="선택 (V)">선택</button>
+        <button data-action="delete" title="선택 삭제 (Delete)">삭제</button>
       </div>
       <div class="group">
+        <button data-action="fit" title="전체 보기 (F)">전체 보기</button>
+        <label title="표시할 층 (PageUp/PageDown)">층 <select id="floor-select"></select></label>
+      </div>
+      <div class="group edit-only">
         <label title="끝점·중점·중심·교차점·수직·사분점 (F3)"><input id="snap-object" type="checkbox" /> 객체 스냅</label>
         <label title="15° 단위 각도 추적, Shift: 수평/수직 고정 (F10)"><input id="snap-polar" type="checkbox" /> 각도 추적</label>
         <label title="그리드 스냅 (F9)"><input id="snap-grid" type="checkbox" /> 그리드</label>
-        <label>
-          단위
-          <select id="unit">
-            <option value="mm">mm</option>
-            <option value="m">m</option>
-          </select>
-        </label>
+      </div>
+      <span class="spacer"></span>
+      <div class="mode-switch" role="radiogroup" aria-label="모드">
+        <button data-mode="edit" role="radio" data-icon="edit" title="편집 모드: 그리고 고칩니다">편집</button>
+        <button data-mode="view" role="radio" data-icon="view" title="뷰어 모드: 도면을 둘러보고 객체 정보를 확인합니다 (편집 불가)">뷰어</button>
       </div>
     </header>
+
+    <nav class="ribbon" aria-label="리본 메뉴">
+      <div class="tabs" role="tablist">
+        <button role="tab" data-tab="home" class="edit-only">홈</button>
+        <button role="tab" data-tab="insert" class="edit-only">구조·설비</button>
+        <button role="tab" data-tab="constrain" class="edit-only">구속</button>
+        <button role="tab" data-tab="measure">측정</button>
+        <button role="tab" data-tab="view">보기</button>
+        <button role="tab" data-tab="file">파일</button>
+        <button role="tab" data-tab="ai" class="edit-only">AI·API</button>
+        <span class="spacer"></span>
+        <button class="ribbon-toggle" data-action="toggle-ribbon" data-icon="up" title="리본 접기/펼치기 (탭 더블클릭)"></button>
+      </div>
+
+      <div class="panel-row" role="tabpanel" data-panel="home">
+        <div class="rgroup">
+          <div class="items">
+            <button data-tool="line" data-icon="line" title="선 (L): 시작점에서 닫으면 도형이 됩니다">선</button>
+            <button data-tool="rect" data-icon="rect" title="사각형 (R): 네 선과 도형으로 그립니다">사각형</button>
+            <button data-tool="circle" data-icon="circle" title="원 (C)">원</button>
+            <button data-tool="dimension" data-icon="dimension" title="치수 (D)">치수</button>
+          </div>
+          <span class="glabel">그리기</span>
+        </div>
+        <div class="rgroup">
+          <div class="items">
+            <button data-action="make-shape" data-icon="shape" title="선택한 선 중 닫힌 고리를 도형으로 만듭니다">도형 만들기</button>
+            <button data-action="unshape" title="선택한 도형을 해제합니다 (선은 남습니다)">도형 해제</button>
+            <button data-action="rotate" title="선택한 객체 90° 회전 (설비만 선택하면 제자리에서 회전)">90° 회전</button>
+            <button data-action="array" title="선택한 객체를 행·열로 배열 복사">배열 복사</button>
+            <button data-action="to-layer" title="선택한 객체를 현재 레이어로 옮깁니다">현재 레이어로</button>
+          </div>
+          <span class="glabel">편집</span>
+        </div>
+        <div class="rgroup">
+          <div class="items">
+            <button data-action="order-front" data-icon="top" title="맨 앞으로 (도면에서 가장 위에 그림)">맨 앞</button>
+            <button data-action="order-forward" data-icon="up" title="한 단계 앞으로">앞으로</button>
+            <button data-action="order-backward" data-icon="down" title="한 단계 뒤로">뒤로</button>
+            <button data-action="order-back" data-icon="bottom" title="맨 뒤로">맨 뒤</button>
+          </div>
+          <span class="glabel">순서</span>
+        </div>
+        <div class="rgroup">
+          <div class="items">
+            <label title="그린 선을 기준으로 띠를 놓을 위치">
+              위치
+              <select id="style-align">
+                <option value="inside">내측</option>
+                <option value="center">중심</option>
+                <option value="outside">외측</option>
+              </select>
+            </label>
+            <label title="띠 두께 (mm), 0이면 가는 선">두께 <input id="style-width" type="number" min="0" step="10" value="200" /></label>
+            <label title="선 색">색 <input id="style-color" type="color" value="#475569" /></label>
+            <button data-action="style-apply" title="선택한 선과 도형의 변에 양식을 적용합니다">적용</button>
+            <button data-action="style-clear" title="선택한 선의 양식을 지웁니다">지우기</button>
+            <label title="새로 그리는 선에도 이 양식을 씁니다"><input id="style-new" type="checkbox" /> 새 선에 적용</label>
+          </div>
+          <span class="glabel">선 양식</span>
+        </div>
+      </div>
+
+      <div class="panel-row" role="tabpanel" data-panel="insert">
+        <div class="rgroup">
+          <div class="items">
+            <button data-preset="st-column" data-icon="column" title="사각 기둥 배치">기둥</button>
+            <button data-preset="st-column-round" data-icon="circle" title="원형 기둥 배치">원형 기둥</button>
+            <button data-preset="st-stair" data-icon="stair" title="계단 배치: 단높이·단너비로 단 수와 길이를 검토합니다">계단</button>
+            <button data-preset="st-ramp" data-icon="ramp" title="경사로 배치: 기울기를 검토합니다">경사로</button>
+            <button data-preset="st-lift" data-icon="lift" title="리프트 배치: 운행 층을 지정합니다">리프트</button>
+          </div>
+          <span class="glabel">구조</span>
+        </div>
+        <div class="rgroup">
+          <div class="items">
+            <button data-tool="equipment" data-icon="equipment" title="설비 배치 (E): 라이브러리에서 종류 선택">설비 배치</button>
+            <button data-action="add-type" data-icon="plus" title="설비 종류 추가">종류 추가</button>
+            <button data-action="export-equipment" title="배치된 설비 목록을 CSV(엑셀)로 저장">설비 목록 CSV</button>
+          </div>
+          <span class="glabel">설비</span>
+        </div>
+        <div class="rgroup">
+          <div class="items">
+            <button data-action="load-underlay" data-icon="image" title="평면도 이미지(PNG, JPG)를 밑그림으로 불러오기">밑그림 불러오기</button>
+            <button data-tool="underlay" title="두 점과 실제 거리로 축척을 맞추고 위치를 옮깁니다">축척·위치 맞추기</button>
+          </div>
+          <span class="glabel">밑그림</span>
+        </div>
+      </div>
+
+      <div class="panel-row" role="tabpanel" data-panel="constrain">
+        <div class="rgroup">
+          <div class="items">
+            <button data-constraint="horizontal" title="수평 구속: 선택한 선">수평</button>
+            <button data-constraint="vertical" title="수직 구속: 선택한 선">수직</button>
+            <button data-constraint="parallel" title="평행 구속: 선 두 개">평행</button>
+            <button data-constraint="perpendicular" title="직각 구속: 선 두 개">직각</button>
+            <button data-constraint="equal" title="같은 길이/반지름: 선 또는 원 두 개 이상">동일</button>
+            <button data-constraint="fixed" title="위치 고정: 선택한 객체의 점">고정</button>
+          </div>
+          <span class="glabel">구속 추가</span>
+        </div>
+        <div class="rgroup">
+          <div class="items">
+            <button data-action="unconstrain" title="선택한 객체의 구속 해제">해제</button>
+          </div>
+          <span class="glabel">해제</span>
+        </div>
+      </div>
+
+      <div class="panel-row" role="tabpanel" data-panel="measure">
+        <div class="rgroup">
+          <div class="items">
+            <button data-tool="measure-distance" title="거리 측정 (M)">거리</button>
+            <button data-tool="measure-angle" title="각도 측정 (N)">각도</button>
+            <button data-tool="measure-area" title="면적 측정 (A)">면적</button>
+          </div>
+          <span class="glabel">측정</span>
+        </div>
+      </div>
+
+      <div class="panel-row" role="tabpanel" data-panel="view">
+        <div class="rgroup">
+          <div class="items">
+            <button data-action="fit" title="전체 보기 (F)">전체 보기</button>
+            <button data-action="floor-down" data-icon="down" title="아래 층 (PageDown)">아래 층</button>
+            <button data-action="floor-up" data-icon="up" title="위 층 (PageUp)">위 층</button>
+          </div>
+          <span class="glabel">화면</span>
+        </div>
+        <div class="rgroup">
+          <div class="items">
+            <button data-action="sidebar-min" data-icon="minimize" title="사이드바 최소화 (아이콘만)">최소화</button>
+            <button data-action="sidebar-normal" data-icon="layers" title="사이드바 보통 너비">보통</button>
+            <button data-action="sidebar-max" data-icon="maximize" title="사이드바 최대화 (넓게)">최대화</button>
+          </div>
+          <span class="glabel">사이드바</span>
+        </div>
+        <div class="rgroup">
+          <div class="items">
+            <label>
+              단위
+              <select id="unit">
+                <option value="mm">mm</option>
+                <option value="m">m</option>
+              </select>
+            </label>
+          </div>
+          <span class="glabel">표시</span>
+        </div>
+      </div>
+
+      <div class="panel-row" role="tabpanel" data-panel="file">
+        <div class="rgroup">
+          <div class="items">
+            <button data-action="new" class="edit-only" title="새 도면">새로</button>
+            <button data-action="open" class="edit-only" title="열기 (Ctrl+O): .json 도면 또는 .dxf">열기</button>
+            <button data-action="save" class="edit-only" title="저장 (Ctrl+S)">저장</button>
+          </div>
+          <span class="glabel">도면</span>
+        </div>
+        <div class="rgroup">
+          <div class="items">
+            <button data-action="export-dxf" title="DXF(R12)로 내보내기: AutoCAD 등에서 열 수 있습니다">DXF</button>
+            <button data-action="export-svg" title="SVG 이미지로 내보내기">SVG</button>
+            <button data-action="print" title="인쇄 (PDF로 저장 가능)">인쇄</button>
+            <button data-action="export-equipment" title="설비 목록 CSV">설비 CSV</button>
+          </div>
+          <span class="glabel">내보내기</span>
+        </div>
+        <div class="rgroup">
+          <div class="items">
+            <a class="button" href="viewer.html" target="_blank" rel="noopener" title="실시간 모니터링 뷰어 앱을 새 창으로 엽니다">모니터링 뷰어 열기</a>
+          </div>
+          <span class="glabel">뷰어 앱</span>
+        </div>
+      </div>
+
+      <div class="panel-row" role="tabpanel" data-panel="ai">
+        <div class="rgroup">
+          <div class="items">
+            <label title="MCP 서버의 브리지 주소 (npm run mcp가 띄웁니다)">브리지 <input id="bridge-url" type="text" value="ws://127.0.0.1:7820" size="20" /></label>
+            <button data-action="bridge-toggle" data-icon="ai" title="AI(MCP 서버)가 이 편집기를 실시간으로 조작하도록 연결합니다">AI 연결</button>
+            <span id="bridge-status" class="muted">연결 안 됨</span>
+          </div>
+          <span class="glabel">MCP 실시간 연결</span>
+        </div>
+        <div class="rgroup">
+          <div class="items">
+            <span class="muted">브라우저 콘솔: <code>layoutLiner.call('summary')</code></span>
+          </div>
+          <span class="glabel">API</span>
+        </div>
+      </div>
+    </nav>
+
     <div class="workspace">
       <main class="stage">
         <canvas id="canvas"></canvas>
+        <div id="inspector" class="inspector" hidden></div>
       </main>
-      <aside class="panel">
-        <section>
-          <header>
-            <h2>레이어</h2>
-            <button data-action="add-layer" title="레이어 추가">+ 추가</button>
-          </header>
-          <ul id="layer-list" class="list"></ul>
-          <button data-action="to-layer" class="wide" title="선택한 객체를 현재 레이어(●)로 옮깁니다">선택 → 현재 레이어</button>
-        </section>
-        <section>
-          <header>
-            <h2>설비</h2>
-            <button data-action="add-type" title="설비 종류 추가">+ 추가</button>
-          </header>
-          <ul id="type-list" class="list"></ul>
-          <button data-action="export-equipment" class="wide" title="배치된 설비 목록을 CSV(엑셀)로 저장">설비 목록 CSV</button>
-        </section>
-        <section>
-          <header>
-            <h2>밑그림</h2>
-            <button data-action="load-underlay" title="평면도 이미지(PNG, JPG)를 밑그림으로 불러오기">불러오기</button>
-          </header>
-          <div id="underlay-controls" class="stack" hidden>
-            <button data-tool="underlay" class="wide" title="두 점과 실제 거리로 축척을 맞추고 위치를 옮깁니다">축척·위치 맞추기</button>
-            <label class="row">투명도 <input id="underlay-opacity" type="range" min="5" max="100" step="5" /></label>
-            <div class="row">
-              <label class="toggle"><input id="underlay-visible" type="checkbox" /> 표시</label>
-              <span class="name"></span>
-              <button data-action="remove-underlay" title="밑그림 삭제">삭제</button>
+      <aside class="sidebar" data-state="normal" aria-label="사이드바">
+        <div class="sidepanel">
+          <section data-section="tree">
+            <header>
+              <h2>객체 트리</h2>
+              <div class="edit-only">
+                <button data-action="add-floor" title="층 추가">+ 층</button>
+                <button data-action="add-folder" title="현재 층에 폴더 추가">+ 폴더</button>
+                <button data-action="add-layer" title="레이어 추가 (선택한 폴더 안)">+ 레이어</button>
+              </div>
+            </header>
+            <div id="tree" class="tree" role="tree"></div>
+          </section>
+          <section data-section="props">
+            <header><h2>속성</h2></header>
+            <div id="props" class="props"></div>
+          </section>
+          <section data-section="library">
+            <header>
+              <h2>라이브러리</h2>
+              <button data-action="add-type" class="edit-only" title="설비 종류 추가">+ 추가</button>
+            </header>
+            <ul id="type-list" class="list"></ul>
+          </section>
+          <section data-section="underlay">
+            <header>
+              <h2>밑그림</h2>
+              <button data-action="load-underlay" class="edit-only" title="평면도 이미지(PNG, JPG)를 밑그림으로 불러오기">불러오기</button>
+            </header>
+            <div id="underlay-controls" class="stack" hidden>
+              <button data-tool="underlay" class="wide edit-only" title="두 점과 실제 거리로 축척을 맞추고 위치를 옮깁니다">축척·위치 맞추기</button>
+              <label class="row">투명도 <input id="underlay-opacity" type="range" min="5" max="100" step="5" /></label>
+              <div class="row">
+                <label class="toggle"><input id="underlay-visible" type="checkbox" /> 표시</label>
+                <span class="name"></span>
+                <button data-action="remove-underlay" class="edit-only" title="밑그림 삭제">삭제</button>
+              </div>
             </div>
-          </div>
-        </section>
+            <p id="underlay-empty" class="muted">불러온 밑그림이 없습니다.</p>
+          </section>
+        </div>
+        <nav class="rail" aria-label="사이드바 아이콘">
+          <button data-rail="tree" data-icon="layers" title="객체 트리 (층·폴더·레이어·객체)"></button>
+          <button data-rail="props" data-icon="sliders" title="속성"></button>
+          <button data-rail="library" data-icon="box" title="라이브러리 (설비·구조)"></button>
+          <button data-rail="underlay" data-icon="image" title="밑그림"></button>
+          <span class="spacer"></span>
+          <button data-action="sidebar-max" data-icon="maximize" title="최대화 (넓게)"></button>
+          <button data-action="sidebar-min" data-icon="minimize" title="최소화 (아이콘만)"></button>
+        </nav>
       </aside>
     </div>
+    <input id="file-input" type="file" accept=".json,.dxf,application/json" hidden />
+    <input id="image-input" type="file" accept="image/png,image/jpeg,image/gif,image/webp" hidden />
     <footer class="statusbar">
+      <span id="status-mode"></span>
       <span id="status-hint"></span>
       <span id="status-msg" role="status"></span>
       <span class="spacer"></span>

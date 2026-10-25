@@ -7,7 +7,7 @@ import { DocumentModel } from '../src/model/document';
 import { arrayOffsets, copyItems, moveToLayer, nextTag, rotateItems } from '../src/model/edit';
 import { SpatialIndex } from '../src/model/spatial';
 import { SnapEngine } from '../src/snap/snap';
-import { parseType } from '../src/ui/panel';
+import { parseType } from '../src/ui/library';
 
 function plant() {
   const doc = new DocumentModel();
