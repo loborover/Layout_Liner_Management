@@ -1,0 +1,9 @@
+# Copy this file to the server (e.g. ~/layout-liner/docker-compose.yml), then:
+#   docker compose pull && docker compose up -d
+services:
+  layout-liner:
+    image: ghcr.io/loborover/layout-liner-management:${LAYOUT_LINER_VERSION:-latest}
+    container_name: layout-liner
+    ports:
+      - "${LAYOUT_LINER_PORT:-8080}:80"
+    restart: unless-stopped

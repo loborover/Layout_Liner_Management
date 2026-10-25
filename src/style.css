@@ -109,6 +109,14 @@ body {
   text-align: right;
 }
 
+#app-version {
+  padding-left: 12px;
+  border-left: 1px solid var(--border);
+  font-variant-numeric: tabular-nums;
+  opacity: 0.8;
+  cursor: default;
+}
+
 #status-msg {
   color: #b91c1c;
   font-weight: 600;

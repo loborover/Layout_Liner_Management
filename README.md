@@ -54,6 +54,10 @@ npm test         # 단위 테스트
 npm run build    # 배포용 빌드 (dist/)
 ```
 
+### Docker로 서버에 배포
+
+`main`에 병합될 때마다 `ghcr.io/loborover/layout-liner-management:latest` 이미지가 자동으로 만들어집니다. 서버에는 [`deploy/docker-compose.yml`](deploy/docker-compose.yml)만 두고 `docker compose pull && docker compose up -d`로 설치·업데이트합니다. 처음 설정할 항목과 자세한 사용법은 [deploy/README.md](deploy/README.md)를 참고하십시오.
+
 ## 구조
 
 | 경로 | 역할 |
