@@ -27,8 +27,9 @@ import { showVersion } from '../ui/version';
 import { type EntityStatus, Renderer } from '../view/renderer';
 import { Viewport } from '../view/viewport';
 import { type DataSource, type SourceState, type Threshold, applyThresholds, sourceFor } from './sources';
+import { STATUS } from '../theme';
 
-const STATUS_COLORS: Record<string, string> = { ok: '#16a34a', warn: '#f59e0b', alarm: '#dc2626', offline: '#94a3b8' };
+const STATUS_COLORS: Record<string, string> = STATUS;
 const STATUS_LABELS: Record<string, string> = { ok: '정상', warn: '주의', alarm: '경보', offline: '수신 없음' };
 const SEVERITY: Record<string, number> = { alarm: 0, warn: 1, offline: 2, ok: 3 };
 const WHEEL_ZOOM_STEP = 1.0015;

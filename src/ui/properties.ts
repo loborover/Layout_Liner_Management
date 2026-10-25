@@ -14,6 +14,7 @@ import { polygonPerimeter } from '../geom/polygon';
 import type { Entity, Id, LineEntity, PropValue, StrokeStyle } from '../model/types';
 import { formatArea, formatLength } from '../view/format';
 import type { UiHost } from './host';
+import { LAYER_DEFAULT, SHAPE_FILL } from '../theme';
 
 const ALIGN_LABELS = { inside: '내측', center: '중심', outside: '외측' } as const;
 
@@ -183,7 +184,7 @@ export class PropertyPanel {
       this.row(f, '면적', formatArea(doc.shapeArea(e)));
       this.row(f, '둘레', formatLength(polygonPerimeter(poly), unit));
       this.row(f, '꼭짓점', `${e.points.length}개`);
-      const fill = this.input('color', e.fill ?? doc.layers.get(e.layer)?.color ?? '#94a3b8', (v) => this.update('채우기 색', [e], (c) => c.kind === 'shape' && (c.fill = v)));
+      const fill = this.input('color', e.fill ?? doc.layers.get(e.layer)?.color ?? SHAPE_FILL, (v) => this.update('채우기 색', [e], (c) => c.kind === 'shape' && (c.fill = v)));
       const clear = this.button('없음', '채우기 색 지우기 (레이어 색으로 옅게)', () => this.update('채우기 색', [e], (c) => c.kind === 'shape' && delete c.fill));
       const box = document.createElement('span');
       box.className = 'row';
@@ -327,7 +328,7 @@ export class PropertyPanel {
         apply({ width: n });
       }),
     );
-    const color = this.input('color', current.color ?? this.host.doc.layers.get(lines[0]?.layer ?? '')?.color ?? '#475569', (v) => apply({ color: v }));
+    const color = this.input('color', current.color ?? this.host.doc.layers.get(lines[0]?.layer ?? '')?.color ?? LAYER_DEFAULT, (v) => apply({ color: v }));
     this.row(f, '색', color);
     const actions = document.createElement('div');
     actions.className = 'actions';

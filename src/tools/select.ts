@@ -190,7 +190,7 @@ export class SelectTool implements Tool {
     const s = this.state;
     if (s.kind !== 'box') return;
     const crossing = s.end.x < s.start.x;
-    p.rect(s.start, s.end, crossing ? '#16a34a' : COLORS.selected, crossing ? COLORS.crossing : COLORS.window, crossing ? [5, 4] : []);
+    p.rect(s.start, s.end, crossing ? COLORS.snap : COLORS.selected, crossing ? COLORS.crossing : COLORS.window, crossing ? [5, 4] : []);
   }
 
   /** Selected dimensions that stay attached to unmoved points; dragging them moves their dimension line. */

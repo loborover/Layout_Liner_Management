@@ -19,25 +19,10 @@ import { planSymbol } from '../model/symbols';
 import type { ConstraintKind, Entity, EquipmentEntity, Id, ShapeEntity } from '../model/types';
 import { type DisplayUnit, formatArea, formatLength } from './format';
 import { type Viewport, gridSpacing } from './viewport';
+import { CANVAS } from '../theme';
 
-export const COLORS = {
-  background: '#f8fafc',
-  gridMinor: '#e2e8f0',
-  gridMajor: '#cbd5e1',
-  axis: '#94a3b8',
-  selected: '#2563eb',
-  hover: '#f59e0b',
-  preview: '#0ea5e9',
-  text: '#0f172a',
-  window: 'rgba(37, 99, 235, 0.08)',
-  crossing: 'rgba(22, 163, 74, 0.08)',
-  snap: '#16a34a',
-  constrained: '#15803d',
-  driving: '#be123c',
-  badge: '#7c3aed',
-  guide: 'rgba(22, 163, 74, 0.6)',
-  dimension: '#0f766e',
-};
+/** Canvas colours: the Ink wash tokens from src/theme.ts. */
+export const COLORS = CANVAS;
 
 const EXT_GAP_PX = 3;
 const EXT_OVERSHOOT_PX = 5;
@@ -88,7 +73,7 @@ function labelDimension(ctx: CanvasRenderingContext2D, view: Viewport, a: Vec2, 
   ctx.textAlign = 'center';
   ctx.textBaseline = 'bottom';
   const w = ctx.measureText(text).width;
-  ctx.fillStyle = 'rgba(248,250,252,0.85)';
+  ctx.fillStyle = COLORS.labelPlate;
   ctx.fillRect(-w / 2 - 2, -17, w + 4, 14);
   ctx.fillStyle = color;
   ctx.fillText(text, 0, -4);
@@ -276,7 +261,7 @@ export class Painter {
     const { ctx } = this;
     ctx.font = '12px system-ui, sans-serif';
     const w = ctx.measureText(text).width;
-    ctx.fillStyle = 'rgba(255,255,255,0.9)';
+    ctx.fillStyle = COLORS.labelPlate;
     ctx.fillRect(s.x + dx - 3, s.y + dy - 12, w + 6, 16);
     ctx.fillStyle = COLORS.text;
     ctx.fillText(text, s.x + dx, s.y + dy);
@@ -597,7 +582,7 @@ export class Renderer {
       const s = view.toScreen(anchor);
       const label = texts.join(' ');
       const w = ctx.measureText(label).width + 6;
-      ctx.fillStyle = 'rgba(255,255,255,0.9)';
+      ctx.fillStyle = COLORS.labelPlate;
       ctx.fillRect(s.x + 6, s.y + 4, w, 15);
       ctx.strokeStyle = COLORS.badge;
       ctx.lineWidth = 1;

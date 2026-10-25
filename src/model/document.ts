@@ -27,6 +27,7 @@ import {
   type ShapeEntity,
   type Underlay,
 } from './types';
+import { LAYER_DEFAULT } from '../theme';
 
 type Listener = () => void;
 
@@ -81,7 +82,7 @@ export class DocumentModel {
     this.layers.set(DEFAULT_LAYER_ID, {
       id: DEFAULT_LAYER_ID,
       name: '0',
-      color: '#1f2937',
+      color: LAYER_DEFAULT,
       visible: true,
       locked: false,
       floor: DEFAULT_FLOOR_ID,

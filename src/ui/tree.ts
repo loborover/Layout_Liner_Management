@@ -21,9 +21,9 @@ import type { Entity, Floor, Folder, Id, Layer } from '../model/types';
 import { formatArea, formatLength } from '../view/format';
 import type { UiHost } from './host';
 import { type IconName, icon } from './icons';
+import { LAYER_COLORS } from '../theme';
 
 const MAX_ROWS = 300;
-const LAYER_COLORS = ['#1f2937', '#0f766e', '#16a34a', '#d97706', '#9333ea', '#dc2626', '#0891b2'];
 const KIND_LABEL: Record<Entity['kind'], string> = { line: '선', circle: '원', dimension: '치수', equipment: '설비', shape: '도형' };
 
 export class ObjectTree {

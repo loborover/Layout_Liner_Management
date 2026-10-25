@@ -9,9 +9,10 @@ import type { SnapQuery } from '../snap/snap';
 import { formatAngle, formatArea, formatLength } from '../view/format';
 import { COLORS, type Painter } from '../view/renderer';
 import type { Tool, ToolContext, ToolPointer } from './tool';
+import { CANVAS } from '../theme';
 
-const MEASURE = '#7c3aed';
-const MEASURE_FILL = 'rgba(124, 58, 237, 0.10)';
+const MEASURE = CANVAS.measure;
+const MEASURE_FILL = CANVAS.measureFill;
 const DASH = [6, 4];
 
 /**

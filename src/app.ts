@@ -49,6 +49,7 @@ import type { Tool, ToolContext, ToolPointer } from './tools/tool';
 import { type DisplayUnit, formatLength } from './view/format';
 import { type EntityStatus, Renderer } from './view/renderer';
 import { Viewport, gridSpacing } from './view/viewport';
+import { STATUS } from './theme';
 
 const AUTOSAVE_KEY = 'layout-liner:autosave';
 const PICK_TOLERANCE_PX = 6;
@@ -57,7 +58,7 @@ const WHEEL_ZOOM_STEP = 1.0015;
 /** Tools that create geometry on the current layer. */
 const DRAWING_TOOLS = new Set(['line', 'rect', 'circle', 'dimension', 'equipment']);
 /** Monitoring status → fill colour (docs/VIEWER.md). */
-const STATUS_COLORS: Record<string, string> = { ok: '#16a34a', warn: '#f59e0b', alarm: '#dc2626', offline: '#94a3b8' };
+const STATUS_COLORS: Record<string, string> = STATUS;
 
 const $ = <T extends HTMLElement>(sel: string): T => {
   const el = document.querySelector<T>(sel);

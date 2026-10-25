@@ -32,6 +32,7 @@ import { arrayOffsets, copyItems, makeShapes, nextTag, type ReorderMove, reorder
 import { newId } from '../model/ids';
 import { CATEGORY_LABELS, PROP_DEFS, categoryOf, cleanProps, presetInfo } from '../model/presets';
 import type { DocumentData, Entity, EquipmentType, Floor, Folder, Id, Layer, LineEntity, Point, ShapeEntity, StructureCategory } from '../model/types';
+import { LAYER_DEFAULT } from '../theme';
 
 export class ApiError extends Error {}
 
@@ -384,7 +385,7 @@ export class EditorApi {
       elevation: p.elevation ?? top.elevation + top.height,
       height: p.height && p.height > 0 ? p.height : top.height,
     };
-    const layer: Layer = { id: newId('layer'), name: '0', color: '#1f2937', visible: true, locked: false, floor: floor.id };
+    const layer: Layer = { id: newId('layer'), name: '0', color: LAYER_DEFAULT, visible: true, locked: false, floor: floor.id };
     this.tree('층 추가', (t) => {
       t.floors.push(floor);
       t.layers.push(layer);
@@ -416,7 +417,7 @@ export class EditorApi {
     const layer: Layer = {
       id: newId('layer'),
       name: String(p.name || '레이어'),
-      color: p.color ? this.color(p.color) : '#1f2937',
+      color: p.color ? this.color(p.color) : LAYER_DEFAULT,
       visible: true,
       locked: false,
       floor,

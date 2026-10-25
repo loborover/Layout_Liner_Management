@@ -22,6 +22,7 @@ import {
   type StructureCategory,
   type Underlay,
 } from '../model/types';
+import { LAYER_DEFAULT } from '../theme';
 
 const CONSTRAINT_KINDS: ConstraintKind[] = ['horizontal', 'vertical', 'parallel', 'perpendicular', 'equal', 'fixed', 'radius'];
 const CATEGORIES: StructureCategory[] = ['equipment', 'column', 'stair', 'ramp', 'lift'];
@@ -119,7 +120,7 @@ export function validate(raw: unknown): DocumentData {
           const layer: Layer = {
             id: l.id,
             name: typeof l.name === 'string' ? l.name : l.id,
-            color: typeof l.color === 'string' ? l.color : '#1f2937',
+            color: typeof l.color === 'string' ? l.color : LAYER_DEFAULT,
             visible: l.visible !== false,
             locked: l.locked === true,
             floor,
@@ -128,7 +129,7 @@ export function validate(raw: unknown): DocumentData {
           if (isStr(l.folder) && folderFloor.get(l.folder) === floor) layer.folder = l.folder;
           return layer;
         })
-      : [{ id: DEFAULT_LAYER_ID, name: '0', color: '#1f2937', visible: true, locked: false, floor: floors[0].id }];
+      : [{ id: DEFAULT_LAYER_ID, name: '0', color: LAYER_DEFAULT, visible: true, locked: false, floor: floors[0].id }];
   const layerIds = new Set(layers.map((l) => l.id));
 
   // Drawings saved before equipment existed get the default library; older ones also get the structural presets.
