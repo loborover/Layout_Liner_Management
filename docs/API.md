@@ -7,7 +7,7 @@ AI와 스크립트가 편집기를 조작하는 방법입니다. 메서드는 �
 | 브라우저 전역 객체 | 개발자 도구, 브라우저 자동화(Playwright 등) | `window.layoutLiner.call(method, params)` |
 | MCP(stdio) | Claude Code, Claude Desktop 등 MCP 클라이언트 | `npm run mcp` ([`mcp/server.ts`](../mcp/server.ts)) |
 | HTTP JSON-RPC 2.0 | 스크립트, MCP가 아닌 도구 | `POST http://127.0.0.1:7820/rpc` |
-| 실시간 브리지(WebSocket) | MCP 서버 → 열려 있는 편집기 탭 | 편집기 리본 "AI·API" 탭의 **AI 연결** |
+| 실시간 브리지(WebSocket) | MCP 서버 → 열려 있는 편집기 탭 | 편집기 리본 "외부 연결" 탭의 **AI 연결** |
 
 ## 공통 규칙
 
@@ -72,7 +72,7 @@ npm run mcp -- --file drawing.json   # 헤드리스로 drawing.json을 편집하
 1. 편집기 탭이 브리지에 연결되어 있으면 **그 탭**으로 보냅니다. 사용자가 화면에서 바로 보고, 브라우저에서 실행 취소할 수 있습니다. 응답이 15초 안에 오지 않으면 오류입니다.
 2. 연결된 탭이 없으면 서버 안의 **헤드리스 도면**을 편집하고, `--file`이 있으면 자동 저장합니다.
 
-편집기를 연결하는 방법: `npm run dev`로 편집기를 열고 → 리본 **AI·API** 탭 → 주소 `ws://127.0.0.1:7820` 확인 → **AI 연결**.
+편집기를 연결하는 방법: `npm run dev`로 편집기를 열고 → 리본 **외부 연결** 탭 → 주소 `ws://127.0.0.1:7820` 확인 → **AI 연결**.
 
 ## 3. HTTP JSON-RPC
 

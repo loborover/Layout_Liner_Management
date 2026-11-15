@@ -114,7 +114,7 @@ export class RecordStore {
   private flushQueued = false;
   private datasetList: { at: number; value: Promise<DatasetInfo[]> } | null = null;
   private listeners = new Set<() => void>();
-  readonly base: string;
+  private baseUrl: string;
 
   /**
    * @param base gateway address, e.g. "/data" behind the editor's own web server or "http://127.0.0.1:7840".
@@ -124,7 +124,21 @@ export class RecordStore {
     private fetchFn: Fetch = (url, init) => fetch(url, init),
     private ttlMs = 60_000,
   ) {
-    this.base = base.replace(/\/+$/, '');
+    this.baseUrl = base.replace(/\/+$/, '');
+  }
+
+  /** Gateway address in use. */
+  get base(): string {
+    return this.baseUrl;
+  }
+
+  /** Points the client at another gateway; cached records and the dataset list are dropped. */
+  setBase(base: string): void {
+    const next = base.trim().replace(/\/+$/, '');
+    if (next === this.baseUrl) return;
+    this.baseUrl = next;
+    this.clear();
+    for (const fn of this.listeners) fn();
   }
 
   /** Calls `fn` whenever a lookup finishes (to refresh a panel). Returns an unsubscribe function. */

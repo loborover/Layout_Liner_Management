@@ -33,8 +33,8 @@ import { Sidebar } from './ui/sidebar';
 import { ObjectTree } from './ui/tree';
 import { PropertyPanel } from './ui/properties';
 import { fillInspector } from './ui/inspector';
-import { appendRecordInfo } from './ui/recordPanel';
-import { RecordStore, gatewayAddress } from './data/records';
+import { DataBrowser, appendRecordInfo } from './ui/recordPanel';
+import { DEFAULT_GATEWAY, RecordStore, gatewayAddress } from './data/records';
 import { hydrateIcons } from './ui/icons';
 import type { LiveValue, Mode, UiHost } from './ui/host';
 import { buildScene } from './model/scene3d';
@@ -98,6 +98,18 @@ const $ = <T extends HTMLElement>(sel: string): T => {
   return el;
 };
 
+/** localStorage key of the data gateway address chosen in the "외부 연결" tab. */
+const GATEWAY_KEY = 'layoutLiner.dataGateway';
+
+/** Gateway address remembered in this browser, else the default. */
+function savedGateway(): string {
+  try {
+    return localStorage.getItem(GATEWAY_KEY) || DEFAULT_GATEWAY;
+  } catch {
+    return DEFAULT_GATEWAY;
+  }
+}
+
 export class App implements UiHost {
   readonly doc = new DocumentModel();
   readonly history = new History(this.doc);
@@ -111,7 +123,7 @@ export class App implements UiHost {
   /** Live monitoring values by binding key, fed by a data source (the viewer app uses the same shape). */
   readonly liveValues = new Map<string, LiveValue>();
   /** Source data links: client of the host's read-only data gateway (docs/DATA_SOURCES.md), `?data=` overrides. */
-  readonly records = new RecordStore(gatewayAddress(location.search));
+  readonly records = new RecordStore(gatewayAddress(location.search, savedGateway()));
   private constraintStatus: ClusterStatus | null = null;
   private statusTimer: number | undefined;
   private messageTimer: number | undefined;
@@ -129,6 +141,7 @@ export class App implements UiHost {
   private props: PropertyPanel;
   private ribbon: Ribbon;
   private sidebar: Sidebar;
+  private dataBrowser!: DataBrowser;
   private bridge: BridgeClient;
   private equipmentTool: EquipmentTool;
   private displayUnit: DisplayUnit = 'mm';
@@ -201,6 +214,7 @@ export class App implements UiHost {
     this.props.bind();
     this.ribbon = new Ribbon($<HTMLElement>('.ribbon'));
     this.sidebar = new Sidebar($<HTMLElement>('.sidebar'), () => this.resize());
+    this.bindDataSources();
     this.bridge = new BridgeClient(
       this.api,
       (state, detail) => this.bridgeState(state, detail),
@@ -726,6 +740,7 @@ export class App implements UiHost {
         else this.bridge.disconnect();
       }),
       'underlay-calibrate': e(() => this.setTool('underlay')),
+      'data-connect': () => void this.connectData(),
       coincide: e(() => void this.applyConstraint('coincident')),
     });
     document.querySelectorAll<HTMLButtonElement>('[data-constraint]').forEach((b) => {
@@ -1135,6 +1150,53 @@ export class App implements UiHost {
       this.showInspector(null, { x: 0, y: 0 });
     });
     appendRecordInfo(this.inspectorEl, this.records, e);
+  }
+
+  // ---------- source data (DB) ----------
+
+  /** Wires the "외부 연결" tab's gateway address and the "외부 데이터" side bar section. */
+  private bindDataSources(): void {
+    this.dataBrowser = new DataBrowser($<HTMLElement>('#data-browser'), this.records, (t) => this.notify(t));
+    const input = $<HTMLInputElement>('#data-url');
+    input.value = this.records.base;
+    input.placeholder = DEFAULT_GATEWAY;
+    input.addEventListener('change', () => this.setGateway(input.value));
+    input.addEventListener('keydown', (ev) => ev.key === 'Enter' && void this.connectData());
+    $<HTMLButtonElement>('[data-rail="data"]').addEventListener('click', () => void this.refreshData());
+  }
+
+  /** Uses another gateway address (remembered in this browser). Same-origin paths and http(s) only. */
+  private setGateway(text: string): void {
+    const url = gatewayAddress(`?data=${encodeURIComponent(text.trim())}`, DEFAULT_GATEWAY);
+    $<HTMLInputElement>('#data-url').value = url;
+    this.records.setBase(url);
+    try {
+      if (url === DEFAULT_GATEWAY) localStorage.removeItem(GATEWAY_KEY);
+      else localStorage.setItem(GATEWAY_KEY, url);
+    } catch {
+      // Storage may be unavailable (private window); the address still applies to this page.
+    }
+  }
+
+  /** "DB 연결": applies the address, opens the data panel and reports what the gateway offers. */
+  private async connectData(): Promise<void> {
+    this.setGateway($<HTMLInputElement>('#data-url').value);
+    this.sidebar.open('data');
+    await this.refreshData();
+  }
+
+  private async refreshData(): Promise<void> {
+    const status = $<HTMLSpanElement>('#data-status');
+    status.textContent = '연결 중…';
+    await this.dataBrowser.refresh();
+    try {
+      const list = await this.records.datasets();
+      const failed = list.filter((d) => d.error).length;
+      status.textContent = `연결됨: 데이터셋 ${list.length}개${failed ? ` (오류 ${failed}개)` : ''}`;
+    } catch (err) {
+      status.textContent = '연결 안 됨';
+      this.notify(`데이터 게이트웨이: ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
 
   private bridgeState(state: 'closed' | 'connecting' | 'open', detail?: string): void {

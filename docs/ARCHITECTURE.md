@@ -74,7 +74,7 @@ DOM을 쓰지 않는 계층(geom, model, constraints, io, api)은 Node에서 그
 - **눈금자.** `Renderer.showRulers`가 켜지면 위·왼쪽 가장자리에 눈금자를 그리고 큰 격자선마다 원점(0,0)에서의 거리를 적습니다(`rulerTicks`, `rulerUnit`, `src/view/viewport.ts`). 단위는 큰 격자 간격이 정수가 되는 가장 큰 단위(mm·cm·m)로 모서리에 표시합니다. 표시 여부는 보기 탭 "눈금자"이며 브라우저에 기억합니다.
 - **축척 표시.** 캔버스 왼쪽 아래에 축척 막대(1-2-5 단위 길이)와 화면 축척 근삿값 1:N(96 px/inch 기준)을 그립니다(`scaleBarLength`, `screenScaleRatio`, `src/view/viewport.ts`). SVG·인쇄에는 항상 축척 막대가 들어가고, 파일 탭에서 1:50~1:1000을 고르면 그 축척 크기로 출력하며 축척 값을 적습니다.
 - **좁은 화면과 터치.** 720 px 이하에서는 빠른 실행 바와 리본이 한 줄 가로 스크롤이 되고, 사이드바는 캔버스 아래 시트가 됩니다(`src/style.css` 끝의 반응형 규칙). 터치는 손가락을 떼거나 움직일 때까지 도구에 넘기지 않아, 두 번째 손가락이 닿으면 그리기 대신 두 손가락 확대·이동이 됩니다(`App.bindCanvas`).
-- **원본 데이터 연결.** 객체의 `record`(`{ dataset, key? }`)는 데이터 게이트웨이의 레코드를 가리킵니다. 브라우저는 `RecordStore`(`src/data/records.ts`)로 `/data/`(Nginx가 게이트웨이로 프록시)에 키만 물어 보고, 게이트웨이는 설정 파일의 `SELECT`로 읽어 둔 메모리 캐시에서 답합니다. 읽기 전용이며(2026-11-15 사용자 결정) 도면에는 참조만 저장합니다. 화면은 `src/ui/recordPanel.ts`(속성 패널 칸, 정보 카드).
+- **원본 데이터 연결.** 객체의 `record`(`{ dataset, key? }`)는 데이터 게이트웨이의 레코드를 가리킵니다. 브라우저는 `RecordStore`(`src/data/records.ts`)로 `/data/`(Nginx가 게이트웨이로 프록시)에 키만 물어 보고, 게이트웨이는 설정 파일의 `SELECT`로 읽어 둔 메모리 캐시에서 답합니다. 읽기 전용이며(2026-11-15 사용자 결정) 도면에는 참조만 저장합니다. 원본 값은 수식 함수 `DB(dataset, key, field)`(`src/data/recordValues.ts`)로 Parameter·치수 수식에서 개체값으로 씁니다. 화면은 리본 "외부 연결" 탭(게이트웨이 주소)과 사이드바 "외부 데이터" 탐색기(`src/ui/recordPanel.ts`)입니다. 속성 패널에는 칸을 두지 않습니다(2026-11-15 사용자 요청).
 - **모드.** 편집 모드와 뷰어 모드(`App.setMode`). 뷰어 모드에서는 `InspectTool`만 쓰이고, 변경 API 호출이 막히며, `.edit-only` UI가 숨겨집니다.
 
 ## 확장 지점

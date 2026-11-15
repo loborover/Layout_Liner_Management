@@ -5,7 +5,6 @@
  * implements it; tests or the viewer app can provide a smaller one. Keeping the widgets behind this interface
  * means they never reach into App internals.
  */
-import type { RecordStore } from '../data/records';
 import type { History } from '../model/commands';
 import type { DocumentModel } from '../model/document';
 import type { Selection } from '../model/selection';
@@ -41,8 +40,6 @@ export interface UiHost {
   zoomTo: (ids: Id[]) => void;
   /** Live value of a binding key, if a data source provides one. */
   live: (binding: string) => LiveValue | undefined;
-  /** Client of the data gateway for source data links (docs/DATA_SOURCES.md); absent when not configured. */
-  records?: RecordStore;
   /** Moves a point to an exact X, Y, Z (through the constraint solver when its geometry is constrained). */
   setPoint: (id: Id, to: { x: number; y: number; z?: number }) => void;
   /** Changes a distance or angle constraint's value through the solver (the panel's 치수 구속 rows). */

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { EditorApi } from '../src/api/editorApi';
 import { dispatch } from '../src/api/rpc';
 import { RecordStore, gatewayAddress, parseRecordRef, recordKey } from '../src/data/records';
+import { asFormulaValue, fieldRefOf, formatFieldRef, prefetch, recordFunctions, refsFromCalls } from '../src/data/recordValues';
 import { deserialize, serialize } from '../src/io/serialize';
 import { History } from '../src/model/commands';
 import { DocumentModel } from '../src/model/document';
@@ -104,5 +105,48 @@ describe('source data links', () => {
     history.undo();
     history.undo();
     expect(doc.entities.get(b.id)!.record).toBeUndefined();
+  });
+});
+
+describe('source data as formula values', () => {
+  it('formats and parses DB references', () => {
+    const ref = { dataset: 'equipment', key: 'MC-"1"', field: '정격전력(kW)' };
+    expect(formatFieldRef(ref)).toBe('DB("equipment", "MC-\\"1\\"", "정격전력(kW)")');
+    expect(fieldRefOf(['equipment', 'MC-1', '설비명'])).toEqual({ dataset: 'equipment', key: 'MC-1', field: '설비명' });
+    expect(fieldRefOf(['bad name', 'MC-1', '설비명'])).toBeUndefined();
+    expect(fieldRefOf(['equipment', 'MC-1'])).toBeUndefined();
+    expect(refsFromCalls([{ name: 'DB', args: ['rooms', 'A-101', 'name'] }, { name: 'max', args: [1, 2] }, { name: 'DB', args: [null, 'x', 'y'] }])).toEqual([
+      { dataset: 'rooms', key: 'A-101', field: 'name' },
+    ]);
+  });
+
+  it('turns numeric text into numbers', () => {
+    expect(asFormulaValue('22')).toBe(22);
+    expect(asFormulaValue(' 5.5 ')).toBe(5.5);
+    expect(asFormulaValue('1,200')).toBe(1200);
+    expect(asFormulaValue('HX-500')).toBe('HX-500');
+    expect(asFormulaValue('')).toBe('');
+    expect(asFormulaValue(null)).toBeUndefined();
+    expect(asFormulaValue(true)).toBe(1);
+  });
+
+  it('answers DB() from the cache and fetches what is missing', async () => {
+    const { store, calls } = fakeGateway({ equipment: { 'MC-1': { kw: '22', name: '가공기' } } });
+    const fns = recordFunctions(store);
+    let changed = 0;
+    store.onChange(() => changed++);
+    expect(fns.DB('equipment', 'MC-1', 'kw')).toBeUndefined();
+    await new Promise((r) => setTimeout(r, 5));
+    expect(changed).toBe(1);
+    expect(fns.DB('equipment', 'MC-1', 'kw')).toBe(22);
+    expect(fns.DB('equipment', 'MC-1', 'name')).toBe('가공기');
+    expect(fns.DB('equipment', 'MC-1', 'nope')).toBeUndefined();
+    expect(fns.DB('equipment', 'MC-1')).toBeUndefined();
+    expect(calls.length).toBe(1);
+    await prefetch(store, [{ dataset: 'equipment', key: 'MC-9', field: 'kw' }, { dataset: 'equipment', key: 'MC-9', field: 'name' }]);
+    expect(calls.length).toBe(2);
+    store.setBase('http://other/');
+    expect(store.base).toBe('http://other');
+    expect(store.peek('equipment', 'MC-1')).toBeUndefined();
   });
 });
