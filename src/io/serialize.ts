@@ -255,11 +255,11 @@ export function validate(raw: unknown): DocumentData {
   unique(folders, '폴더');
   const folderFloor = new Map(folders.map((f) => [f.id, f.floor]));
   // Nested folders (version 6): a parent must be another folder on the same floor, and a loop is cut where it closes.
+  const folderById = new Map(folders.map((x) => [x.id, x]));
   folders.forEach((f, i) => {
     const parent = rawFolders[i].parent;
     if (!isStr(parent) || parent === f.id || folderFloor.get(parent) !== f.floor) return;
-    const byId = new Map(folders.map((x) => [x.id, x]));
-    for (let p: Folder | undefined = byId.get(parent); p; p = p.parent ? byId.get(p.parent) : undefined) if (p.id === f.id) return;
+    for (let p: Folder | undefined = folderById.get(parent); p; p = p.parent ? folderById.get(p.parent) : undefined) if (p.id === f.id) return;
     f.parent = parent;
   });
 

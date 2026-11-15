@@ -7,9 +7,9 @@
 import { describe, expect, it } from 'vitest';
 import { EditorApi } from '../src/api/editorApi';
 import { dispatch } from '../src/api/rpc';
-import { History, SetLayerTree, captureLayerTree } from '../src/model/commands';
+import { AddConstraints, AddItems, History, SetLayerTree, captureLayerTree } from '../src/model/commands';
 import { DocumentModel } from '../src/model/document';
-import { layerForDrop } from '../src/model/edit';
+import { layerForDrop, layerTreeCommand } from '../src/model/edit';
 import { folderSubtree, moveFolder, moveLayer, removeFolder } from '../src/model/layerTree';
 
 /** 1층 > 작업구역 > 협력사 > A사 > layer "A" ; 2층 with its own layer. */
@@ -86,6 +86,41 @@ describe('nested folders', () => {
     removeFolder(t, 'work');
     expect(t.folders.find((f) => f.id === 'a')!.parent).toBeUndefined();
     expect(t.layers.find((l) => l.id === 'la')!.folder).toBe('a');
+  });
+
+  it('moving a folder to another floor splits points its objects shared with objects left behind', () => {
+    const { doc, history } = plant();
+    history.execute(
+      new AddItems(
+        [
+          { id: 'p1', x: 0, y: 0 },
+          { id: 'p2', x: 1000, y: 0 },
+          { id: 'p3', x: 2000, y: 0 },
+          { id: 'q', x: 2000, y: 0 },
+        ],
+        [
+          { id: 'inA', kind: 'line', p1: 'p1', p2: 'p2', layer: 'la' },
+          { id: 'out', kind: 'line', p1: 'p2', p2: 'p3', layer: 'layer-0' },
+          { id: 'pt', kind: 'point', at: 'q', layer: 'la' },
+        ],
+      ),
+    );
+    history.execute(new AddConstraints([{ id: 'k', kind: 'coincident', refs: ['q', 'p3'] }]));
+    const before = captureLayerTree(doc);
+    const after = captureLayerTree(doc);
+    expect(moveFolder(after, 'work', { kind: 'floor', id: 'floor-2' })).toBeNull();
+    history.execute(layerTreeCommand(doc, '폴더 옮기기', before, after));
+    const inA = doc.entities.get('inA')!;
+    const out = doc.entities.get('out')!;
+    if (inA.kind !== 'line' || out.kind !== 'line') throw new Error('lines expected');
+    expect(out.p1).toBe('p2');
+    expect(inA.p2).not.toBe('p2');
+    expect(doc.point(inA.p2)).toMatchObject({ x: 1000, y: 0 });
+    expect(doc.constraints.has('k')).toBe(false);
+    history.undo();
+    expect((doc.entities.get('inA') as { p2: string }).p2).toBe('p2');
+    expect(doc.constraints.has('k')).toBe(true);
+    expect(doc.layers.get('la')!.floor).toBe('floor-1');
   });
 
   it('drops objects on a folder into the layers of its sub-folders when it has none of its own', () => {

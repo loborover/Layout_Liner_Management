@@ -23,14 +23,13 @@ import {
   MovePoints,
   RemoveEntities,
   SetEquipmentTypes,
-  SetLayerTree,
   SetPoints,
   UpdateEntities,
   captureLayerTree,
 } from '../model/commands';
 import { type DocumentModel, cloneEntity, midpointId } from '../model/document';
 import { cloneStroke } from '../model/borders';
-import { arrayOffsets, copyItems, makeShapes, nextTag, type ReorderMove, reorderItems, rotateItems } from '../model/edit';
+import { arrayOffsets, copyItems, layerTreeCommand, makeShapes, nextTag, type ReorderMove, reorderItems, rotateItems } from '../model/edit';
 import { hasHeight, heightOf } from '../model/heights';
 import { type CornerMode, editCorner, insertVertex, removeVertex } from '../model/corners';
 import { labelRows, shapeLabelPlacement } from '../model/labels';
@@ -856,7 +855,7 @@ export class EditorApi {
     const before = captureLayerTree(this.doc);
     const after = captureLayerTree(this.doc);
     edit(after);
-    this.history.execute(new SetLayerTree(label, before, after));
+    this.history.execute(layerTreeCommand(this.doc, label, before, after));
   }
 }
 

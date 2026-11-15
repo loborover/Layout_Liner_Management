@@ -20,8 +20,8 @@
  *
  * Large layers list their first MAX_ROWS objects only, and the tree is rebuilt at most a few times a second.
  */
-import { SetLayerTree, captureLayerTree, type LayerTree } from '../model/commands';
-import { duplicateItems, layerForDrop, transferItems, type TreeDropTarget } from '../model/edit';
+import { captureLayerTree, type LayerTree } from '../model/commands';
+import { duplicateItems, layerForDrop, layerTreeCommand, transferItems, type TreeDropTarget } from '../model/edit';
 import { folderSubtree, moveFolder, moveLayer, removeFolder } from '../model/layerTree';
 import { midpointId } from '../model/document';
 import { newId } from '../model/ids';
@@ -525,7 +525,7 @@ export class ObjectTree {
     const after = captureLayerTree(doc);
     const error = edit(after);
     if (error) return this.host.notify(error);
-    history.execute(new SetLayerTree(label, before, after));
+    history.execute(layerTreeCommand(doc, label, before, after));
   }
 
   /** Applies an edit to a copy of the layer tree as one undoable step. */
@@ -534,6 +534,6 @@ export class ObjectTree {
     const before = captureLayerTree(doc);
     const after = captureLayerTree(doc);
     edit(after);
-    history.execute(new SetLayerTree(label, before, after));
+    history.execute(layerTreeCommand(doc, label, before, after));
   }
 }
