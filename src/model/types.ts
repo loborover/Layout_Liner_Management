@@ -137,6 +137,8 @@ export interface DimensionEntity extends EntityBase {
   offset: number; // mm, perpendicular to p1→p2, positive to the left
   /** When set, the dimension drives the geometry: the distance between p1 and p2 is held at this value (mm). */
   value?: number;
+  /** Expression `value` comes from (parameters, src/model/params.ts); `value` keeps its last result. */
+  expression?: string;
 }
 
 /** Values of preset properties (see src/model/presets.ts). */
@@ -286,7 +288,7 @@ export type ConstraintKind =
  * 'coincident' holds two or more points of different objects at one place: drawing from another object's point
  * makes one, so the objects stay separate and can be pulled apart by removing it (the user's request, 2026-11-15).
  * Dimensional constraints (driving dimensions between points and edges, file version 6):
- * - 'distance': `value` mm between two points ([point, point]), a point and a line's infinite extension
+ * - 'distance': `value` mm: a line's length ([line], version 8), between two points ([point, point]), a point and a line's infinite extension
  *   ([point, line]) or two parallel lines ([line, line], measured from the second line's first point to the first line).
  * - 'angle': `value` degrees (0 < value < 180) between two lines ([line, line]), measured between the arms that
  *   run away from where the lines meet (see src/constraints/dimensions.ts).
@@ -297,6 +299,22 @@ export interface Constraint {
   refs: Id[];
   /** Radius or distance in mm for 'radius' and 'distance', degrees for 'angle'. */
   value?: number;
+  /** Expression `value` comes from (parameters, src/model/params.ts); `value` keeps its last result. */
+  expression?: string;
+}
+
+/**
+ * A named value the user defines (e.g. 폭 = 12000) for driving dimensions to use in their expressions. Names are
+ * unique within a drawing; `expression` may use other parameters and functions (src/model/params.ts), and `value`
+ * is its last good result, kept when evaluating fails (e.g. a DB value not loaded yet).
+ */
+export interface Parameter {
+  id: Id;
+  name: string;
+  expression: string;
+  value?: number;
+  /** Shown next to the parameter (what it is for). */
+  note?: string;
 }
 
 /**
@@ -361,10 +379,10 @@ export interface DocumentData {
    * 2 added floors, folders, shapes, line styles, presets and bindings; 3 added point Z, object heights (3D) and point objects;
    * 4 added border opacity and patterns, circle borders, face opacity and images, coincident constraints and the
    * underlay lock; 5 added border corner joins, shape labels, label objects and the H-beam column section; 6 added
-   * distance and angle (dimensional) constraints; 7 added nested folders (`Folder.parent`). Older versions are
-   * upgraded on load.
+   * distance and angle (dimensional) constraints; 7 added nested folders (`Folder.parent`); 8 added parameters, the
+   * expressions of driving dimensions and single-line length constraints. Older versions are upgraded on load.
    */
-  version: 7;
+  version: 8;
   units: 'mm';
   points: Point[];
   entities: Entity[];
@@ -376,6 +394,8 @@ export interface DocumentData {
   activeFloor: Id;
   equipmentTypes: EquipmentType[];
   underlay?: Underlay;
+  /** Named values for dimension expressions (version 8); absent when there are none. */
+  parameters?: Parameter[];
 }
 
 export const DEFAULT_LAYER_ID = 'layer-0';

@@ -112,9 +112,10 @@ export class PropertyPanel {
     };
     for (const c of found) {
       const angle = c.kind === 'angle';
-      const key = `${angle ? '각도 (°)' : '거리 (mm)'} · ${c.refs.map(name).join('–')}`;
-      const value = this.input('number', String(c.value ?? ''), (v) => this.host.setConstraintValue?.(c.id, Number(v)));
-      value.title = angle ? '0보다 크고 180보다 작은 각도' : `현재 ${dimensionText(c, (mm) => formatLength(mm, unit))}`;
+      const what = angle ? '각도 (°)' : c.refs.length === 1 ? '길이 (mm)' : '거리 (mm)';
+      const key = `${what} · ${c.refs.map(name).join('–')}`;
+      const value = this.drivingInput(c.id, c.expression ?? String(c.value ?? ''));
+      value.title = `현재 ${dimensionText(c, (mm) => formatLength(mm, unit))} · 숫자 또는 파라미터 수식(예: 폭 / 2)`;
       const wrap = document.createElement('span');
       wrap.className = 'dim-value';
       wrap.append(
@@ -124,6 +125,11 @@ export class PropertyPanel {
       this.row(f, key, wrap);
     }
     return f;
+  }
+
+  /** A text field for a driving value: a number or a parameter expression, applied through the solver. */
+  private drivingInput(id: Id, text: string): HTMLInputElement {
+    return this.input('text', text, (v) => this.host.setDrivingText?.(id, v));
   }
 
   private get readOnly(): boolean {
@@ -367,7 +373,11 @@ export class PropertyPanel {
       const a = doc.point(e.p1);
       const b = doc.point(e.p2);
       this.row(f, '측정값', formatLength(Math.hypot(b.x - a.x, b.y - a.y), unit));
-      this.row(f, '종류', e.value !== undefined ? `구동 (${e.value} mm)` : '참조');
+      this.row(f, '종류', e.value !== undefined ? '구동 (거리를 고정)' : '참조 (측정만)');
+      const value = this.drivingInput(e.id, e.expression ?? (e.value !== undefined ? String(e.value) : ''));
+      value.placeholder = '비우면 참조 치수';
+      value.title = '고정할 거리(mm). 숫자 또는 파라미터 수식(예: 폭 / 2), 비우면 참조 치수(측정만)';
+      this.row(f, '값 (mm)', value);
     } else if (e.kind === 'equipment') {
       sets.push(...this.equipmentSets(e));
     } else if (e.kind === 'label') {

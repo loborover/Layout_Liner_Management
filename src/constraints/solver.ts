@@ -163,7 +163,9 @@ export class ConstraintSolver {
         case 'distance': {
           const la = doc.entities.get(a);
           const lb = doc.entities.get(b);
-          if (la?.kind === 'line' && lb?.kind === 'line') {
+          if (la?.kind === 'line' && b === undefined) {
+            primitives.push({ id, type: 'p2p_distance', p1_id: la.p1, p2_id: la.p2, distance: c.value ?? 0 });
+          } else if (la?.kind === 'line' && lb?.kind === 'line') {
             // Between parallel lines: from the second line's first point to the first line (they are kept parallel
             // by other constraints, if at all, so the dimension never doubles up with a parallel constraint).
             primitives.push({ id, type: 'p2l_distance', p_id: lb.p1, l_id: a, distance: c.value ?? 0 });

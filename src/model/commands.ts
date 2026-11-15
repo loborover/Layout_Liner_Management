@@ -8,7 +8,7 @@
  */
 import type { Vec2 } from '../geom/vec';
 import { type DocumentModel, cloneEntity } from './document';
-import type { Constraint, Entity, EquipmentType, Floor, Folder, Id, Layer, Point, Underlay } from './types';
+import type { Constraint, Entity, EquipmentType, Floor, Folder, Id, Layer, Parameter, Point, Underlay } from './types';
 
 export interface Command {
   readonly label: string;
@@ -513,5 +513,77 @@ export class SetUnderlay implements Command {
 
   revert(doc: DocumentModel): void {
     doc.underlay = this.before ? { ...this.before } : null;
+  }
+}
+
+/** What drives a constraint or a dimension: its value and the expression it comes from (both optional). */
+export interface Driving {
+  value?: number;
+  expression?: string;
+}
+
+/** The driving value and expression of a constraint or dimension entity, as they are now. */
+export function drivingOf(doc: DocumentModel, id: Id): Driving {
+  const c = doc.constraints.get(id);
+  const e = doc.entities.get(id);
+  const src = c ?? (e?.kind === 'dimension' ? e : undefined);
+  if (!src) return {};
+  return { ...(src.value !== undefined ? { value: src.value } : {}), ...(src.expression ? { expression: src.expression } : {}) };
+}
+
+/**
+ * Sets the value and expression of a constraint (distance, angle, radius) or a dimension entity. A dimension
+ * without a value is a reference dimension. Geometry is solved separately (src/constraints/service.ts).
+ */
+export class SetDriving implements Command {
+  constructor(
+    private readonly id: Id,
+    private readonly before: Driving,
+    private readonly after: Driving,
+    readonly label = '치수 값 변경',
+  ) {}
+
+  apply(doc: DocumentModel): void {
+    this.set(doc, this.after);
+  }
+
+  revert(doc: DocumentModel): void {
+    this.set(doc, this.before);
+  }
+
+  private set(doc: DocumentModel, d: Driving): void {
+    const e = doc.entities.get(this.id);
+    const target = doc.constraints.get(this.id) ?? (e?.kind === 'dimension' ? e : undefined);
+    if (!target) return;
+    if (d.value === undefined) delete target.value;
+    else target.value = d.value;
+    if (d.expression) target.expression = d.expression;
+    else delete target.expression;
+  }
+}
+
+/** Replaces the drawing's parameters (add, rename, change, remove, or cache new values). */
+export class SetParameters implements Command {
+  constructor(
+    private readonly before: Parameter[],
+    private readonly after: Parameter[],
+    readonly label = '파라미터 변경',
+  ) {}
+
+  static capture(doc: DocumentModel): Parameter[] {
+    return [...doc.parameters.values()].map((p) => ({ ...p }));
+  }
+
+  apply(doc: DocumentModel): void {
+    this.set(doc, this.after);
+  }
+
+  revert(doc: DocumentModel): void {
+    this.set(doc, this.before);
+  }
+
+  private set(doc: DocumentModel, list: Parameter[]): void {
+    doc.parameters.clear();
+    for (const p of list) doc.parameters.set(p.id, { ...p });
   }
 }

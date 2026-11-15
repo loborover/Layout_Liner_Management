@@ -15,7 +15,7 @@ import { dimensionGeometry } from '../geom/dimension';
 import { Batch, type Command, MovePoints, RemoveEntities, SetDimensionOffsets, SetUnderlay, UpdateEntities } from '../model/commands';
 import { UNDERLAY_ID } from '../model/selection';
 import { deletionTargets, duplicateItems } from '../model/edit';
-import type { Id, Underlay } from '../model/types';
+import type { Entity, Id, Underlay } from '../model/types';
 import type { ConstrainedDrag } from '../constraints/service';
 import { dimensionAt, dimensionScale } from '../constraints/dimensions';
 import type { SnapQuery } from '../snap/snap';
@@ -24,7 +24,7 @@ import { COLORS, type Painter } from '../view/renderer';
 import type { Tool, ToolContext, ToolPointer } from './tool';
 
 /** How close (px) a double-click must be to a dimension constraint's value to edit it. */
-const LABEL_PICK_PX = 14;
+const LABEL_PICK_PX = 20;
 
 type State =
   | { kind: 'idle' }
@@ -186,28 +186,26 @@ export class SelectTool implements Tool {
   doubleClick(p: ToolPointer): void {
     const { ctx } = this;
     const constraint = dimensionAt(ctx.doc, p.raw, dimensionScale(ctx.view.pxToMm(1)), ctx.view.pxToMm(LABEL_PICK_PX));
-    if (constraint) {
-      const angle = constraint.kind === 'angle';
-      const answer = ctx.ask(angle ? '각도(°)를 입력하십시오.' : '거리(mm)를 입력하십시오.', String(constraint.value ?? ''));
+    // A dimension line's value sits above the line, so look for the label first, then the line itself.
+    const hit = constraint ? null : (this.dimensionLabelAt(p.raw) ?? ctx.index.pick(p.raw, ctx.pickTolerance()));
+    if (constraint || hit?.kind === 'dimension') {
+      const target = constraint ?? (hit as Extract<typeof hit, { kind: 'dimension' }>)!;
+      const angle = constraint?.kind === 'angle';
+      let current = target.expression ?? (target.value !== undefined ? String(Math.round(target.value * 100) / 100) : '');
+      if (!constraint && current === '' && hit?.kind === 'dimension') current = dist(ctx.doc.point(hit.p1), ctx.doc.point(hit.p2)).toFixed(1);
+      const question = angle
+        ? '각도(°)를 입력하십시오. 숫자 또는 파라미터 수식(예: 경사각 + 5)을 쓸 수 있습니다.'
+        : constraint
+          ? '거리(mm)를 입력하십시오. 숫자 또는 파라미터 수식(예: 폭 / 2)을 쓸 수 있습니다.'
+          : '치수 값(mm)을 입력하십시오. 숫자 또는 파라미터 수식(예: 폭 / 2)을 쓸 수 있고, 비워 두면 참조 치수(측정만)로 바뀝니다.';
+      const answer = ctx.ask(question, current);
       if (answer === null) return;
-      void ctx.constraints.setValue(constraint.id, Number(answer)).then((r) => {
+      void ctx.constraints.setDrivingText(target.id, answer).then((r) => {
         if (!r.ok) ctx.notify(r.message);
       });
       return;
     }
-    const hit = ctx.index.pick(p.raw, ctx.pickTolerance());
-    if (hit?.kind === 'dimension') {
-      const a = ctx.doc.point(hit.p1);
-      const b = ctx.doc.point(hit.p2);
-      const current = hit.value ?? Math.hypot(b.x - a.x, b.y - a.y);
-      const answer = ctx.ask('치수 값(mm)을 입력하십시오. 비워 두면 참조 치수(측정만)로 바뀝니다.', current.toFixed(1));
-      if (answer === null) return;
-      const value = answer.trim() === '' ? undefined : Number(answer);
-      if (value !== undefined && !(value > 0)) return ctx.notify('0보다 큰 숫자를 입력하십시오.');
-      void ctx.constraints.setDimensionValue(hit.id, value).then((r) => {
-        if (!r.ok) ctx.notify(r.message);
-      });
-    } else if (hit?.kind === 'circle') {
+    if (hit?.kind === 'circle') {
       const answer = ctx.ask(`반지름(mm)을 입력하십시오. 현재 ${formatLength(hit.radius, 'mm')}`, hit.radius.toFixed(1));
       if (answer === null) return;
       const value = Number(answer);
@@ -220,6 +218,24 @@ export class SelectTool implements Tool {
       if (answer === null || answer.trim() === hit.tag) return;
       ctx.history.execute(new UpdateEntities('설비 번호 변경', [hit], [{ ...hit, tag: answer.trim() }]));
     }
+  }
+
+  /** The visible dimension line whose value label is under `at` (the label sits just above the dimension line). */
+  private dimensionLabelAt(at: Vec2): Extract<Entity, { kind: 'dimension' }> | null {
+    const { doc, view } = this.ctx;
+    const tolerance = view.pxToMm(LABEL_PICK_PX);
+    let best: Extract<Entity, { kind: 'dimension' }> | null = null;
+    let bestDistance = tolerance;
+    for (const e of doc.entities.values()) {
+      if (e.kind !== 'dimension' || !doc.isVisible(e)) continue;
+      const { d1, d2 } = dimensionGeometry(doc.point(e.p1), doc.point(e.p2), e.offset);
+      const d = dist(at, { x: (d1.x + d2.x) / 2, y: (d1.y + d2.y) / 2 });
+      if (d <= bestDistance) {
+        best = e;
+        bestDistance = d;
+      }
+    }
+    return best;
   }
 
   key(e: KeyboardEvent): boolean {

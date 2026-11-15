@@ -144,8 +144,8 @@ export function arrayOffsets(columns: number, rows: number, dx: number, dy: numb
 
 /**
  * Rotates the selection by `deg` (counter-clockwise). Equipment on its own turns in place; anything else turns
- * as a group about the middle of its bounding box. Returns an error message for constrained geometry, whose
- * horizontal/vertical constraints a rotation would break.
+ * as a group about the middle of its bounding box. Returns an error message for geometry whose constraints a
+ * rotation would break (horizontal, vertical, fixed, or tied to something outside the selection).
  */
 export function rotateItems(doc: DocumentModel, entityIds: Id[], deg: number): Command | string | null {
   const entities = entityIds.flatMap((id) => {
@@ -159,7 +159,18 @@ export function rotateItems(doc: DocumentModel, entityIds: Id[], deg: number): C
   const steps: Command[] = [new UpdateEntities('회전', equipment, turned)];
   if (equipment.length < entities.length) {
     // Equipment turning in place moves no points, so only a group rotation can break constraints.
-    if (doc.constraintsOn([...entityIds, ...pointIds]).length > 0) return '구속된 객체는 회전할 수 없습니다. 구속을 해제한 뒤 회전해 주세요.';
+    // Shape-only constraints (right angles, distances, angles, ...) turn with the geometry and still hold;
+    // horizontal, vertical and fixed ones, or one tying the selection to something outside it, would break.
+    const turning = new Set(pointIds);
+    const inside = (ref: Id) => {
+      if (doc.points.has(ref)) return turning.has(ref);
+      const e = doc.entities.get(ref);
+      return !!e && doc.pointIdsOf(e).every((p) => turning.has(p));
+    };
+    const blocking = doc
+      .constraintsOn([...entityIds, ...pointIds])
+      .some((k) => k.kind === 'horizontal' || k.kind === 'vertical' || k.kind === 'fixed' || !k.refs.every(inside));
+    if (blocking) return '수평·수직·고정 구속이 있거나 선택 밖과 구속된 객체는 회전할 수 없습니다. 구속을 해제한 뒤 회전해 주세요.';
     const boxes = entities.map((e) => doc.bboxOf(e));
     const c = {
       x: (Math.min(...boxes.map((b) => b.minX)) + Math.max(...boxes.map((b) => b.maxX))) / 2,

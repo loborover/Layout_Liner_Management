@@ -109,7 +109,8 @@ export function measureDimension(doc: DocumentModel, c: Constraint): number {
   if (c.kind !== 'distance') return NaN;
   const [r1, r2] = c.refs;
   const l1 = line(doc, r1);
-  const l2 = line(doc, r2);
+  const l2 = r2 === undefined ? null : line(doc, r2);
+  if (l1 && r2 === undefined) return len(sub(doc.point(l1.p2), doc.point(l1.p1)));
   if (!l1 && !l2) {
     if (!doc.points.has(r1) || !doc.points.has(r2)) return NaN;
     return len(sub(doc.point(r2), doc.point(r1)));
@@ -125,10 +126,12 @@ export function measureDimension(doc: DocumentModel, c: Constraint): number {
  */
 export function distanceFromSelection(doc: DocumentModel, selected: readonly Id[]): DimensionPick {
   const { points, lines, other } = pickedGeometry(doc, selected);
-  const usage = '거리 구속: 점 두 개, 점 하나와 선 하나, 또는 평행한 선 두 개를 선택하십시오(Shift+클릭).';
-  if (other > 0 || points.length + lines.length !== 2) return { ok: false, message: usage };
+  const usage = '거리 구속: 선 하나(길이), 점 두 개, 점 하나와 선 하나, 또는 평행한 선 두 개를 선택하십시오(Shift+클릭).';
+  if (other > 0 || points.length + lines.length === 0 || points.length + lines.length > 2) return { ok: false, message: usage };
   let refs: Id[];
-  if (points.length === 2) refs = points;
+  if (lines.length === 1 && points.length === 0) refs = lines;
+  else if (points.length === 1 && lines.length === 0) return { ok: false, message: usage };
+  else if (points.length === 2) refs = points;
   else if (points.length === 1) {
     const l = line(doc, lines[0])!;
     if (l.p1 === points[0] || l.p2 === points[0]) return { ok: false, message: '선의 끝점과 그 선 사이의 거리는 항상 0입니다. 다른 점을 선택하십시오.' };
@@ -145,6 +148,45 @@ export function distanceFromSelection(doc: DocumentModel, selected: readonly Id[
   const value = measureDimension(doc, { id: '', kind: 'distance', refs });
   if (!(value > 0.5)) return { ok: false, message: '선택한 점·선이 이미 겹쳐 있습니다. 거리가 0인 조건은 일치 구속을 쓰십시오.' };
   return { ok: true, refs, value };
+}
+
+/** What a smart dimension makes of a selection (the 치수 button and the API). */
+export type SmartPick =
+  | { ok: true; kind: 'distance' | 'angle'; refs: Id[]; value: number }
+  | { ok: true; kind: 'radius'; refs: Id[]; value: number }
+  | { ok: false; message: string };
+
+/**
+ * One button for every dimension, like CAD's smart dimension: a line → its length, two points → their distance,
+ * a point and a line → the perpendicular distance, two parallel lines → the distance between them, two other
+ * lines → the angle between them, a circle → its radius.
+ */
+export function smartDimension(doc: DocumentModel, selected: readonly Id[]): SmartPick {
+  const entities = selected.flatMap((id) => {
+    const e = doc.entities.get(id);
+    return e ? [e] : [];
+  });
+  if (entities.length === 1 && entities[0].kind === 'circle' && selected.length === 1) {
+    return { ok: true, kind: 'radius', refs: [entities[0].id], value: entities[0].radius };
+  }
+  const { points, lines, other } = pickedGeometry(doc, selected);
+  if (other === 0 && points.length === 0 && lines.length === 2) {
+    const [la, lb] = lines.map((id) => line(doc, id)!);
+    const ua = direction(doc, la).u;
+    const ub = direction(doc, lb).u;
+    if (Math.abs(ua.x * ub.y - ua.y * ub.x) > PARALLEL_SIN) {
+      const angle = angleFromSelection(doc, selected);
+      return angle.ok ? { ...angle, kind: 'angle' } : angle;
+    }
+  }
+  const distance = distanceFromSelection(doc, selected);
+  if (!distance.ok) {
+    return {
+      ok: false,
+      message: '치수: 선(길이), 점 두 개, 점과 선, 선 두 개(평행이면 거리, 아니면 각도) 또는 원(반지름)을 선택하십시오(Shift+클릭).',
+    };
+  }
+  return { ...distance, kind: 'distance' };
 }
 
 /** Refs and current value of an angle constraint for a selection of two lines. */
@@ -231,11 +273,16 @@ export function dimensionShape(doc: DocumentModel, c: Constraint, s: DimensionSc
   if (c.kind !== 'distance') return null;
   const [r1, r2] = c.refs;
   const l1 = line(doc, r1);
-  const l2 = line(doc, r2);
+  const l2 = r2 === undefined ? null : line(doc, r2);
   let a: Vec2;
   let b: Vec2;
   let offset = 0;
-  if (!l1 && !l2) {
+  if (l1 && r2 === undefined) {
+    // A line's length sits beside the line, like an aligned dimension.
+    a = doc.point(l1.p1);
+    b = doc.point(l1.p2);
+    offset = s.offset;
+  } else if (!l1 && !l2) {
     if (!doc.points.has(r1) || !doc.points.has(r2)) return null;
     a = doc.point(r1);
     b = doc.point(r2);
@@ -258,7 +305,9 @@ export function dimensionShape(doc: DocumentModel, c: Constraint, s: DimensionSc
 /** Text shown for a dimension constraint's value. */
 export function dimensionText(c: Constraint, formatLength: (mm: number) => string): string {
   const v = c.value ?? 0;
-  return c.kind === 'angle' ? `${Math.round(v * 100) / 100}°` : formatLength(v);
+  const text = c.kind === 'angle' ? `${Math.round(v * 100) / 100}°` : formatLength(v);
+  // A value that follows a parameter expression says so, e.g. "폭 = 12000 mm".
+  return c.expression ? `${c.expression} = ${text}` : text;
 }
 
 /** Whether a constraint is a dimensional one (has a value the user edits and is drawn as a dimension). */

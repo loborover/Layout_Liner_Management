@@ -23,10 +23,12 @@ import {
   MovePoints,
   RemoveEntities,
   SetEquipmentTypes,
+  SetParameters,
   SetPoints,
   UpdateEntities,
   captureLayerTree,
 } from '../model/commands';
+import { evaluate, evaluateParameters, nameProblem, parseExpression, references } from '../model/params';
 import { type DocumentModel, cloneEntity, midpointId } from '../model/document';
 import { cloneStroke } from '../model/borders';
 import { arrayOffsets, copyItems, layerTreeCommand, makeShapes, nextTag, type ReorderMove, reorderItems, rotateItems } from '../model/edit';
@@ -38,7 +40,7 @@ import { MAX_RECORD_KEY, parseRecordRef, recordKey } from '../data/records';
 import { newId } from '../model/ids';
 import { moveFolder, moveLayer } from '../model/layerTree';
 import { CATEGORY_LABELS, COLUMN_SECTIONS, type ColumnSection, PROP_DEFS, categoryOf, cleanProps, columnTypeFor, presetInfo } from '../model/presets';
-import type { CircleEntity, DocumentData, Entity, EquipmentType, Floor, Folder, Id, Layer, LineEntity, Point, ShapeEntity, StructureCategory } from '../model/types';
+import type { CircleEntity, DocumentData, Entity, EquipmentType, Floor, Folder, Id, Layer, LineEntity, Parameter, Point, ShapeEntity, StructureCategory } from '../model/types';
 import { LAYER_DEFAULT } from '../theme';
 
 export class ApiError extends Error {}
@@ -50,6 +52,13 @@ export interface EditorApiOptions {
   currentLayer?: () => Id;
   /** Endpoints closer than this (mm) to an existing point join it, so API-drawn lines connect. Default 0.5. */
   joinTolerance?: number;
+  /**
+   * Called after parameters change. The editor re-applies the dimensions that use them and solves the geometry
+   * (ConstraintService.reapplyParameters), and calls `revert` if the geometry can't take the new values, so the
+   * parameter doesn't stay at a value its dimensions don't show. Without it (headless file editing) the
+   * dimensions follow the next time the drawing is opened in the editor.
+   */
+  onParametersChanged?: (revert: () => void) => void;
 }
 
 const COLOR = /^#[0-9a-f]{6}$/i;
@@ -690,6 +699,101 @@ export class EditorApi {
   /** Property definitions of each preset category (keys accepted in `props`). */
   presetSchema() {
     return Object.fromEntries(Object.entries(PROP_DEFS).map(([k, defs]) => [k, { label: CATEGORY_LABELS[k as StructureCategory], props: defs }]));
+  }
+
+  // ---------- parameters ----------
+
+  /** Parameters with their current value (or why it can't be computed) and how many dimensions use each. */
+  listParameters() {
+    const params = [...this.doc.parameters.values()];
+    const { values, errors } = evaluateParameters(params);
+    const uses = new Map<string, number>();
+    const targets = [...this.doc.constraints.values(), ...[...this.doc.entities.values()].filter((e) => e.kind === 'dimension')];
+    for (const t of targets) {
+      if (!t.expression) continue;
+      try {
+        for (const n of references(parseExpression(t.expression)).params) uses.set(n, (uses.get(n) ?? 0) + 1);
+      } catch {
+        // a broken expression uses nothing
+      }
+    }
+    return {
+      parameters: params.map((p) => ({
+        id: p.id,
+        name: p.name,
+        expression: p.expression,
+        value: values.get(p.name) ?? null,
+        ...(errors.has(p.id) ? { error: errors.get(p.id)!.message } : {}),
+        ...(p.note ? { note: p.note } : {}),
+        usedBy: uses.get(p.name) ?? 0,
+      })),
+    };
+  }
+
+  /** Adds a parameter or changes one (by name, or by id to rename it). Dimensions using it follow (see onParametersChanged). */
+  setParameter(p: { name: string; expression: string | number; id?: Id; note?: string | null }) {
+    const name = String(p.name ?? '').trim();
+    const expression = String(p.expression ?? '').trim();
+    const current = [...this.doc.parameters.values()];
+    const existing = p.id !== undefined ? this.doc.parameters.get(p.id) : current.find((q) => q.name === name);
+    if (p.id !== undefined && !existing) throw new ApiError(`파라미터가 없습니다: ${p.id}`);
+    const problem = nameProblem(name, current, existing?.id);
+    if (problem) throw new ApiError(problem);
+    try {
+      parseExpression(expression);
+    } catch (err) {
+      throw new ApiError((err as Error).message);
+    }
+    if (existing && existing.name !== name && this.dimensionsUsing(existing.name) > 0) {
+      throw new ApiError(`'${existing.name}'을(를) 쓰는 치수가 있어 API로는 이름을 바꿀 수 없습니다. 편집기의 파라미터 패널에서 바꾸십시오.`);
+    }
+    const id = existing?.id ?? newId('v');
+    const note = p.note === undefined ? existing?.note : p.note === null ? undefined : String(p.note).trim() || undefined;
+    const draft: Parameter = { id, name, expression, ...(note ? { note } : {}) };
+    const next = existing ? current.map((q) => (q.id === id ? { ...draft, ...(q.value !== undefined ? { value: q.value } : {}) } : q)) : [...current, draft];
+    // Cache the values now, so a headless file already holds them.
+    const { values, errors } = evaluateParameters(next);
+    // Values no dimension can take are refused here; whether the geometry can reach them is the solver's call.
+    const targets = [...this.doc.constraints.values(), ...[...this.doc.entities.values()].filter((e) => e.kind === 'dimension')];
+    for (const t of targets) {
+      if (!t.expression) continue;
+      let v: number;
+      try {
+        v = evaluate(t.expression, { params: (n) => values.get(n) });
+      } catch {
+        continue; // keeps its last value
+      }
+      const angle = 'kind' in t && t.kind === 'angle';
+      if (!(v > 0) || (angle && !(v < 180))) {
+        throw new ApiError(`치수 '${t.expression}'의 값이 ${v}가 되어 쓸 수 없습니다(${angle ? '0°~180°' : '0보다 커야 함'}).`);
+      }
+    }
+    const before = SetParameters.capture(this.doc);
+    const cached = next.map((q) => (values.has(q.name) ? { ...q, value: values.get(q.name) } : q));
+    this.history.execute(new SetParameters(before, cached, existing ? '파라미터 변경' : '파라미터 추가'));
+    this.options.onParametersChanged?.(() => this.history.execute(new SetParameters(cached, before, '파라미터 되돌림')));
+    return { id, name, value: values.get(name) ?? null, ...(errors.has(id) ? { error: errors.get(id)!.message } : {}) };
+  }
+
+  /** Removes a parameter; dimensions that used it keep their current value. */
+  removeParameter(p: { name: string }) {
+    const current = [...this.doc.parameters.values()];
+    const target = current.find((q) => q.name === p.name);
+    if (!target) throw new ApiError(`파라미터가 없습니다: ${String(p.name)}`);
+    this.history.execute(new SetParameters(current, current.filter((q) => q.id !== target.id), '파라미터 삭제'));
+    return { ok: true, usedBy: this.dimensionsUsing(target.name) };
+  }
+
+  private dimensionsUsing(name: string): number {
+    const targets = [...this.doc.constraints.values(), ...[...this.doc.entities.values()].filter((e) => e.kind === 'dimension')];
+    return targets.filter((t) => {
+      if (!t.expression) return false;
+      try {
+        return references(parseExpression(t.expression)).params.includes(name);
+      } catch {
+        return false;
+      }
+    }).length;
   }
 
   // ---------- history and export ----------
