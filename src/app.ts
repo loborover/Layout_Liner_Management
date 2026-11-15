@@ -161,7 +161,12 @@ export class App implements UiHost {
     this.renderer.onImageLoad = () => this.requestRender();
     this.api = new EditorApi(this.doc, this.history, {
       currentLayer: () => this.currentLayer(),
-      onParametersChanged: () => void this.constraints.reapplyParameters().then((r) => !r.ok && this.notify(r.message)),
+      onParametersChanged: (revert) =>
+        void this.constraints.reapplyParameters().then((r) => {
+          if (r.ok) return;
+          revert();
+          this.notify(`형상이 새 파라미터 값을 따를 수 없어 되돌렸습니다: ${r.message}`);
+        }),
     });
     const ctx: ToolContext = {
       doc: this.doc,

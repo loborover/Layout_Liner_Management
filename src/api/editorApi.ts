@@ -28,7 +28,7 @@ import {
   UpdateEntities,
   captureLayerTree,
 } from '../model/commands';
-import { evaluateParameters, nameProblem, parseExpression, references } from '../model/params';
+import { evaluate, evaluateParameters, nameProblem, parseExpression, references } from '../model/params';
 import { type DocumentModel, cloneEntity, midpointId } from '../model/document';
 import { cloneStroke } from '../model/borders';
 import { arrayOffsets, copyItems, layerTreeCommand, makeShapes, nextTag, type ReorderMove, reorderItems, rotateItems } from '../model/edit';
@@ -54,10 +54,11 @@ export interface EditorApiOptions {
   joinTolerance?: number;
   /**
    * Called after parameters change. The editor re-applies the dimensions that use them and solves the geometry
-   * (ConstraintService.reapplyParameters); without it (headless file editing) the dimensions follow the next
-   * time the drawing is opened in the editor.
+   * (ConstraintService.reapplyParameters), and calls `revert` if the geometry can't take the new values, so the
+   * parameter doesn't stay at a value its dimensions don't show. Without it (headless file editing) the
+   * dimensions follow the next time the drawing is opened in the editor.
    */
-  onParametersChanged?: () => void;
+  onParametersChanged?: (revert: () => void) => void;
 }
 
 const COLOR = /^#[0-9a-f]{6}$/i;
@@ -752,9 +753,25 @@ export class EditorApi {
     const next = existing ? current.map((q) => (q.id === id ? { ...draft, ...(q.value !== undefined ? { value: q.value } : {}) } : q)) : [...current, draft];
     // Cache the values now, so a headless file already holds them.
     const { values, errors } = evaluateParameters(next);
+    // Values no dimension can take are refused here; whether the geometry can reach them is the solver's call.
+    const targets = [...this.doc.constraints.values(), ...[...this.doc.entities.values()].filter((e) => e.kind === 'dimension')];
+    for (const t of targets) {
+      if (!t.expression) continue;
+      let v: number;
+      try {
+        v = evaluate(t.expression, { params: (n) => values.get(n) });
+      } catch {
+        continue; // keeps its last value
+      }
+      const angle = 'kind' in t && t.kind === 'angle';
+      if (!(v > 0) || (angle && !(v < 180))) {
+        throw new ApiError(`치수 '${t.expression}'의 값이 ${v}가 되어 쓸 수 없습니다(${angle ? '0°~180°' : '0보다 커야 함'}).`);
+      }
+    }
+    const before = SetParameters.capture(this.doc);
     const cached = next.map((q) => (values.has(q.name) ? { ...q, value: values.get(q.name) } : q));
-    this.history.execute(new SetParameters(SetParameters.capture(this.doc), cached, existing ? '파라미터 변경' : '파라미터 추가'));
-    this.options.onParametersChanged?.();
+    this.history.execute(new SetParameters(before, cached, existing ? '파라미터 변경' : '파라미터 추가'));
+    this.options.onParametersChanged?.(() => this.history.execute(new SetParameters(cached, before, '파라미터 되돌림')));
     return { id, name, value: values.get(name) ?? null, ...(errors.has(id) ? { error: errors.get(id)!.message } : {}) };
   }
 

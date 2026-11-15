@@ -83,6 +83,18 @@ describe('expressions', () => {
     expect(errors.get('5')?.code).toBe('cycle');
     expect(values.has('순환a')).toBe(false);
   });
+
+  it('keeps cached values for a cycle and everything that uses it, whatever the order', () => {
+    const { values, errors } = evaluateParameters([
+      { id: 'u', name: '사용', expression: 'a + 1', value: 11 },
+      { id: 'a', name: 'a', expression: 'b * 2', value: 10 },
+      { id: 'b', name: 'b', expression: 'a', value: 5 },
+    ]);
+    expect(values.get('a')).toBe(10);
+    expect(values.get('b')).toBe(5);
+    expect(values.get('사용')).toBe(11);
+    expect([...errors.values()].map((e) => e.code)).toEqual(['cycle', 'cycle', 'cycle']);
+  });
 });
 
 /** A 4000 × 3000 rectangle drawn with the rectangle tool, so it carries its right angles. */
@@ -259,6 +271,13 @@ describe('parameters driving dimensions', () => {
     expect(data.version).toBe(8);
     expect(data.parameters).toEqual(doc.toData().parameters);
     expect(data.constraints.find((c) => c.id === 'k')).toMatchObject({ expression: '절반', refs: [lines[0]] });
+    // A value no dimension can take is refused before anything changes.
+    expect(() => api.setParameter({ name: '폭', expression: -100 })).toThrow(/쓸 수 없습니다/);
+    expect(doc.parameters.size).toBe(2);
+    // The editor can revert a value the geometry can't reach.
+    const reverting = new EditorApi(doc, history, { onParametersChanged: (revert) => revert() });
+    reverting.setParameter({ name: '폭', expression: 20000 });
+    expect([...doc.parameters.values()].find((q) => q.name === '폭')).toMatchObject({ expression: '12000' });
     expect(api.removeParameter({ name: '절반' })).toEqual({ ok: true, usedBy: 1 });
     expect(doc.parameters.size).toBe(1);
   });

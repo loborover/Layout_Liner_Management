@@ -259,11 +259,52 @@ export function evaluateParameters(params: Iterable<Parameter>, functions?: Reco
   for (const p of params) byName.set(p.name, p);
   const values = new Map<string, number>();
   const errors = new Map<Id, ExpressionError>();
-  const state = new Map<string, 'busy' | 'done'>();
+
+  // Cycles first: a parameter in a cycle, or one that depends on one, can't be computed at all, so it keeps its
+  // cached value (and so do the dimensions using it) instead of a value worked out from another stale cache.
+  const deps = new Map<string, string[]>();
+  for (const p of byName.values()) {
+    try {
+      deps.set(p.name, references(parseExpression(p.expression)).params.filter((n) => byName.has(n)));
+    } catch {
+      deps.set(p.name, []);
+    }
+  }
+  const poisoned = new Map<string, string>(); // name → the cycle member it reaches
+  const color = new Map<string, 'grey' | 'black'>();
+  const stack: string[] = [];
+  const dfs = (n: string): void => {
+    color.set(n, 'grey');
+    stack.push(n);
+    for (const d of deps.get(n) ?? []) {
+      if (color.get(d) === 'grey') for (const m of stack.slice(stack.indexOf(d))) poisoned.set(m, m);
+      else if (!color.has(d)) dfs(d);
+    }
+    stack.pop();
+    color.set(n, 'black');
+  };
+  for (const n of byName.keys()) if (!color.has(n)) dfs(n);
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const [n, ds] of deps) {
+      const hit = !poisoned.has(n) && ds.find((d) => poisoned.has(d));
+      if (hit) {
+        poisoned.set(n, poisoned.get(hit)!);
+        grew = true;
+      }
+    }
+  }
+  for (const [n, member] of poisoned) {
+    const p = byName.get(n)!;
+    errors.set(p.id, new ExpressionError(n === member ? `순환 참조: ${n}` : `순환 참조에 걸린 파라미터를 씁니다: ${member}`, 'cycle'));
+    if (p.value !== undefined) values.set(n, p.value);
+  }
+
+  const done = new Set<string>(poisoned.keys());
   const visit = (p: Parameter): number | undefined => {
-    if (state.get(p.name) === 'done') return values.get(p.name);
-    if (state.get(p.name) === 'busy') throw new ExpressionError(`순환 참조: ${p.name}`, 'cycle');
-    state.set(p.name, 'busy');
+    if (done.has(p.name)) return values.get(p.name);
+    done.add(p.name);
     try {
       const v = evaluate(p.expression, {
         functions,
@@ -275,26 +316,12 @@ export function evaluateParameters(params: Iterable<Parameter>, functions?: Reco
       values.set(p.name, v);
       return v;
     } catch (err) {
-      const e = err instanceof ExpressionError ? err : new ExpressionError(String(err), 'math');
-      // A cycle is reported on every parameter in it.
-      if (!errors.has(p.id)) errors.set(p.id, e);
-      if (p.value !== undefined) {
-        values.set(p.name, p.value);
-        return p.value;
-      }
-      if (e.code === 'cycle') throw e;
-      return undefined;
-    } finally {
-      state.set(p.name, 'done');
+      errors.set(p.id, err instanceof ExpressionError ? err : new ExpressionError(String(err), 'math'));
+      if (p.value !== undefined) values.set(p.name, p.value);
+      return p.value;
     }
   };
-  for (const p of byName.values()) {
-    try {
-      visit(p);
-    } catch {
-      // recorded in errors
-    }
-  }
+  for (const p of byName.values()) visit(p);
   return { values, errors };
 }
 
