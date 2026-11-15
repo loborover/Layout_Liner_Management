@@ -61,6 +61,24 @@ import { Viewport, gridSpacing } from './view/viewport';
 import { CANVAS, STATUS } from './theme';
 
 const AUTOSAVE_KEY = 'layout-liner:autosave';
+const RULERS_KEY = 'layout-liner:rulers';
+
+/** Reads a view preference; null when storage is unavailable (private window, blocked site data). */
+function readPref(key: string): string | null {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function writePref(key: string, value: string): void {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // A preference that can't be stored just lasts for this visit.
+  }
+}
 const PICK_TOLERANCE_PX = 6;
 const SNAP_REACH_PX = 10;
 const WHEEL_ZOOM_STEP = 1.0015;
@@ -113,6 +131,8 @@ export class App implements UiHost {
   private inspected: Id | null = null;
   private snapSettings: SnapSettings = { object: true, polar: true, grid: true, polarStep: 15 };
   private lastSnap: SnapResult | null = null;
+  /** Cursor position in mm (after snapping) while it is over the canvas, for the ruler marks. */
+  private cursor: Vec2 | null = null;
   private pan: { last: Vec2 } | null = null;
   private spaceHeld = false;
   private frameRequested = false;
@@ -173,6 +193,7 @@ export class App implements UiHost {
     this.library = new Library(this, $<HTMLUListElement>('#type-list'));
     this.tree = new ObjectTree(this, $<HTMLDivElement>('#tree'));
     this.props = new PropertyPanel(this, $<HTMLDivElement>('#props'));
+    this.props.bind();
     this.ribbon = new Ribbon($<HTMLElement>('.ribbon'));
     this.sidebar = new Sidebar($<HTMLElement>('.sidebar'), () => this.resize());
     this.bridge = new BridgeClient(
@@ -365,6 +386,7 @@ export class App implements UiHost {
         fullyConstrained: this.constraintStatus?.fullyConstrained,
         status: this.liveStatus(),
         clean: this.currentMode === 'view',
+        cursor: this.cursor,
         overlay: (p) => this.tool.overlay?.(p),
       });
       const sel = this.selection.size ? ` · 선택 ${this.selection.size}` : '';
@@ -476,7 +498,7 @@ export class App implements UiHost {
             pointsOnly: ctrl,
           })
         : null;
-    return { screen, raw, world: snap?.point ?? raw, snap, button: e.button, shift: e.shiftKey, ctrl };
+    return { screen, raw, world: snap?.point ?? raw, snap, button: e.button, shift: e.shiftKey, ctrl, alt: e.altKey };
   }
 
   /**
@@ -534,6 +556,7 @@ export class App implements UiHost {
     });
     c.addEventListener('pointerleave', () => {
       this.lastSnap = null;
+      this.cursor = null;
       this.requestRender();
     });
     c.addEventListener('pointermove', (e) => {
@@ -563,6 +586,10 @@ export class App implements UiHost {
       }
       const p = this.pointer(e);
       this.setSnap(p.snap);
+      if (this.renderer.showRulers) {
+        this.cursor = p.world;
+        this.requestRender();
+      }
       this.posEl.textContent = `X ${formatLength(p.world.x, this.displayUnit)}  Y ${formatLength(p.world.y, this.displayUnit)}`;
       this.tool.move(p);
     });
@@ -747,6 +774,15 @@ export class App implements UiHost {
       box.checked = this.snapSettings[key];
       box.addEventListener('change', () => (this.snapSettings[key] = box.checked));
     }
+    // Rulers are a view preference, remembered in this browser (on unless switched off).
+    const rulers = $<HTMLInputElement>('#show-rulers');
+    rulers.checked = readPref(RULERS_KEY) !== 'off';
+    this.renderer.showRulers = rulers.checked;
+    rulers.addEventListener('change', () => {
+      this.renderer.showRulers = rulers.checked;
+      writePref(RULERS_KEY, rulers.checked ? 'on' : 'off');
+      this.requestRender();
+    });
     const unit = $<HTMLSelectElement>('#unit');
     unit.addEventListener('change', () => {
       this.displayUnit = unit.value as DisplayUnit;

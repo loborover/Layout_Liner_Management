@@ -10,6 +10,7 @@
  * from the monitoring data source are added. Every change is one undoable UpdateEntities/SetEquipmentTypes command.
  */
 import { SetUnderlay, UpdateEntities } from '../model/commands';
+import { editEntities } from '../model/edit';
 import { cloneEntity, midpointId } from '../model/document';
 import { BORDER_TEMPLATES, TEMPLATE_WIDTH, applyTemplate, borderOpacity, cloneStroke, matchTemplate, patternPeriod, stripePieces } from '../model/borders';
 import { UNDERLAY_ID } from '../model/selection';
@@ -34,17 +35,36 @@ export class PropertyPanel {
     private readonly root: HTMLElement,
   ) {}
 
+  /** Set when a rebuild was put off because the user was typing in a field; done when the focus leaves the panel's fields. */
+  private stale = false;
+
   refresh(): void {
     if (this.timer !== undefined) return;
     this.timer = window.setTimeout(() => {
       this.timer = undefined;
-      // Don't rebuild under the user's cursor while they type in a field.
-      if (this.root.contains(document.activeElement) && document.activeElement instanceof HTMLInputElement && document.activeElement.type !== 'checkbox') return;
+      // Don't rebuild under the user's cursor while they type in a field; catch up once they leave it.
+      if (this.typingIn(document.activeElement)) {
+        this.stale = true;
+        return;
+      }
       this.render();
     }, 120);
   }
 
+  private typingIn(el: Element | null): boolean {
+    return !!el && this.root.contains(el) && el instanceof HTMLInputElement && el.type !== 'checkbox';
+  }
+
+  /** Call once: rebuilds a panel left stale by a put-off refresh when the focus leaves its text fields. */
+  bind(): void {
+    this.root.addEventListener('focusout', (e) => {
+      // 'change' fires before 'focusout', so the edit just committed is already in the document.
+      if (this.stale && !this.typingIn(e.relatedTarget as Element | null)) this.refresh();
+    });
+  }
+
   render(): void {
+    this.stale = false;
     const { doc, selection } = this.host;
     const items = selection.values().flatMap((id) => {
       const e = doc.entities.get(id);
@@ -121,14 +141,10 @@ export class PropertyPanel {
     return b;
   }
 
-  /** Replaces entities with edited copies as one undo step. */
+  /** Replaces entities with edited copies as one undo step (of the entities as they are now, see editEntities). */
   private update(label: string, items: Entity[], edit: (e: Entity) => void): void {
-    const after = items.map((e) => {
-      const c = cloneEntity(e);
-      edit(c);
-      return c;
-    });
-    this.host.history.execute(new UpdateEntities(label, items, after));
+    const cmd = editEntities(this.host.doc, label, items.map((e) => e.id), edit);
+    if (cmd) this.host.history.execute(cmd);
   }
 
   /** X, Y, Z inputs for one point (mm; Z above the floor level). */
@@ -291,14 +307,8 @@ export class PropertyPanel {
         return l?.kind === 'line' ? [l] : [];
       });
       sets.push(this.strokeSet(lines, '테두리 (Border, 변 전체)'));
+      // Fillet and chamfer are operations, not properties: they live in the ribbon's 모서리·꼭짓점 group only.
       sets.push(this.labelSet(e));
-      const edit = document.createElement('div');
-      edit.className = 'actions';
-      edit.append(
-        this.button('필렛', '도형의 모든 꼭짓점을 둥글게 합니다 (꼭짓점 하나만 하려면 그 점을 클릭해 선택)', () => this.host.runAction('fillet')),
-        this.button('모따기', '도형의 모든 꼭짓점을 비스듬히 자릅니다', () => this.host.runAction('chamfer')),
-      );
-      f.append(edit);
     } else if (e.kind === 'circle') {
       const constrained = doc.constraintsOn([e.id]).length > 0;
       const r = this.input('number', String(Math.round(e.radius * 100) / 100), (v) => {
@@ -669,13 +679,14 @@ export class PropertyPanel {
     items.forEach((it, i) => {
       const box = document.createElement('span');
       box.className = 'row label-item';
-      const title = this.input('text', it.title, (v) => setItems('라벨 항목', (list) => (list[i].title = v)));
+      // Rows are edited by position in the live list; a row that has gone (removed meanwhile) is left alone.
+      const title = this.input('text', it.title, (v) => setItems('라벨 항목', (list) => list[i] && (list[i].title = v)));
       title.placeholder = '제목';
       title.maxLength = MAX_LABEL_TEXT;
-      const value = this.input('text', it.value, (v) => setItems('라벨 항목', (list) => (list[i].value = v)));
+      const value = this.input('text', it.value, (v) => setItems('라벨 항목', (list) => list[i] && (list[i].value = v)));
       value.placeholder = '내용';
       value.maxLength = MAX_LABEL_TEXT;
-      box.append(title, value, this.button('×', '이 항목 삭제', () => setItems('라벨 항목 삭제', (list) => list.splice(i, 1))));
+      box.append(title, value, this.button('×', '이 항목 삭제', () => setItems('라벨 항목 삭제', (list) => list[i] && list.splice(i, 1))));
       this.row(f, `항목 ${i + 1}`, box);
     });
     const actions = document.createElement('div');

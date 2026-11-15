@@ -1,7 +1,8 @@
 /**
  * @file edit.ts
  *
- * Higher-level editing operations that build commands: array copy, rotation, move to layer, equipment tag numbering.
+ * Higher-level editing operations that build commands: array copy and duplication with unique names, rotation, move
+ * to layer (also across floors), equipment tag numbering.
  */
 import type { Vec2 } from '../geom/vec';
 import {
@@ -30,11 +31,41 @@ export function nextTag(doc: DocumentModel, type: EquipmentType, taken: Set<stri
 }
 
 /**
+ * A name not yet in `taken`: the name itself if free, else "이름 (2)", "이름 (3)"… A trailing " (n)" is treated as
+ * an earlier copy number, so copying "벽 (2)" gives "벽 (3)" rather than "벽 (2) (2)".
+ */
+export function uniqueName(name: string, taken: ReadonlySet<string>): string {
+  if (!taken.has(name)) return name;
+  const base = name.replace(/ \((\d+)\)$/, '');
+  let n = 2;
+  while (taken.has(`${base} (${n})`)) n++;
+  return `${base} (${n})`;
+}
+
+/** Names of every entity in the drawing (all floors), for handing out unique names. */
+function entityNames(doc: DocumentModel): Set<string> {
+  const names = new Set<string>();
+  for (const e of doc.entities.values()) if (e.name) names.add(e.name);
+  return names;
+}
+
+/** Options of {@link duplicateItems}. */
+export interface DuplicateOptions {
+  /** Layer the copies go on; each copy keeps its original's layer when absent. */
+  layer?: Id;
+  /** Undo label; '배열 복사' when absent. */
+  label?: string;
+}
+
+/**
  * Copies entities once per offset. Points shared inside the selection stay shared in each copy, and
  * constraints entirely within the selection are copied with it, so a constrained room copies as one.
- * New equipment gets fresh tags. Returns null when there is nothing to copy.
+ * Every copy keeps its original's properties (style, fill, label, height, binding…) but gets a name of its own:
+ * a named object's copy is renamed "이름 (2)" and so on, so no two objects share a name (the user's rule,
+ * 2026-11-15); new equipment gets fresh tags. `ids` lists, per offset, the copies of the given ids (a shape's
+ * edges, copied along with it, are not listed). Returns null when there is nothing to copy.
  */
-export function copyItems(doc: DocumentModel, entityIds: Id[], offsets: Vec2[]): Command | null {
+export function duplicateItems(doc: DocumentModel, entityIds: Id[], offsets: Vec2[], options: DuplicateOptions = {}): { command: Command; ids: Id[] } | null {
   // A shape copies with its edge lines, or the copy would reference the original's lines.
   const ids = new Set(entityIds);
   for (const id of entityIds) {
@@ -46,11 +77,14 @@ export function copyItems(doc: DocumentModel, entityIds: Id[], offsets: Vec2[]):
   const pointIds = [...new Set(entities.flatMap((e) => doc.pointIdsOf(e)))];
   const inside = new Set<Id>([...entities.map((e) => e.id), ...pointIds]);
   const constraints = [...doc.constraints.values()].filter((c) => c.refs.every((r) => inside.has(r)));
+  const requested = new Set(entityIds);
 
   const points: Point[] = [];
   const copies: Entity[] = [];
   const copiedConstraints: Constraint[] = [];
+  const copyIds: Id[] = [];
   const tags = new Set<string>();
+  const names = entityNames(doc);
   for (const d of offsets) {
     const map = new Map<Id, Id>();
     for (const id of pointIds) {
@@ -65,23 +99,35 @@ export function copyItems(doc: DocumentModel, entityIds: Id[], offsets: Vec2[]):
       const id = map.get(e.id)!;
       const m = (pid: Id) => map.get(pid)!;
       let copy: Entity;
-      if (e.kind === 'circle') copy = { ...e, id, center: m(e.center) };
+      if (e.kind === 'circle') copy = { ...cloneEntity(e), id, center: m(e.center) };
       else if (e.kind === 'point') copy = { ...e, id, at: m(e.at) };
       else if (e.kind === 'label') copy = { ...cloneEntity(e), id, at: m(e.at) };
       else if (e.kind === 'equipment') {
         const type = doc.equipmentTypes.get(e.type);
         const tag = type ? nextTag(doc, type, tags) : e.tag;
         tags.add(tag);
-        copy = { ...e, id, at: m(e.at), tag, ...(e.props ? { props: { ...e.props } } : {}) };
+        copy = { ...cloneEntity(e), id, at: m(e.at), tag };
       } else if (e.kind === 'shape') copy = { ...cloneEntity(e), id, points: e.points.map(m), edges: e.edges.map(m) };
-      else copy = { ...e, id, p1: m(e.p1), p2: m(e.p2) };
+      else copy = { ...cloneEntity(e), id, p1: m(e.p1), p2: m(e.p2) };
+      if (copy.name) {
+        copy.name = uniqueName(copy.name, names);
+        names.add(copy.name);
+      }
+      if (options.layer) copy.layer = options.layer;
       copies.push(copy);
+      if (requested.has(e.id)) copyIds.push(id);
     }
     for (const c of constraints) copiedConstraints.push({ ...c, id: newId('k'), refs: c.refs.map((r) => map.get(r)!) });
   }
+  const label = options.label ?? '배열 복사';
   const steps: Command[] = [new AddItems(points, copies)];
   if (copiedConstraints.length > 0) steps.push(new AddConstraints(copiedConstraints));
-  return new Batch('배열 복사', steps);
+  return { command: new Batch(label, steps), ids: copyIds };
+}
+
+/** {@link duplicateItems} as a single command (array copy). */
+export function copyItems(doc: DocumentModel, entityIds: Id[], offsets: Vec2[]): Command | null {
+  return duplicateItems(doc, entityIds, offsets)?.command ?? null;
 }
 
 /** Offsets of a rows × columns rectangular array, without the original at (0, 0). */
@@ -142,6 +188,61 @@ export function moveToLayer(doc: DocumentModel, entityIds: Id[], layer: Id): Com
   });
   if (before.length === 0) return null;
   return new UpdateEntities('레이어 변경', before, before.map((e) => ({ ...e, layer })));
+}
+
+/**
+ * Moves objects to a layer, which may be on another floor (dragging them in the object tree onto a layer, folder or
+ * floor). A shape takes its edge lines along, as a face can't be on another layer than its loop. When objects
+ * leave their floor, points they share with objects staying behind are split off, so editing one floor never
+ * moves geometry on another. Objects on locked or hidden layers are left where they are. Returns null when nothing moves.
+ */
+export function transferItems(doc: DocumentModel, entityIds: Id[], layer: Id): Command | null {
+  const target = doc.layers.get(layer);
+  if (!target) return null;
+  // Objects on any floor can be moved from the tree, as long as their layer is on and unlocked. A shape goes with
+  // its edges and an edge line with its shapes (and their other edges), so a face never splits across layers.
+  const ids = new Set<Id>();
+  const add = (e: Entity) => {
+    if (ids.has(e.id) || !doc.isLayerOpen(e.layer)) return;
+    ids.add(e.id);
+    if (e.kind === 'shape') {
+      for (const edge of e.edges) {
+        const l = doc.entities.get(edge);
+        if (l) add(l);
+      }
+    } else if (e.kind === 'line') for (const s of doc.shapesUsing([e.id])) add(s);
+  };
+  for (const id of entityIds) {
+    const e = doc.entities.get(id);
+    if (e) add(e);
+  }
+  const moving = [...doc.entities.values()].filter((e) => ids.has(e.id) && e.layer !== layer);
+  if (moving.length === 0) return null;
+  const leaving = moving.filter((e) => doc.floorOf(e) !== target.floor);
+  // Points the leaving objects share with geometry that stays (dimensions measure, they don't hold points).
+  const split = new Map<Id, Id>();
+  const newPoints: Point[] = [];
+  if (leaving.length > 0) {
+    for (const pid of new Set(leaving.flatMap((e) => doc.pointIdsOf(e)))) {
+      if (!doc.pointUsers(pid).some((u) => !ids.has(u.id) && u.kind !== 'dimension')) continue;
+      const copy: Point = { ...doc.point(pid), id: newId('p') };
+      newPoints.push(copy);
+      split.set(pid, copy.id);
+    }
+  }
+  const leavingIds = new Set(leaving.map((e) => e.id));
+  const after = moving.map((e) => ({ ...(leavingIds.has(e.id) && split.size > 0 ? remapPoints(e, split) : cloneEntity(e)), layer }));
+  const steps: Command[] = [];
+  if (newPoints.length > 0) steps.push(new AddItems(newPoints, []));
+  steps.push(new UpdateEntities('레이어 변경', moving, after));
+  // A coincident constraint can't hold points on two floors together: one between a point that leaves and one
+  // that stays comes off.
+  if (leaving.length > 0) {
+    const gone = new Set(leaving.flatMap((e) => doc.pointIdsOf(e)).filter((pid) => !split.has(pid)));
+    const mixed = [...doc.constraints.values()].filter((c) => c.kind === 'coincident' && c.refs.some((r) => gone.has(r)) && c.refs.some((r) => !gone.has(r)));
+    if (mixed.length > 0) steps.push(new RemoveConstraints(mixed.map((c) => c.id)));
+  }
+  return steps.length === 1 ? steps[0] : new Batch('레이어 변경', steps);
 }
 
 /**
@@ -400,4 +501,44 @@ export function detachPoints(doc: DocumentModel, ids: Iterable<Id>): Command | n
   if (removed.length > 0) steps.push(new RemoveConstraints(removed));
   if (kept.length > 0) steps.push(new AddConstraints(kept));
   return steps.length > 0 ? new Batch('점 분리', steps) : null;
+}
+
+/** Where objects are dropped in the object tree: a floor, a folder or a layer. */
+export interface TreeDropTarget {
+  kind: 'floor' | 'folder' | 'layer';
+  id: Id;
+}
+
+/**
+ * Layer that objects dropped on a tree node go to: the layer itself; for a folder or a floor, the current layer
+ * when it is in there, else its first layer (for a floor, preferring layers outside folders). Null when the
+ * folder has no layer.
+ */
+export function layerForDrop(doc: DocumentModel, target: TreeDropTarget, current: Id): Id | null {
+  if (target.kind === 'layer') return doc.layers.has(target.id) ? target.id : null;
+  const layers = [...doc.layers.values()];
+  const inside = target.kind === 'folder' ? layers.filter((l) => l.folder === target.id) : layers.filter((l) => l.floor === target.id);
+  if (inside.some((l) => l.id === current)) return current;
+  if (target.kind === 'floor') return (inside.find((l) => !l.folder) ?? inside[0])?.id ?? null;
+  return inside[0]?.id ?? null;
+}
+
+/**
+ * Command that edits copies of entities as they are in the document now, looked up by id. Panels must use this
+ * rather than copying the entity objects they were built from: every command replaces entity objects, so those
+ * may be out of date, and an edit made from them would silently undo whatever changed since (the cause of label
+ * rows changing or vanishing when another field was edited, reported 2026-11-15). Null when none still exists.
+ */
+export function editEntities(doc: DocumentModel, label: string, ids: Iterable<Id>, edit: (e: Entity) => void): Command | null {
+  const before = [...ids].flatMap((id) => {
+    const e = doc.entities.get(id);
+    return e ? [e] : [];
+  });
+  if (before.length === 0) return null;
+  const after = before.map((e) => {
+    const c = cloneEntity(e);
+    edit(c);
+    return c;
+  });
+  return new UpdateEntities(label, before, after);
 }

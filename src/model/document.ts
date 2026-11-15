@@ -372,6 +372,17 @@ export class DocumentModel {
     return this.isLayerVisible(id) && !layer.locked && !folder?.locked;
   }
 
+  /**
+   * Whether a layer can be edited from the object tree on any floor: switched on and neither it nor its folder
+   * locked. Unlike isLayerEditable it doesn't need the layer's floor to be the active one.
+   */
+  isLayerOpen(id: Id): boolean {
+    const layer = this.layers.get(id);
+    if (!layer) return true;
+    const folder = layer.folder ? this.folders.get(layer.folder) : undefined;
+    return this.isLayerShown(id) && !layer.locked && !folder?.locked;
+  }
+
   isVisible(e: Entity): boolean {
     return this.isLayerVisible(e.layer);
   }

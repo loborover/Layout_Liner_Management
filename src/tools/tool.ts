@@ -51,6 +51,8 @@ export interface ToolPointer {
   shift: boolean;
   /** Ctrl (⌘ on macOS) held: snap to existing points only, and close loops into shapes (line tool). */
   ctrl: boolean;
+  /** Alt (Option on macOS) held: a drag of the selection copies it (select tool). */
+  alt?: boolean;
 }
 
 export interface Tool {

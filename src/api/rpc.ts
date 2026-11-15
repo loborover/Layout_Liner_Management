@@ -256,7 +256,7 @@ export const METHODS: Record<string, MethodSpec> = {
     run: (api, p) => api.rotateEntities(p as never),
   },
   copyEntities: {
-    description: '객체를 (dx, dy)만큼 떨어뜨려 복사합니다. columns·rows를 주면 그 간격의 배열 복사입니다.',
+    description: '객체를 (dx, dy)만큼 떨어뜨려 복사합니다. columns·rows를 주면 그 간격의 배열 복사입니다. 복사본은 속성이 같고, 이름이 있으면 겹치지 않게 "이름 (2)"처럼 새 이름을 받습니다.',
     params: obj({ ids, dx: num('mm'), dy: num('mm'), columns: num('열 수'), rows: num('행 수') }, ['ids', 'dx', 'dy']),
     mutates: true,
     run: (api, p) => api.copyEntities(p as never),

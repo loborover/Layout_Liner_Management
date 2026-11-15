@@ -93,6 +93,9 @@ export const CANVAS = {
   placeFill: 'rgba(109, 129, 150, 0.10)',
   /** Backing plate behind canvas labels so they stay readable over geometry. */
   labelPlate: 'rgba(255, 255, 227, 0.88)',
+  /** Ruler bands along the top and left edge of the plan, and their ticks. */
+  ruler: '#F4F4DA',
+  rulerTick: '#7A7A72',
 } as const;
 
 /** Default colour of a new layer, and the cycle the tree offers for further layers. */
