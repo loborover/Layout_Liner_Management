@@ -9,10 +9,11 @@
     "build": "npm run typecheck && vite build",
     "preview": "vite preview",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p mcp",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p mcp && tsc --noEmit -p gateway",
     "mcp": "tsx mcp/server.ts",
     "docs:api": "tsx scripts/apiReference.ts",
-    "demo:host": "tsx scripts/demoHost.ts"
+    "demo:host": "tsx scripts/demoHost.ts",
+    "data:gateway": "tsx gateway/server.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.2",

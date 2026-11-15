@@ -37,6 +37,7 @@ viewer.html?config=/plans/monitor.json
 | `source` | `ws://`·`wss://` → WebSocket 푸시, `http(s)://` 또는 `/`로 시작 → REST 폴링, `mock` → 모의 데이터 |
 | `interval` | 폴링 주기(ms, 기본 2000, 최소 250) |
 | `floor` | 처음 보여 줄 층 id |
+| `data` | 원본 데이터 게이트웨이 주소(기본 같은 출처의 `/data`). 원본 데이터가 연결된 객체의 정보 카드에 원본 필드가 나옵니다([DATA_SOURCES.md](DATA_SOURCES.md)). |
 | `config` | 아래 설정 파일 주소. URL 매개변수가 설정 파일 값보다 우선합니다. |
 
 설정 파일 예:

@@ -26,6 +26,22 @@ interface EntityBase {
    * The viewer colours and labels the entity from that value; the editor only stores it.
    */
   binding?: string;
+  /**
+   * Source data link: the record in an external database (through the host's data gateway, docs/DATA_SOURCES.md)
+   * that this object stands for. Read-only: the drawing shows the record's fields, it never writes them back.
+   */
+  record?: RecordRef;
+}
+
+/**
+ * Reference to one record of a dataset served by the data gateway (the user's request, 2026-11-15). `key` is the
+ * record's key; when absent, the equipment number (`tag`) or else the object's name is used, so a whole selection
+ * can be linked to a dataset at once.
+ */
+export interface RecordRef {
+  /** Dataset name as configured on the gateway, e.g. "equipment". */
+  dataset: string;
+  key?: string;
 }
 
 /** Where a styled line's band sits relative to the drawn reference line. */

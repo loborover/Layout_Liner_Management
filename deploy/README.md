@@ -49,6 +49,22 @@ LAYOUT_LINER_PORT=8080          # 서버에서 열 포트
 LAYOUT_LINER_VERSION=latest     # 특정 버전에 고정: 0.1.0, sha-a1b2c3d 등
 ```
 
+## 원본 데이터(DB) 연결 (선택)
+
+compose 파일에는 읽기 전용 데이터 게이트웨이 `layout-liner-data`가 함께 들어 있습니다. 설정이 없으면 빈 상태로 떠 있으므로 그대로 두어도 됩니다.
+DB를 연결하려면 compose 폴더에 `data/datasets.json`(설정)과 `data.env`(DB 접속 문자열 등 비밀 값)를 두고 다시 올립니다.
+
+```bash
+cd ~/layout-liner
+mkdir -p data && nano data/datasets.json        # 형식은 docs/DATA_SOURCES.md
+printf 'LL_DB_URL=postgres://layout_reader:비밀번호@host.docker.internal:5432/plant\n' > data.env && chmod 600 data.env
+docker compose pull && docker compose up -d
+docker compose logs layout-liner-data          # 데이터셋별로 읽은 건수 확인
+```
+
+게이트웨이는 포트를 밖에 열지 않고 편집기의 `/data/` 주소로만 노출됩니다. DB 계정은 읽기 권한만 주십시오.
+GHCR 패키지 `layout-liner-data`도 처음에는 비공개이므로, 위 "패키지 공개 여부"와 같은 방법으로 공개하거나 로그인하십시오.
+
 ## 이미지 태그
 
 | 태그 | 언제 갱신되나 |
@@ -58,6 +74,7 @@ LAYOUT_LINER_VERSION=latest     # 특정 버전에 고정: 0.1.0, sha-a1b2c3d �
 | `sha-a1b2c3d` | 커밋마다 하나씩, 되돌리기용 |
 | `1.2.3`, `1.2` | `v1.2.3` 같은 git 태그를 푸시했을 때 |
 
+데이터 게이트웨이 이미지 `ghcr.io/loborover/layout-liner-data`도 같은 태그로 함께 올라갑니다.
 PR에서는 이미지를 빌드만 해 보고 올리지는 않습니다.
 
 ## 로컬에서 직접 빌드

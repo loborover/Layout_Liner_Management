@@ -21,6 +21,12 @@ export default defineConfig(({ command }) => ({
       input: { main: 'index.html', viewer: 'viewer.html' },
     },
   },
+  // Source data links: during development /data/ goes to a local data gateway (npm run data:gateway), as Nginx does in Docker.
+  server: {
+    proxy: {
+      '^/data/': { target: 'http://127.0.0.1:7840', rewrite: (path) => path.replace(/^\/data/, '') },
+    },
+  },
   define: {
     __APP_VERSION__: JSON.stringify(pkg.version),
     __GIT_SHA__: JSON.stringify(command === 'serve' ? 'dev' : gitSha()),
