@@ -89,6 +89,8 @@ export function constrainedClusters(doc: DocumentModel, seedPointIds?: Iterable<
     if (pts.length === 0) continue;
     const c = get(pts[0]);
     c.constraintIds.add(k.id);
+    // A coincident constraint may tie in a point no constrained entity has (e.g. a reference dimension's end).
+    for (const p of pts) c.pointIds.add(p);
     c.constrained = true;
   }
 

@@ -85,7 +85,7 @@ describe('editing API', () => {
     dispatch(api, 'updateEntity', { id: line.id, height: 2500 });
     expect(doc.point(info.start.id).z).toBe(300);
     const saved = dispatch(api, 'getDocument', {}) as { version: number; points: { z?: number }[]; entities: { height?: number }[] };
-    expect(saved.version).toBe(3);
+    expect(saved.version).toBe(4);
     const reloaded = setup();
     dispatch(reloaded.api, 'loadDocument', { data: saved });
     expect(reloaded.doc.point(info.start.id).z).toBe(300);

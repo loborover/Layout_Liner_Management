@@ -18,9 +18,9 @@
 | [`addCircle`](#addcircle) | 예 | 원을 그립니다. |
 | [`addDimension`](#adddimension) | 예 | 두 점 사이 정렬 치수를 추가합니다. 기존 끝점에 붙으면 형상을 따라 값이 바뀝니다. |
 | [`placeEquipment`](#placeequipment) | 예 | 설비 또는 구조 프리셋(기둥·계단·경사로·리프트)을 중심 (x, y)에 배치합니다. type은 라이브러리 id나 이름. |
-| [`updateEntity`](#updateentity) | 예 | 객체 속성 변경: name, layer, binding(모니터링 키), stroke(선), fill(도형), tag/rotation/props(설비·구조), radius(원), height(3D 높이 mm). null은 지움. |
+| [`updateEntity`](#updateentity) | 예 | 객체 속성 변경: name, layer, binding(모니터링 키), stroke(선·원의 테두리), fill/fillOpacity(도형 면 색·면 불투명도 0~1), tag/rotation/props(설비·구조), radius(원), height(3D 높이 mm). null은 지움. |
 | [`setPoint`](#setpoint) | 예 | 점(꼭짓점)을 X·Y·Z(mm) 위치로 옮깁니다. 이 점을 쓰는 선·도형·치수가 함께 바뀝니다. Z는 층 바닥 기준 높이. 점 id는 getEntity의 start/middle/end/position/polygon에 있습니다. 선의 중간점(middle)을 옮기면 선 전체가 옮겨집니다. |
-| [`setStroke`](#setstroke) | 예 | 선과 도형의 변에 선 양식(벽 두께 등)을 지정합니다. stroke=null이면 지웁니다. |
+| [`setStroke`](#setstroke) | 예 | 선·원과 도형의 변에 테두리(벽 두께, 바닥 표시 줄무늬 등)를 지정합니다. stroke=null이면 지웁니다. |
 | [`moveEntities`](#moveentities) | 예 | 객체를 (dx, dy)만큼 옮깁니다. 공유된 점에 연결된 형상도 따라 움직입니다. |
 | [`rotateEntities`](#rotateentities) | 예 | 90° 단위로 회전합니다. 설비만 선택하면 제자리 회전입니다. |
 | [`copyEntities`](#copyentities) | 예 | 객체를 (dx, dy)만큼 떨어뜨려 복사합니다. columns·rows를 주면 그 간격의 배열 복사입니다. |
@@ -90,7 +90,7 @@
 | `points` | number[] \| {x, y}[] | 예 |  |
 | `closed` | boolean |  |  |
 | `layer` | string |  | 레이어 id (생략 시 현재 레이어) |
-| `stroke` | object \| null |  | 선 양식. width(mm, 0=가는 선), align(center\|inside\|outside: 그린 선 기준 띠 위치), color(#rrggbb). null이면 지움 |
+| `stroke` | object \| null |  | 테두리(Border, 선 양식). width(mm, Weight, 0=가는 선), align(center\|inside\|outside: 그린 선 기준 띠 위치), color(#rrggbb), opacity(0~1, 불투명도), pattern(줄무늬: stripes[{color, size(상대 크기)}], unit(크기 1의 폭 mm), angle(선 방향 기준 °)). null이면 지움. 템플릿: 구역색 color #FFCC00; 설비구역색 pattern stripes [#FFCC00×1, #1A1A1A×1], unit 50, angle 45; 안전구역색 [#FFFFFF×1, #D32F2F×1], unit 50, angle 45 |
 | `name` | string |  | 도형 이름 (closed일 때) |
 | `fill` | string |  | 도형 채우기 색 #rrggbb (closed일 때) |
 
@@ -105,7 +105,7 @@
 | `width` | number | 예 | mm |
 | `height` | number | 예 | mm |
 | `layer` | string |  | 레이어 id |
-| `stroke` | object \| null |  | 선 양식. width(mm, 0=가는 선), align(center\|inside\|outside: 그린 선 기준 띠 위치), color(#rrggbb). null이면 지움 |
+| `stroke` | object \| null |  | 테두리(Border, 선 양식). width(mm, Weight, 0=가는 선), align(center\|inside\|outside: 그린 선 기준 띠 위치), color(#rrggbb), opacity(0~1, 불투명도), pattern(줄무늬: stripes[{color, size(상대 크기)}], unit(크기 1의 폭 mm), angle(선 방향 기준 °)). null이면 지움. 템플릿: 구역색 color #FFCC00; 설비구역색 pattern stripes [#FFCC00×1, #1A1A1A×1], unit 50, angle 45; 안전구역색 [#FFFFFF×1, #D32F2F×1], unit 50, angle 45 |
 | `name` | string |  | 도형 이름 |
 | `fill` | string |  | #rrggbb |
 
@@ -162,7 +162,7 @@
 
 ## updateEntity
 
-객체 속성 변경: name, layer, binding(모니터링 키), stroke(선), fill(도형), tag/rotation/props(설비·구조), radius(원), height(3D 높이 mm). null은 지움.
+객체 속성 변경: name, layer, binding(모니터링 키), stroke(선·원의 테두리), fill/fillOpacity(도형 면 색·면 불투명도 0~1), tag/rotation/props(설비·구조), radius(원), height(3D 높이 mm). null은 지움.
 
 | 매개변수 | 형식 | 필수 | 설명 |
 | --- | --- | --- | --- |
@@ -170,8 +170,9 @@
 | `name` | string \| null |  |  |
 | `layer` | string |  | 같은 층의 레이어 id |
 | `binding` | string \| null |  |  |
-| `stroke` | object \| null |  | 선 양식. width(mm, 0=가는 선), align(center\|inside\|outside: 그린 선 기준 띠 위치), color(#rrggbb). null이면 지움 |
+| `stroke` | object \| null |  | 테두리(Border, 선 양식). width(mm, Weight, 0=가는 선), align(center\|inside\|outside: 그린 선 기준 띠 위치), color(#rrggbb), opacity(0~1, 불투명도), pattern(줄무늬: stripes[{color, size(상대 크기)}], unit(크기 1의 폭 mm), angle(선 방향 기준 °)). null이면 지움. 템플릿: 구역색 color #FFCC00; 설비구역색 pattern stripes [#FFCC00×1, #1A1A1A×1], unit 50, angle 45; 안전구역색 [#FFFFFF×1, #D32F2F×1], unit 50, angle 45 |
 | `fill` | string \| null |  |  |
+| `fillOpacity` | number \| null |  | 도형 면만의 불투명도(0~1). null이면 기본값 |
 | `tag` | string |  |  |
 | `rotation` | number |  |  |
 | `radius` | number |  |  |
@@ -191,12 +192,12 @@
 
 ## setStroke
 
-선과 도형의 변에 선 양식(벽 두께 등)을 지정합니다. stroke=null이면 지웁니다.
+선·원과 도형의 변에 테두리(벽 두께, 바닥 표시 줄무늬 등)를 지정합니다. stroke=null이면 지웁니다.
 
 | 매개변수 | 형식 | 필수 | 설명 |
 | --- | --- | --- | --- |
 | `ids` | string[] | 예 | 객체 id 목록 |
-| `stroke` | object \| null | 예 | 선 양식. width(mm, 0=가는 선), align(center\|inside\|outside: 그린 선 기준 띠 위치), color(#rrggbb). null이면 지움 |
+| `stroke` | object \| null | 예 | 테두리(Border, 선 양식). width(mm, Weight, 0=가는 선), align(center\|inside\|outside: 그린 선 기준 띠 위치), color(#rrggbb), opacity(0~1, 불투명도), pattern(줄무늬: stripes[{color, size(상대 크기)}], unit(크기 1의 폭 mm), angle(선 방향 기준 °)). null이면 지움. 템플릿: 구역색 color #FFCC00; 설비구역색 pattern stripes [#FFCC00×1, #1A1A1A×1], unit 50, angle 45; 안전구역색 [#FFFFFF×1, #D32F2F×1], unit 50, angle 45 |
 
 ## moveEntities
 

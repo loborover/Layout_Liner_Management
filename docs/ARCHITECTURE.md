@@ -48,7 +48,8 @@ DOM을 쓰지 않는 계층(geom, model, constraints, io, api)은 Node에서 그
 
 ## 핵심 개념
 
-- **공유 점.** 선·치수·원·설비는 좌표 대신 점 id를 참조합니다. 두 선이 한 점을 공유하면 함께 움직입니다. 이것이 "점 → 선 → 면 → 도형" 계층의 바탕입니다.
+- **공유 점과 일치 구속.** 선·치수·원·설비는 좌표 대신 점 id를 참조합니다. 두 선이 한 점을 공유하면 함께 움직입니다. 이것이 "점 → 선 → 면 → 도형" 계층의 바탕입니다. 다만 공유는 **한 객체 안**(한 번에 그린 연속 선, 도형과 그 변)에서만 기본입니다. 다른 객체의 점에서 그리기 시작하거나 끝내면 새 객체는 자기 점을 갖고 `coincident` 구속으로 묶여(`src/tools/draw.ts`), 함께 움직이되 구속 해제나 `분리`(`detachPoints`, `src/model/edit.ts`)로 떼어 낼 수 있습니다(2026-11-15 사용자 요청). Ctrl을 누르고 그리면 점을 공유합니다. 일치 구속이 있는 형상을 끌면 planegcs가 짝 점을 따라오게 풉니다(`p2p_coincident`).
+- **테두리(Border)와 면.** 선·원의 `stroke`가 테두리입니다(두께·색·불투명도·줄무늬 패턴). 도형의 테두리는 변 선들의 테두리입니다. 줄무늬는 `stripePieces`(`src/model/borders.ts`)가 실제 mm로 계산하고, 캔버스는 띠로 잘라(clip) 칠하며 SVG는 `<pattern>`을 씁니다. 구역색·설비구역색·안전구역색 템플릿도 같은 파일에 있습니다. 도형의 면은 색 또는 내장 이미지와 면 전용 불투명도를 가집니다. 면은 자기 변의 띠 아래에 칠해집니다(`doc.paintOrder()`).
 - **도형(`shape`).** 닫힌 고리를 이루는 선들의 id(`edges`)와 점 id(`points`)를 가진 객체입니다. 선 도구로 시작점에 돌아오거나 사각형 도구를 쓰면 자동으로 생기고, 선택한 선에서 `makeShapes`로도 만듭니다. 도형을 지우면 변 선도, 선을 지우면 그 선을 쓰는 도형도 함께 지워집니다.
 - **선 양식.** 그린 선은 기준선이고, `stroke.width` mm 띠를 안쪽·중앙·바깥쪽에 놓습니다. 안쪽은 도형 내부 방향(도형이 없으면 진행 방향의 왼쪽)입니다. 같은 양식의 이웃 선과는 마이터로 이어집니다(`src/model/strokes.ts`).
 - **계층.** 층 > 폴더 > 레이어 > 객체. 활성 층만 보이고 편집됩니다. 폴더를 숨기거나 잠그면 안의 레이어가 모두 숨거나 잠깁니다. 판단은 `doc.isVisible(e)`, `doc.isEditable(e)` 한 곳에서 합니다.
@@ -60,6 +61,9 @@ DOM을 쓰지 않는 계층(geom, model, constraints, io, api)은 Node에서 그
 - **좌표와 높이.** 점은 X, Y와 층 바닥에서의 높이 Z를 가집니다. 속성 패널과 API `setPoint`로 고칩니다. X, Y는 구속이 있으면 구속 해석을 거쳐 옮기고(`ConstraintService.setPoint`), Z는 `SetPoints` 명령으로 바꿉니다. 객체의 높이는 `height`이며 기본값은 0입니다(`src/model/heights.ts`).
 - **3D 장면.** `buildScene`(`src/model/scene3d.ts`)이 문서를 입체(바닥 외곽선 + 꼭짓점별 아래·위 Z)와 3D 선으로 바꿉니다. 렌더러에 독립적이라 브라우저(`src/view3d/`)와 호스트 서버가 같은 결과를 씁니다. 무거운 도면은 API `scene3d`로 장면을 받아 서버에서 렌더링하거나 glTF 등으로 변환하는 것을 전제로 합니다([VIEW3D.md](VIEW3D.md)).
 - **테마.** 색은 `src/theme.ts`에만 씁니다. `style.css`의 `:root` 변수는 `cssVariables()`와 같아야 하고 그 밖에는 색 값을 쓰지 않습니다(`tests/theme.test.ts`가 검사).
+- **밑그림 선택.** 밑그림 이미지는 객체가 아니지만 선택 id `UNDERLAY_ID`로 선택 도구에서 객체처럼 클릭·끌기·Delete가 됩니다(객체가 없는 곳을 클릭할 때만). 잠그면(`underlay.locked`) 선택되지 않습니다. 위치·크기·투명도는 속성 패널에서 고칩니다.
+- **축척 표시.** 캔버스 왼쪽 아래에 축척 막대(1-2-5 단위 길이)와 화면 축척 근삿값 1:N(96 px/inch 기준)을 그립니다(`scaleBarLength`, `screenScaleRatio`, `src/view/viewport.ts`). SVG·인쇄에는 항상 축척 막대가 들어가고, 파일 탭에서 1:50~1:1000을 고르면 그 축척 크기로 출력하며 축척 값을 적습니다.
+- **좁은 화면과 터치.** 720 px 이하에서는 빠른 실행 바와 리본이 한 줄 가로 스크롤이 되고, 사이드바는 캔버스 아래 시트가 됩니다(`src/style.css` 끝의 반응형 규칙). 터치는 손가락을 떼거나 움직일 때까지 도구에 넘기지 않아, 두 번째 손가락이 닿으면 그리기 대신 두 손가락 확대·이동이 됩니다(`App.bindCanvas`).
 - **모드.** 편집 모드와 뷰어 모드(`App.setMode`). 뷰어 모드에서는 `InspectTool`만 쓰이고, 변경 API 호출이 막히며, `.edit-only` UI가 숨겨집니다.
 
 ## 확장 지점
@@ -73,6 +77,7 @@ DOM을 쓰지 않는 계층(geom, model, constraints, io, api)은 Node에서 그
 | 새 데이터 소스(뷰어) | `viewer/sources.ts`에 `DataSource` 구현 → `sourceFor` → `docs/VIEWER.md` |
 | 새 3D 모양 | `model/scene3d.ts`(입체·선 만들기) → 필요하면 `model/heights.ts`의 기본 높이 → `tests/scene3d.test.ts` |
 | 색 바꾸기 | `src/theme.ts` → `style.css`의 `:root`(테스트가 알려 줍니다) |
+| 새 테두리 템플릿 | `src/model/borders.ts`의 `BORDER_TEMPLATES`(색은 `src/theme.ts`의 `MARKING`) → `index.html`의 `#style-template` |
 | 파일 형식 변경 | `docs/DATA_MODEL.md`의 "형식을 바꿀 때" 절 |
 
 ## 테스트

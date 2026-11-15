@@ -29,12 +29,13 @@ import {
   captureLayerTree,
 } from '../model/commands';
 import { type DocumentModel, cloneEntity, midpointId } from '../model/document';
+import { cloneStroke } from '../model/borders';
 import { arrayOffsets, copyItems, makeShapes, nextTag, type ReorderMove, reorderItems, rotateItems } from '../model/edit';
 import { heightOf } from '../model/heights';
 import { buildScene } from '../model/scene3d';
 import { newId } from '../model/ids';
 import { CATEGORY_LABELS, PROP_DEFS, categoryOf, cleanProps, presetInfo } from '../model/presets';
-import type { DocumentData, Entity, EquipmentType, Floor, Folder, Id, Layer, LineEntity, Point, ShapeEntity, StructureCategory } from '../model/types';
+import type { CircleEntity, DocumentData, Entity, EquipmentType, Floor, Folder, Id, Layer, LineEntity, Point, ShapeEntity, StructureCategory } from '../model/types';
 import { LAYER_DEFAULT } from '../theme';
 
 export class ApiError extends Error {}
@@ -302,6 +303,7 @@ export class EditorApi {
     binding?: string | null;
     stroke?: unknown;
     fill?: string | null;
+    fillOpacity?: number | null;
     tag?: string;
     rotation?: number;
     radius?: number;
@@ -334,7 +336,7 @@ export class EditorApi {
       c.layer = p.layer;
     }
     if (p.stroke !== undefined) {
-      if (c.kind !== 'line') throw new ApiError('선 양식은 선에만 지정합니다. 도형은 setStroke로 변에 지정하십시오.');
+      if (c.kind !== 'line' && c.kind !== 'circle') throw new ApiError('테두리는 선과 원에만 지정합니다. 도형은 setStroke로 변에 지정하십시오.');
       const s = this.stroke(p.stroke);
       if (s) c.stroke = s;
       else delete c.stroke;
@@ -343,6 +345,15 @@ export class EditorApi {
       if (c.kind !== 'shape') throw new ApiError('채우기는 도형에만 지정합니다.');
       if (p.fill === null) delete c.fill;
       else c.fill = this.color(p.fill);
+    }
+    if (p.fillOpacity !== undefined) {
+      if (c.kind !== 'shape') throw new ApiError('fillOpacity는 도형에만 지정합니다.');
+      if (p.fillOpacity === null) delete c.fillOpacity;
+      else {
+        const o = this.num(p.fillOpacity, 'fillOpacity');
+        if (o < 0 || o > 1) throw new ApiError('fillOpacity는 0~1이어야 합니다.');
+        c.fillOpacity = o;
+      }
     }
     if (p.tag !== undefined || p.rotation !== undefined || p.props !== undefined) {
       if (c.kind !== 'equipment') throw new ApiError('tag, rotation, props는 설비·구조 객체에만 지정합니다.');
@@ -364,24 +375,24 @@ export class EditorApi {
     return this.describe(this.doc.entities.get(e.id)!);
   }
 
-  /** Line style for lines and the edges of shapes among `ids`; `stroke: null` clears it. */
+  /** Border for lines, circles and the edges of shapes among `ids`; `stroke: null` clears it. */
   setStroke(p: { ids: Id[]; stroke: unknown }) {
     const s = this.stroke(p.stroke);
     const lineIds = new Set<Id>();
     for (const id of this.ids(p.ids)) {
       const e = this.entity(id);
-      if (e.kind === 'line') lineIds.add(id);
+      if (e.kind === 'line' || e.kind === 'circle') lineIds.add(id);
       else if (e.kind === 'shape') for (const edge of e.edges) lineIds.add(edge);
     }
-    const before = [...lineIds].map((id) => this.doc.entities.get(id)!).filter((e): e is LineEntity => e.kind === 'line');
-    if (before.length === 0) throw new ApiError('선이나 도형이 없습니다.');
+    const before = [...lineIds].map((id) => this.doc.entities.get(id)!).filter((e): e is LineEntity | CircleEntity => e.kind === 'line' || e.kind === 'circle');
+    if (before.length === 0) throw new ApiError('선·원이나 도형이 없습니다.');
     const after = before.map((l) => {
       const c = cloneEntity(l);
-      if (s) c.stroke = s;
+      if (s) c.stroke = cloneStroke(s);
       else delete c.stroke;
       return c;
     });
-    this.history.execute(new UpdateEntities('선 양식', before, after));
+    this.history.execute(new UpdateEntities('테두리', before, after));
     return { lines: before.map((l) => l.id) };
   }
 

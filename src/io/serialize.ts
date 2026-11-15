@@ -14,17 +14,23 @@ import {
   type DocumentData,
   type Entity,
   type EquipmentType,
+  type FillImage,
   type Floor,
   type Folder,
   type Layer,
   type Point,
+  type StripePattern,
   type StrokeStyle,
   type StructureCategory,
   type Underlay,
 } from '../model/types';
 import { LAYER_DEFAULT } from '../theme';
 
-const CONSTRAINT_KINDS: ConstraintKind[] = ['horizontal', 'vertical', 'parallel', 'perpendicular', 'equal', 'fixed', 'radius'];
+const CONSTRAINT_KINDS: ConstraintKind[] = ['horizontal', 'vertical', 'parallel', 'perpendicular', 'equal', 'fixed', 'radius', 'coincident'];
+/** Embedded images only: a URL would make opening a drawing fetch from wherever the file points. */
+const DATA_IMAGE = /^data:image\/(png|jpeg|gif|webp);base64,/;
+/** Upper bounds that keep a hostile file from asking for absurd work (stripe counts are drawn every frame). */
+const MAX_STRIPE_COUNT = 16;
 const CATEGORIES: StructureCategory[] = ['equipment', 'column', 'stair', 'ramp', 'lift'];
 const COLOR = /^#[0-9a-f]{6}$/i;
 
@@ -54,7 +60,40 @@ export function parseStroke(v: Raw, where: string): StrokeStyle | undefined {
     throw new FormatError(`${where}의 선 양식이 잘못되었습니다.`);
   }
   if (v.color !== undefined && !(typeof v.color === 'string' && COLOR.test(v.color))) throw new FormatError(`${where}의 선 색이 잘못되었습니다.`);
-  return { width: v.width, align: v.align, ...(v.color ? { color: v.color } : {}) };
+  const out: StrokeStyle = { width: v.width, align: v.align, ...(v.color ? { color: v.color } : {}) };
+  if (v.opacity !== undefined) {
+    if (!isNum(v.opacity) || v.opacity < 0 || v.opacity > 1) throw new FormatError(`${where}의 테두리 투명도가 잘못되었습니다(0~1).`);
+    out.opacity = v.opacity;
+  }
+  if (v.pattern !== undefined && v.pattern !== null) out.pattern = parsePattern(v.pattern, where);
+  return out;
+}
+
+/** Validates a stripe pattern; throws on a malformed one. */
+export function parsePattern(v: Raw, where: string): StripePattern {
+  const bad = (what: string) => new FormatError(`${where}의 테두리 패턴이 잘못되었습니다: ${what}`);
+  if (!v || typeof v !== 'object') throw bad('객체가 아닙니다');
+  if (!Array.isArray(v.stripes) || v.stripes.length < 1 || v.stripes.length > MAX_STRIPE_COUNT) throw bad(`줄무늬는 1~${MAX_STRIPE_COUNT}개여야 합니다`);
+  const stripes = v.stripes.map((st: Raw) => {
+    if (!(typeof st?.color === 'string' && COLOR.test(st.color))) throw bad('줄무늬 색은 #rrggbb 형식이어야 합니다');
+    if (!isNum(st.size) || st.size <= 0 || st.size > 1000) throw bad('줄무늬 크기는 0보다 크고 1000 이하여야 합니다');
+    return { color: st.color, size: st.size };
+  });
+  if (!isNum(v.unit) || v.unit <= 0 || v.unit > 100000) throw bad('단위 길이(mm)는 0보다 커야 합니다');
+  if (!isNum(v.angle)) throw bad('기울기는 숫자여야 합니다');
+  return { stripes, unit: v.unit, angle: v.angle };
+}
+
+/** Validates a shape's face image; throws on a malformed one. */
+function parseFillImage(v: Raw, where: string): FillImage {
+  if (!v || typeof v.src !== 'string' || !DATA_IMAGE.test(v.src)) throw new FormatError(`${where}의 면 이미지가 잘못되었습니다(내장 이미지만 허용).`);
+  const fit = v.fit === 'tile' ? 'tile' : 'stretch';
+  const out: FillImage = { src: v.src, fit };
+  if (v.size !== undefined) {
+    if (!isNum(v.size) || v.size <= 0) throw new FormatError(`${where}의 면 이미지 크기가 잘못되었습니다.`);
+    out.size = v.size;
+  }
+  return out;
 }
 
 /** A height field: a finite number ≥ 0 (mm). */
@@ -62,7 +101,7 @@ const isHeight = (v: unknown): v is number => typeof v === 'number' && Number.is
 
 /**
  * Parses and validates a saved drawing. Throws FormatError with a readable message.
- * Version 2 files need nothing (Z and heights default to 0 / derived values). Version 1 files (before floors, folders
+ * Versions 2 and 3 need nothing (version 4 only added optional fields and the coincident constraint). Version 2 files need nothing (Z and heights default to 0 / derived values). Version 1 files (before floors, folders
  * and shapes) are upgraded: everything goes on one floor "1층" and the
  * structural presets are added to the library.
  */
@@ -80,7 +119,7 @@ export function deserialize(text: string): DocumentData {
 export function validate(raw: unknown): DocumentData {
   const obj = raw as Raw;
   if (!obj || obj.format !== 'layout-liner') throw new FormatError('Layout Liner 도면 파일이 아닙니다.');
-  if (obj.version !== 1 && obj.version !== 2 && obj.version !== 3) throw new FormatError(`지원하지 않는 파일 버전입니다: ${String(obj.version)}`);
+  if (![1, 2, 3, 4].includes(obj.version)) throw new FormatError(`지원하지 않는 파일 버전입니다: ${String(obj.version)}`);
   if (!Array.isArray(obj.points) || !Array.isArray(obj.entities)) throw new FormatError('points/entities 항목이 없습니다.');
 
   const points: Point[] = obj.points.map((p: Raw, i: number) => {
@@ -177,7 +216,8 @@ export function validate(raw: unknown): DocumentData {
     }
     if (e.kind === 'circle') {
       if (!isNum(e.radius) || e.radius <= 0) throw new FormatError(`원 #${i}의 반지름이 잘못되었습니다.`);
-      return { ...base, kind: 'circle', center: ref(e.center, i), radius: e.radius };
+      const stroke = parseStroke(e.stroke, `원 #${i}`);
+      return { ...base, kind: 'circle', center: ref(e.center, i), radius: e.radius, ...(stroke ? { stroke } : {}) };
     }
     if (e.kind === 'dimension') {
       delete (base as { height?: number }).height;
@@ -199,6 +239,11 @@ export function validate(raw: unknown): DocumentData {
       }
       const shape: Entity = { ...base, kind: 'shape', points: e.points.map((p: unknown) => ref(p, i)), edges: [...e.edges] };
       if (typeof e.fill === 'string' && COLOR.test(e.fill)) shape.fill = e.fill;
+      if (e.fillOpacity !== undefined) {
+        if (!isNum(e.fillOpacity) || e.fillOpacity < 0 || e.fillOpacity > 1) throw new FormatError(`도형 #${i}의 면 투명도가 잘못되었습니다(0~1).`);
+        shape.fillOpacity = e.fillOpacity;
+      }
+      if (e.fillImage !== undefined && e.fillImage !== null) shape.fillImage = parseFillImage(e.fillImage, `도형 #${i}`);
       return shape;
     }
     throw new FormatError(`알 수 없는 엔티티 종류 (#${i})`);
@@ -223,6 +268,10 @@ export function validate(raw: unknown): DocumentData {
     if (!Array.isArray(c.refs) || !c.refs.every((r: unknown) => isStr(r) && known.has(r))) {
       throw new FormatError(`구속 #${i}가 없는 객체를 참조합니다.`);
     }
+    if ((c.kind === 'coincident' || c.kind === 'fixed') && !c.refs.every((r: string) => pointIds.has(r))) {
+      throw new FormatError(`구속 #${i}는 점만 참조할 수 있습니다.`);
+    }
+    if (c.kind === 'coincident' && c.refs.length < 2) throw new FormatError(`일치 구속 #${i}에는 점이 두 개 이상 필요합니다.`);
     const out: Constraint = { id: c.id, kind: c.kind, refs: [...c.refs] };
     if (c.value !== undefined) {
       if (!isNum(c.value) || c.value <= 0) throw new FormatError(`구속 #${i}의 값이 잘못되었습니다.`);
@@ -234,18 +283,17 @@ export function validate(raw: unknown): DocumentData {
   let underlay: Underlay | undefined;
   if (obj.underlay !== undefined && obj.underlay !== null) {
     const u = obj.underlay;
-    // Only embedded images: a URL would make opening a drawing fetch from wherever the file points.
-    const embedded = typeof u.src === 'string' && /^data:image\/(png|jpeg|gif|webp);base64,/.test(u.src);
+    const embedded = typeof u.src === 'string' && DATA_IMAGE.test(u.src);
     if (!embedded || ![u.x, u.y, u.width, u.height].every(isNum) || !(u.width > 0) || !(u.height > 0)) {
       throw new FormatError('밑그림 이미지 데이터가 잘못되었습니다.');
     }
     const opacity = isNum(u.opacity) ? Math.min(1, Math.max(0.05, u.opacity)) : 0.5;
-    underlay = { src: u.src, x: u.x, y: u.y, width: u.width, height: u.height, opacity, visible: u.visible !== false };
+    underlay = { src: u.src, x: u.x, y: u.y, width: u.width, height: u.height, opacity, visible: u.visible !== false, ...(u.locked === true ? { locked: true } : {}) };
   }
 
   return {
     format: 'layout-liner',
-    version: 3,
+    version: 4,
     units: 'mm',
     points,
     entities,

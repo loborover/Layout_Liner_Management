@@ -31,17 +31,43 @@ interface EntityBase {
 /** Where a styled line's band sits relative to the drawn reference line. */
 export type StrokeAlign = 'center' | 'inside' | 'outside';
 
+/** One stripe of a border pattern. */
+export interface Stripe {
+  /** CSS hex colour. */
+  color: string;
+  /** Relative size: the stripe is `size × pattern.unit` mm wide. */
+  size: number;
+}
+
 /**
- * Line style, e.g. a wall: the drawn line is the reference and the band of `width` mm is laid on its inside,
- * centred on it, or on its outside. "Inside" is towards the interior of a shape the line belongs to; for a
- * free line it is the left side of the direction p1 → p2.
+ * Striped border pattern ("Border.Pattern"), e.g. yellow/black hazard stripes: the stripes repeat in order, each
+ * `size × unit` mm wide, at `angle` degrees. For a line the angle is measured from the line's direction (so the
+ * stripes look the same whichever way the line runs); for a circle from the world X axis.
+ */
+export interface StripePattern {
+  stripes: Stripe[];
+  /** mm per relative size unit (a stripe of size 1 is this wide). */
+  unit: number;
+  /** Degrees, counter-clockwise. 0 gives stripes along the line, 90 across it. */
+  angle: number;
+}
+
+/**
+ * Border of a line or circle ("Border": Weight, Color, Opacity, Pattern), e.g. a wall or a floor marking: the
+ * drawn line is the reference and the band of `width` mm is laid on its inside, centred on it, or on its outside.
+ * "Inside" is towards the interior of a shape the line belongs to (or of a circle); for a free line it is the left
+ * side of the direction p1 → p2. A shape's border is the border of its edge lines.
  */
 export interface StrokeStyle {
-  /** Band width in mm; 0 draws a hairline in `color`. */
+  /** Band width in mm ("Weight"); 0 draws a hairline in `color`. */
   width: number;
-  /** CSS hex colour; the layer colour when absent. */
+  /** CSS hex colour; the layer colour when absent. With a pattern it colours the outline and the hairline. */
   color?: string;
   align: StrokeAlign;
+  /** Opacity 0–1 of the band (and of a hairline); 0.85 for a band and 1 for a hairline when absent. */
+  opacity?: number;
+  /** Stripes filling the band instead of the plain colour. Needs a width above 0 to show. */
+  pattern?: StripePattern;
 }
 
 /**
@@ -73,6 +99,8 @@ export interface CircleEntity extends EntityBase {
   kind: 'circle';
   center: Id;
   radius: number; // mm
+  /** Border band around the circle (inside = towards the centre). */
+  stroke?: StrokeStyle;
   /** Extruded height in 3D (a round tank, a pit), mm; 0 when absent. */
   height?: number;
 }
@@ -119,8 +147,22 @@ export interface ShapeEntity extends EntityBase {
   edges: Id[];
   /** Face fill colour; the layer colour (faint) when absent. */
   fill?: string;
+  /** Opacity 0–1 of the face only (not its border); 0.35 with a fill colour or image, 0.06 without, when absent. */
+  fillOpacity?: number;
+  /** Image drawn on the face instead of the colour. */
+  fillImage?: FillImage;
   /** Extruded height in 3D (a slab, a platform, a zone volume), mm; a flat face when absent. */
   height?: number;
+}
+
+/** Picture on a shape's face (a floor finish, a photo, a logo). */
+export interface FillImage {
+  /** Image as a data: URL, so the drawing file stays self-contained (never fetched from elsewhere). */
+  src: string;
+  /** 'stretch' fits the image to the face's bounding box; 'tile' repeats it, `size` mm wide. */
+  fit: 'stretch' | 'tile';
+  /** Tile width in mm for 'tile' (height follows the image's aspect ratio). */
+  size?: number;
 }
 
 export type Entity = PointEntity | LineEntity | CircleEntity | DimensionEntity | EquipmentEntity | ShapeEntity;
@@ -145,11 +187,13 @@ export interface EquipmentType {
   height?: number;
 }
 
-export type ConstraintKind = 'horizontal' | 'vertical' | 'parallel' | 'perpendicular' | 'equal' | 'fixed' | 'radius';
+export type ConstraintKind = 'horizontal' | 'vertical' | 'parallel' | 'perpendicular' | 'equal' | 'fixed' | 'radius' | 'coincident';
 
 /**
  * Geometric constraint solved by planegcs.
- * `refs` are entity ids (lines/circles), except for 'fixed', which references point ids.
+ * `refs` are entity ids (lines/circles), except for 'fixed' and 'coincident', which reference point ids.
+ * 'coincident' holds two or more points of different objects at one place: drawing from another object's point
+ * makes one, so the objects stay separate and can be pulled apart by removing it (the user's request, 2026-11-15).
  */
 export interface Constraint {
   id: Id;
@@ -204,15 +248,18 @@ export interface Underlay {
   height: number;
   opacity: number;
   visible: boolean;
+  /** Locked images can't be selected or moved on the canvas (tracing over them stays undisturbed). */
+  locked?: boolean;
 }
 
 export interface DocumentData {
   format: 'layout-liner';
   /**
-   * 2 added floors, folders, shapes, line styles, presets and bindings; 3 added point Z, object heights (3D) and point objects.
-   * Older versions are upgraded on load.
+   * 2 added floors, folders, shapes, line styles, presets and bindings; 3 added point Z, object heights (3D) and point objects;
+   * 4 added border opacity and patterns, circle borders, face opacity and images, coincident constraints and the
+   * underlay lock. Older versions are upgraded on load.
    */
-  version: 3;
+  version: 4;
   units: 'mm';
   points: Point[];
   entities: Entity[];

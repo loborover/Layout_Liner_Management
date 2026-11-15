@@ -3,7 +3,8 @@
  *
  * Side bar with an always-visible icon rail (request: a minimised side bar must stay reachable).
  * States: 'collapsed' (rail only), 'normal' and 'wide' (maximised). A rail icon opens its section; clicking the
- * icon of the open section collapses the panel. State is remembered in localStorage.
+ * icon of the open section collapses the panel. State is remembered in localStorage. On narrow screens the bar is a
+ * bottom sheet under the canvas (src/style.css) and starts collapsed on the first visit.
  */
 
 export type SidebarState = 'collapsed' | 'normal' | 'wide';
@@ -32,6 +33,8 @@ export class Sidebar {
       const saved = JSON.parse(localStorage.getItem(this.store) ?? '{}') as { state?: SidebarState; section?: string };
       if (saved.section && root.querySelector(`[data-section="${saved.section}"]`)) this.section = saved.section;
       if (saved.state) this.root.dataset.state = saved.state;
+      // First visit on a phone: start with the bottom sheet closed so the drawing gets the screen.
+      else if (window.matchMedia?.('(max-width: 720px)').matches) this.root.dataset.state = 'collapsed';
     } catch {
       // ignore
     }

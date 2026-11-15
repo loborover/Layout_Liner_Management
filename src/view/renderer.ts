@@ -6,19 +6,23 @@
  * later entity covers an earlier one), then outlines batched by stroke style (one path per colour/width, which
  * keeps large drawings fast), then labels. Structures that reach the active floor from another floor (stairs,
  * ramps, lifts) are drawn as dashed ghosts. The viewer passes live `status` colours per entity (docs/VIEWER.md).
+ * Border bands are filled with their colour or stripe pattern (src/model/borders.ts) at their opacity; shape faces
+ * with a colour or picture at the face opacity. A selected underlay gets a frame, and a scale bar with the
+ * approximate screen scale sits in the lower left.
  */
 import { dimensionGeometry } from '../geom/dimension';
 import type { Vec2 } from '../geom/vec';
 import { SNAP_LABELS, type SnapResult } from '../snap/snap';
 import { type DocumentModel, midpointId } from '../model/document';
-import type { Selection } from '../model/selection';
+import { type Selection, UNDERLAY_ID } from '../model/selection';
+import { borderOpacity, circleBandRadii, patternPeriod, stripePieces } from '../model/borders';
 import type { SpatialIndex } from '../model/spatial';
 import { connectedFloors } from '../model/presets';
 import { StrokeGeometry } from '../model/strokes';
 import { planSymbol } from '../model/symbols';
-import type { ConstraintKind, Entity, EquipmentEntity, Id, ShapeEntity } from '../model/types';
+import type { ConstraintKind, Entity, EquipmentEntity, FillImage, Id, ShapeEntity, StrokeStyle } from '../model/types';
 import { type DisplayUnit, formatArea, formatLength } from './format';
-import { type Viewport, gridSpacing } from './viewport';
+import { type Viewport, formatScaleLength, gridSpacing, scaleBarLength, screenScaleRatio } from './viewport';
 import { CANVAS } from '../theme';
 
 /** Canvas colours: the Ink wash tokens from src/theme.ts. */
@@ -313,12 +317,15 @@ const BADGES: Record<ConstraintKind, string> = {
   equal: '=',
   fixed: '',
   radius: 'R',
+  coincident: '',
 };
 
 interface Styled {
   e: Entity;
   color: string;
   width: number;
+  /** Opacity of the outline (a hairline border's opacity). */
+  alpha: number;
   /** Selected or hovered: outlines of faces are only drawn then. */
   highlighted: boolean;
 }
@@ -328,6 +335,7 @@ export class Renderer {
   private dpr = 1;
   readonly strokes: StrokeGeometry;
   private orderRev = -1;
+  private faceRev = -1;
   private order = new Map<Id, number>();
 
   constructor(
@@ -375,9 +383,43 @@ export class Renderer {
     this.ctx.globalAlpha = 1;
   }
 
+  /** Frame and corner grips of the underlay when it is selected (or hovered), like any selected object. */
+  private drawUnderlayFrame(hover: Id | null): void {
+    const u = this.doc.underlay;
+    if (!u?.visible) return;
+    const selected = this.selection.has(UNDERLAY_ID);
+    if (!selected && hover !== UNDERLAY_ID) return;
+    const painter = new Painter(this.ctx, this.view);
+    const color = selected ? COLORS.selected : COLORS.hover;
+    painter.rect({ x: u.x, y: u.y }, { x: u.x + u.width, y: u.y + u.height }, color, undefined, selected ? [] : [6, 4]);
+    if (selected) for (const c of [{ x: u.x, y: u.y }, { x: u.x + u.width, y: u.y }, { x: u.x, y: u.y + u.height }, { x: u.x + u.width, y: u.y + u.height }]) painter.marker(c, color, 7);
+  }
+
+  /** Images used as shape faces, by data URL. */
+  private faceImages = new Map<string, HTMLImageElement>();
+
+  private faceImage(src: string): HTMLImageElement | null {
+    let img = this.faceImages.get(src);
+    if (!img) {
+      img = new Image();
+      img.onload = () => this.onImageLoad();
+      img.src = src;
+      this.faceImages.set(src, img);
+    }
+    return img.complete && img.naturalWidth > 0 ? img : null;
+  }
+
+  /** Drops face images no shape uses any more, so replaced pictures don't stay in memory. */
+  private pruneFaceImages(): void {
+    if (this.faceImages.size === 0) return;
+    const used = new Set<string>();
+    for (const e of this.doc.entities.values()) if (e.kind === 'shape' && e.fillImage) used.add(e.fillImage.src);
+    for (const src of this.faceImages.keys()) if (!used.has(src)) this.faceImages.delete(src);
+  }
+
   private sortByOrder(items: Entity[]): Entity[] {
     if (this.orderRev !== this.doc.rev) {
-      this.order = new Map([...this.doc.entities.keys()].map((id, i) => [id, i]));
+      this.order = this.doc.paintOrder();
       this.orderRev = this.doc.rev;
     }
     return items.sort((a, b) => (this.order.get(a.id) ?? 0) - (this.order.get(b.id) ?? 0));
@@ -391,6 +433,10 @@ export class Renderer {
     ctx.fillRect(0, 0, view.width, view.height);
     this.drawGrid();
     this.drawUnderlay();
+    if (this.faceRev !== doc.rev) {
+      this.faceRev = doc.rev;
+      this.pruneFaceImages();
+    }
 
     const visible: Styled[] = [];
     const ghosts: EquipmentEntity[] = [];
@@ -403,7 +449,8 @@ export class Renderer {
       const layer = doc.layers.get(e.layer);
       const selected = this.selection.has(e.id);
       const hovered = e.id === state.hover;
-      const own = e.kind === 'line' ? e.stroke?.color : undefined;
+      const stroke = e.kind === 'line' || e.kind === 'circle' ? e.stroke : undefined;
+      const own = stroke?.color;
       const base =
         e.kind === 'dimension'
           ? e.value !== undefined
@@ -413,26 +460,33 @@ export class Renderer {
             ? COLORS.constrained
             : (own ?? layer?.color ?? COLORS.text);
       const color = selected ? COLORS.selected : hovered ? COLORS.hover : base;
-      visible.push({ e, color, width: selected || hovered ? 2 : 1.25, highlighted: selected || hovered });
+      // A hairline border shows its own opacity; a band's opacity is its fill (see fill()).
+      const alpha = stroke && stroke.width === 0 && !(selected || hovered) ? borderOpacity(stroke) : 1;
+      visible.push({ e, color, width: selected || hovered ? 2 : 1.25, alpha, highlighted: selected || hovered });
     }
 
     // Faces, bands and footprints in drawing order.
     for (const v of visible) this.fill(v, state.status?.get(v.e.id));
 
     // Outlines batched by style.
-    const batches = new Map<string, { color: string; width: number; items: Styled[] }>();
+    const batches = new Map<string, { color: string; width: number; alpha: number; items: Styled[] }>();
     for (const v of visible) {
       if (v.e.kind === 'shape' && !v.highlighted) continue;
-      const key = `${v.color}|${v.width}`;
+      const key = `${v.color}|${v.width}|${v.alpha}`;
       let batch = batches.get(key);
-      if (!batch) batches.set(key, (batch = { color: v.color, width: v.width, items: [] }));
+      if (!batch) batches.set(key, (batch = { color: v.color, width: v.width, alpha: v.alpha, items: [] }));
       batch.items.push(v);
     }
-    for (const batch of batches.values()) this.strokeBatch(batch.items.map((v) => v.e), batch.color, batch.width);
+    for (const batch of batches.values()) {
+      ctx.globalAlpha = batch.alpha;
+      this.strokeBatch(batch.items.map((v) => v.e), batch.color, batch.width);
+    }
+    ctx.globalAlpha = 1;
     this.drawGhosts(ghosts);
 
     this.labelEntities(visible, state);
     if (!state.clean) this.drawConstraintBadges(new Set(visible.map((v) => v.e.id)));
+    if (!state.clean) this.drawUnderlayFrame(state.hover);
     const painter = new Painter(ctx, view);
     if (!state.clean) {
       for (const id of this.selection.values()) {
@@ -451,7 +505,37 @@ export class Renderer {
     }
     state.overlay?.(painter);
     if (state.snap) painter.snap(state.snap);
+    this.drawScaleBar();
     return visible.length;
+  }
+
+  /**
+   * Scale bar in the lower left: a bar of a round length (1-2-5 steps) with its length and the approximate screen
+   * scale (1:N at 96 px per inch). It is the on-screen statement of the drawing's scale at the current zoom.
+   */
+  private drawScaleBar(): void {
+    const { ctx, view } = this;
+    const mm = scaleBarLength(view.scale);
+    const px = mm * view.scale;
+    const x = 14;
+    const y = view.height - 18;
+    const label = `${formatScaleLength(mm)} · 화면 약 1:${screenScaleRatio(view.scale).toLocaleString('ko-KR')}`;
+    ctx.font = '11px system-ui, sans-serif';
+    const textW = ctx.measureText(label).width;
+    ctx.fillStyle = COLORS.labelPlate;
+    ctx.fillRect(x - 6, y - 20, Math.max(px, textW) + 12, 30);
+    // Four alternating segments, like a printed scale bar.
+    for (let i = 0; i < 4; i++) {
+      ctx.fillStyle = i % 2 === 0 ? COLORS.text : COLORS.background;
+      ctx.fillRect(x + (px / 4) * i, y, px / 4, 5);
+    }
+    ctx.strokeStyle = COLORS.text;
+    ctx.lineWidth = 1;
+    ctx.strokeRect(x + 0.5, y + 0.5, px, 5);
+    ctx.fillStyle = COLORS.text;
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
+    ctx.fillText(label, x, y - 6);
   }
 
   private path(pts: Vec2[]): void {
@@ -470,21 +554,42 @@ export class Renderer {
     const { e } = v;
     const layerColor = doc.layers.get(e.layer)?.color ?? COLORS.text;
     if (e.kind === 'shape') {
-      ctx.beginPath();
-      this.path(doc.shapePolygon(e));
-      ctx.globalAlpha = status ? 0.55 : v.highlighted ? 0.18 : e.fill ? 0.35 : 0.06;
-      ctx.fillStyle = status?.color ?? (v.highlighted ? v.color : (e.fill ?? layerColor));
-      ctx.fill('evenodd');
-      ctx.globalAlpha = 1;
+      const poly = doc.shapePolygon(e);
+      const trace = () => this.path(poly);
+      if (status) this.fillPlain(trace, 'evenodd', status.color, 0.55);
+      else {
+        const opacity = e.fillOpacity ?? (e.fill || e.fillImage ? 0.35 : 0.06);
+        const img = e.fillImage ? this.faceImage(e.fillImage.src) : null;
+        if (img && e.fillImage) this.fillImage(trace, poly, img, e.fillImage, opacity);
+        else this.fillPlain(trace, 'evenodd', e.fill ?? layerColor, opacity);
+        if (v.highlighted) this.fillPlain(trace, 'evenodd', v.color, 0.18);
+      }
     } else if (e.kind === 'line') {
       const band = this.strokes.band(e.id);
-      if (!band) return;
-      ctx.beginPath();
-      this.path(band);
-      ctx.globalAlpha = v.highlighted ? 0.6 : 0.85;
-      ctx.fillStyle = v.highlighted ? v.color : (e.stroke?.color ?? layerColor);
-      ctx.fill();
-      ctx.globalAlpha = 1;
+      if (!band || !e.stroke) return;
+      const a = doc.point(e.p1);
+      const b = doc.point(e.p2);
+      this.fillBand(() => this.path(band), 'nonzero', band, e.stroke, layerColor, v, a, Math.atan2(b.y - a.y, b.x - a.x));
+    } else if (e.kind === 'circle') {
+      if (!e.stroke || !(e.stroke.width > 0)) return;
+      const c = doc.point(e.center);
+      const [r0, r1] = circleBandRadii(e.radius, e.stroke);
+      const sc = view.toScreen(c);
+      const trace = () => {
+        ctx.moveTo(sc.x + r1 * view.scale, sc.y);
+        ctx.arc(sc.x, sc.y, Math.max(r1 * view.scale, 0.5), 0, Math.PI * 2);
+        if (r0 > 0) {
+          ctx.moveTo(sc.x + r0 * view.scale, sc.y);
+          ctx.arc(sc.x, sc.y, r0 * view.scale, 0, Math.PI * 2);
+        }
+      };
+      const region = [
+        { x: c.x - r1, y: c.y - r1 },
+        { x: c.x + r1, y: c.y + r1 },
+        { x: c.x - r1, y: c.y + r1 },
+        { x: c.x + r1, y: c.y - r1 },
+      ];
+      this.fillBand(trace, 'evenodd', region, e.stroke, layerColor, v, c, 0);
     } else if (e.kind === 'equipment') {
       const sym = planSymbol(doc, e);
       ctx.beginPath();
@@ -498,6 +603,76 @@ export class Renderer {
       ctx.fill();
       ctx.globalAlpha = 1;
     }
+  }
+
+  /** Fills the path `trace` adds with one colour. */
+  private fillPlain(trace: () => void, rule: CanvasFillRule, color: string, opacity: number): void {
+    const { ctx } = this;
+    ctx.beginPath();
+    trace();
+    ctx.globalAlpha = opacity;
+    ctx.fillStyle = color;
+    ctx.fill(rule);
+    ctx.globalAlpha = 1;
+  }
+
+  /**
+   * A border band: its colour, or its stripe pattern clipped to the band (world-size stripes, so a 50 mm stripe is
+   * 50 mm on the floor). `baseAngle` is the line direction the pattern angle is measured from. Stripes thinner than
+   * about a pixel are drawn as the first stripe colour. A selected band gets a tint of the selection colour.
+   */
+  private fillBand(trace: () => void, rule: CanvasFillRule, region: Vec2[], s: StrokeStyle, layerColor: string, v: Styled, origin: Vec2, baseAngle: number): void {
+    const { ctx, view } = this;
+    const opacity = borderOpacity(s);
+    const p = s.pattern;
+    const plain = s.color ?? p?.stripes[0]?.color ?? layerColor;
+    if (v.highlighted && !p) return this.fillPlain(trace, rule, v.color, 0.6);
+    const pieces = p && patternPeriod(p) * view.scale >= 2 ? stripePieces(region, origin, baseAngle + (p.angle * Math.PI) / 180, p) : null;
+    if (!pieces) this.fillPlain(trace, rule, p ? p.stripes[0].color : plain, opacity);
+    else {
+      ctx.save();
+      ctx.beginPath();
+      trace();
+      ctx.clip(rule);
+      ctx.globalAlpha = opacity;
+      const byColor = new Map<string, Vec2[][]>();
+      for (const piece of pieces) byColor.set(piece.color, [...(byColor.get(piece.color) ?? []), piece.quad]);
+      for (const [color, quads] of byColor) {
+        ctx.beginPath();
+        for (const q of quads) this.path(q);
+        ctx.fillStyle = color;
+        ctx.fill();
+      }
+      ctx.restore();
+    }
+    if (v.highlighted) this.fillPlain(trace, rule, v.color, 0.3);
+  }
+
+  /** A face picture: stretched over the face's bounding box or tiled at its size, clipped to the face. */
+  private fillImage(trace: () => void, poly: Vec2[], img: HTMLImageElement, f: FillImage, opacity: number): void {
+    const { ctx, view } = this;
+    ctx.save();
+    ctx.beginPath();
+    trace();
+    ctx.clip('evenodd');
+    ctx.globalAlpha = opacity;
+    if (f.fit === 'tile') {
+      const pattern = ctx.createPattern(img, 'repeat');
+      if (pattern) {
+        const k = ((f.size ?? 1000) * view.scale) / img.naturalWidth;
+        const o = view.toScreen({ x: 0, y: 0 });
+        pattern.setTransform(new DOMMatrix([k, 0, 0, k, o.x, o.y]));
+        ctx.fillStyle = pattern;
+        ctx.fill('evenodd');
+      }
+    } else {
+      const xs = poly.map((q) => q.x);
+      const ys = poly.map((q) => q.y);
+      const tl = view.toScreen({ x: Math.min(...xs), y: Math.max(...ys) });
+      const br = view.toScreen({ x: Math.max(...xs), y: Math.min(...ys) });
+      ctx.drawImage(img, tl.x, tl.y, br.x - tl.x, br.y - tl.y);
+    }
+    ctx.restore();
   }
 
   /** Stairs, ramps and lifts of another floor that reach this one, as faint dashed outlines. */
@@ -659,6 +834,14 @@ export class Renderer {
         const r = Math.max(e.radius * view.scale, 0.5);
         ctx.moveTo(c.x + r, c.y);
         ctx.arc(c.x, c.y, r, 0, Math.PI * 2);
+        // Edges of a border band, like a styled line's band outline.
+        if (e.stroke && e.stroke.width > 0) {
+          for (const br of circleBandRadii(e.radius, e.stroke)) {
+            if (br <= 0 || br === e.radius) continue;
+            ctx.moveTo(c.x + br * view.scale, c.y);
+            ctx.arc(c.x, c.y, br * view.scale, 0, Math.PI * 2);
+          }
+        }
       }
     }
     ctx.strokeStyle = color;

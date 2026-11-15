@@ -97,3 +97,36 @@ export function gridSpacing(scale: number, minPx = 12): { minor: number; major: 
 export function snapToGrid(p: Vec2, step: number): Vec2 {
   return { x: Math.round(p.x / step) * step, y: Math.round(p.y / step) * step };
 }
+
+/** CSS pixels per millimetre of a screen at the CSS reference density (96 px per inch). */
+export const CSS_PX_PER_MM = 96 / 25.4;
+
+/**
+ * Length (mm, on a 1-2-5 progression) of an on-screen scale bar that is between `minPx` and about 2.5 × `minPx`
+ * long at this zoom.
+ */
+export function scaleBarLength(scale: number, minPx = 60): number {
+  const target = minPx / scale;
+  const exp = Math.floor(Math.log10(target));
+  const base = 10 ** exp;
+  for (const m of [1, 2, 5, 10]) if (m * base >= target) return m * base;
+  return 10 * base;
+}
+
+/**
+ * The drawing scale the screen shows, as N of "1:N": how many millimetres of the floor one millimetre of screen
+ * stands for, at the CSS reference density. Real screens differ in density, so this is approximate; the scale bar
+ * is the exact reference. Rounded to two significant figures.
+ */
+export function screenScaleRatio(scale: number): number {
+  const n = 1 / (scale / CSS_PX_PER_MM);
+  if (n < 1) return Math.round(n * 100) / 100;
+  const exp = Math.floor(Math.log10(n)) - 1;
+  const step = 10 ** Math.max(exp, 0);
+  return Math.round(n / step) * step;
+}
+
+/** Scale bar label: whole metres as "5 m", smaller lengths in mm. */
+export function formatScaleLength(mm: number): string {
+  return mm >= 1000 ? `${mm / 1000} m` : `${mm} mm`;
+}

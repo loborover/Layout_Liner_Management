@@ -9,12 +9,13 @@ import {
   AddItems,
   Batch,
   type Command,
+  RemoveConstraints,
   ReorderEntities,
   SetGeometry,
   UpdateEntities,
   captureGeometry,
 } from './commands';
-import type { DocumentModel } from './document';
+import { type DocumentModel, cloneEntity } from './document';
 import { newId } from './ids';
 import type { Constraint, Entity, EquipmentType, Id, LineEntity, Point, ShapeEntity } from './types';
 
@@ -292,4 +293,110 @@ export function linePath(doc: DocumentModel, from: Id, to: Id, accept: (e: LineE
     at = step.point;
   }
   return { points, edges };
+}
+
+/** Copy of an entity with point references renamed through `map` (ids not in the map stay). */
+function remapPoints<T extends Entity>(e: T, map: ReadonlyMap<Id, Id>): T {
+  const c = cloneEntity(e);
+  const m = (id: Id) => map.get(id) ?? id;
+  if (c.kind === 'line' || c.kind === 'dimension') {
+    c.p1 = m(c.p1);
+    c.p2 = m(c.p2);
+  } else if (c.kind === 'circle') c.center = m(c.center);
+  else if (c.kind === 'equipment' || c.kind === 'point') c.at = m(c.at);
+  else if (c.kind === 'shape') c.points = c.points.map(m);
+  return c;
+}
+
+/**
+ * Objects that must keep sharing their points: a shape and its edge lines (a face needs its closed loop). Every
+ * other entity is an object of its own. Returns the group key of each entity id.
+ */
+function objectGroups(doc: DocumentModel): Map<Id, Id> {
+  const group = new Map<Id, Id>();
+  for (const e of doc.entities.values()) {
+    if (e.kind !== 'shape') continue;
+    // A line shared by two shapes (drawn with Ctrl) ties those shapes together too.
+    const key = e.edges.map((id) => group.get(id)).find((g) => g !== undefined) ?? e.id;
+    group.set(e.id, key);
+    for (const id of e.edges) group.set(id, key);
+  }
+  return group;
+}
+
+/**
+ * "분리": makes the selected objects (or the objects at the selected points) independent of each other, so each
+ * can be moved on its own (the user's request, 2026-11-15). A point shared by several objects is split into one
+ * point per object (a shape keeps one point with its own edges); coincident constraints on the selected points are
+ * removed. Selecting an object detaches that object from its neighbours; selecting a point separates everything at
+ * that point. Dimensions stay attached to the geometry they measure. Returns null when nothing is shared.
+ */
+export function detachPoints(doc: DocumentModel, ids: Iterable<Id>): Command | null {
+  const groups = objectGroups(doc);
+  const groupOf = (e: Entity) => groups.get(e.id) ?? e.id;
+  /** Point → the group that must get a copy of it (null: every group but the first). */
+  const targets = new Map<Id, Set<Id> | null>();
+  for (const id of ids) {
+    const e = doc.entities.get(id);
+    if (e) {
+      if (!doc.isEditable(e)) continue;
+      const g = groupOf(e);
+      const members = [...doc.entities.values()].filter((x) => groupOf(x) === g);
+      for (const m of members) {
+        for (const pid of doc.pointIdsOf(m)) {
+          const t = targets.get(pid);
+          if (t === null) continue;
+          targets.set(pid, (t ?? new Set()).add(g));
+        }
+      }
+    } else if (doc.isVertex(id) && doc.isPointEditable(id)) {
+      for (const pid of doc.vertexPoints(id)) targets.set(pid, null);
+    }
+  }
+  if (targets.size === 0) return null;
+
+  const newPoints: Point[] = [];
+  const maps = new Map<Id, Map<Id, Id>>(); // group → old point → new point
+  for (const [pid, wanted] of targets) {
+    const users = doc.pointUsers(pid);
+    // Dimensions measure geometry: they follow the first other object at the point.
+    const geometry = users.filter((e) => e.kind !== 'dimension');
+    const order = [...new Set(geometry.map(groupOf))];
+    if (order.length < 2) continue;
+    let movers = wanted === null ? order.slice(1) : order.filter((g) => wanted.has(g));
+    // When every object at the point is selected, the first keeps the point.
+    if (movers.length === order.length) movers = movers.slice(1);
+    for (const g of movers) {
+      const p = doc.point(pid);
+      const copy: Point = { ...p, id: newId('p') };
+      newPoints.push(copy);
+      let m = maps.get(g);
+      if (!m) maps.set(g, (m = new Map()));
+      m.set(pid, copy.id);
+    }
+  }
+  const before: Entity[] = [];
+  const after: Entity[] = [];
+  for (const e of doc.entities.values()) {
+    const m = maps.get(groupOf(e));
+    if (!m || !doc.pointIdsOf(e).some((pid) => m.has(pid))) continue;
+    before.push(e);
+    after.push(remapPoints(e, m));
+  }
+
+  const steps: Command[] = [];
+  if (newPoints.length > 0) steps.push(new AddItems(newPoints, []), new UpdateEntities('점 분리', before, after));
+  // Coincident constraints on the targeted points come off; a constraint left with fewer than two points goes.
+  const loose = new Set(targets.keys());
+  const removed: Id[] = [];
+  const kept: Constraint[] = [];
+  for (const c of doc.constraints.values()) {
+    if (c.kind !== 'coincident' || !c.refs.some((r) => loose.has(r))) continue;
+    removed.push(c.id);
+    const rest = c.refs.filter((r) => !loose.has(r));
+    if (rest.length >= 2) kept.push({ ...c, id: newId('k'), refs: rest });
+  }
+  if (removed.length > 0) steps.push(new RemoveConstraints(removed));
+  if (kept.length > 0) steps.push(new AddConstraints(kept));
+  return steps.length > 0 ? new Batch('점 분리', steps) : null;
 }

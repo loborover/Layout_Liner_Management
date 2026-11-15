@@ -148,6 +148,10 @@ export class ConstraintSolver {
         case 'radius':
           primitives.push({ id, type: 'circle_radius', c_id: a, radius: c.value ?? 0 });
           break;
+        case 'coincident':
+          // One pair per extra point, all tied to the first: planegcs has no n-point coincidence.
+          c.refs.slice(1).forEach((p, i) => primitives.push({ id: `${id}#${i}`, type: 'p2p_coincident', p1_id: a, p2_id: p }));
+          break;
         case 'fixed':
           break; // expressed through the points' fixed flag
       }
@@ -220,6 +224,10 @@ export class ConstraintSolver {
 
   /** Whether a constraint between lines already holds for the current geometry. */
   private holds(doc: DocumentModel, kind: string, refs: Id[]): boolean {
+    if (kind === 'coincident') {
+      const [a, ...rest] = refs.map((id) => doc.point(id));
+      return rest.every((p) => Math.hypot(p.x - a.x, p.y - a.y) <= TOLERANCE);
+    }
     const dirs = refs.map((id) => {
       const e = doc.entities.get(id);
       if (e?.kind !== 'line') return null;

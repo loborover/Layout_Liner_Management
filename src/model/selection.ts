@@ -5,6 +5,12 @@
  */
 import type { Id } from './types';
 
+/**
+ * Selection id of the underlay image: it is selected, moved and deleted like an object (the user's request,
+ * 2026-11-15), though it is not an entity.
+ */
+export const UNDERLAY_ID = '~underlay';
+
 export class Selection {
   private ids = new Set<Id>();
   private listeners = new Set<() => void>();
