@@ -26,10 +26,12 @@ import type { Constraint, ConstraintKind, Id } from '../model/types';
 import { type ConstraintCluster, constrainedClusters, hasConstraints, mergeClusters } from './components';
 import { type ConstraintSolver, type SolveResult, loadSolver } from './solver';
 
-export type Outcome = { ok: true } | { ok: false; message: string };
+/** `redundant` marks a failure only because the new constraint is already implied by others. */
+export type Outcome = { ok: true } | { ok: false; message: string; redundant?: boolean };
 
 const failure = (r: SolveResult): Outcome => ({
   ok: false,
+  ...(!r.degenerate && r.conflicting.length === 0 && r.redundant.length > 0 ? { redundant: true } : {}),
   message:
     r.degenerate
       ? '이 구속을 만족하려면 선이나 원이 한 점으로 줄어들어야 합니다.'
@@ -132,13 +134,32 @@ export class ConstraintService {
 
   /** Adds constraints of one kind to the given refs and solves; nothing changes if they cannot be satisfied. */
   async add(kind: ConstraintKind, refsList: Id[][], value?: number): Promise<Outcome> {
+    return this.addAll(refsList.map((refs) => ({ kind, refs, ...(value !== undefined ? { value } : {}) })));
+  }
+
+  /**
+   * Adds a distance or angle constraint. A distance between two lines also keeps them parallel (walls a set
+   * distance apart), unless other constraints already do, in which case the extra parallel constraint would be
+   * redundant and the distance alone is added.
+   */
+  async addDimension(kind: 'distance' | 'angle', refs: Id[], value: number): Promise<Outcome> {
+    const lines = refs.every((r) => this.doc.entities.get(r)?.kind === 'line');
+    if (kind === 'distance' && lines) {
+      const both = await this.addAll([
+        { kind: 'parallel', refs },
+        { kind, refs, value },
+      ]);
+      // Only a parallel constraint that other constraints already imply may be dropped; any other failure
+      // (e.g. the lines are held at an angle) would leave the "parallel" distance between lines that aren't.
+      if (both.ok || !both.redundant) return both;
+    }
+    return this.add(kind, [refs], value);
+  }
+
+  /** Adds several constraints as one undo step and solves; nothing changes if they cannot all be satisfied. */
+  async addAll(specs: Omit<Constraint, 'id'>[]): Promise<Outcome> {
     const solver = await this.ensure();
-    const constraints: Constraint[] = refsList.map((refs) => ({
-      id: newId('k'),
-      kind,
-      refs,
-      ...(value !== undefined ? { value } : {}),
-    }));
+    const constraints: Constraint[] = specs.map((s) => ({ ...s, id: newId('k'), refs: [...s.refs] }));
     const seeds = constraints.flatMap((c) => c.refs.flatMap((r) => this.pointsOf(r)));
     this.doc.addConstraints(constraints);
     const cluster = mergeClusters(constrainedClusters(this.doc, seeds));
@@ -183,10 +204,23 @@ export class ConstraintService {
   async setRadius(circleId: Id, value: number): Promise<Outcome> {
     const existing = [...this.doc.constraints.values()].find((c) => c.kind === 'radius' && c.refs[0] === circleId);
     if (!existing) return this.add('radius', [[circleId]], value);
+    return this.setValue(existing.id, value, '반지름 변경');
+  }
+
+  /**
+   * Changes the value of a radius, distance or angle constraint and re-solves; nothing changes if the new value
+   * can't be met.
+   */
+  async setValue(constraintId: Id, value: number, label = '치수 값 변경'): Promise<Outcome> {
+    const existing = this.doc.constraints.get(constraintId);
+    if (!existing || existing.value === undefined) return { ok: false, message: '값을 가진 구속이 아닙니다.' };
+    if (!(value > 0) || (existing.kind === 'angle' && !(value < 180))) {
+      return { ok: false, message: existing.kind === 'angle' ? '각도는 0°보다 크고 180°보다 작아야 합니다.' : '0보다 큰 값을 입력하십시오.' };
+    }
     const solver = await this.ensure();
     const change = new SetConstraintValue(existing.id, existing.value, value);
     change.apply(this.doc);
-    const cluster = mergeClusters(constrainedClusters(this.doc, this.pointsOf(circleId)));
+    const cluster = mergeClusters(constrainedClusters(this.doc, existing.refs.flatMap((r) => this.pointsOf(r))));
     const before = geometryOf(this.doc, cluster);
     const r = solver.solve(this.doc, cluster);
     if (!r.ok) {
@@ -194,7 +228,7 @@ export class ConstraintService {
       restoreGeometry(this.doc, before);
       return failure(r);
     }
-    this.history.record(new Batch('반지름 변경', [change, new SetGeometry('구속 풀이', before, geometryOf(this.doc, cluster))]));
+    this.history.record(new Batch(label, [change, new SetGeometry('구속 풀이', before, geometryOf(this.doc, cluster))]));
     return { ok: true };
   }
 

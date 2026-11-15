@@ -44,7 +44,7 @@ DOM을 쓰지 않는 계층(geom, model, constraints, io, api)은 Node에서 그
 
 1. **편집은 항상 명령으로.** 도구·UI·API는 `Command`(`src/model/commands.ts`)를 만들어 `history.run()`에 넘깁니다. `DocumentModel`을 직접 바꾸면 실행 취소가 깨집니다. 여러 명령을 한 단계로 묶을 때는 `Batch`, 사후에 묶을 때는 `history.squash()`를 씁니다.
 2. **변경 알림.** 명령이 실행되면 `doc.changed()`가 `rev`를 올리고 구독자(`doc.onChange`)를 부릅니다. 공간 색인(`SpatialIndex`)과 선 띠 계산(`StrokeGeometry`)은 `rev`가 바뀔 때만 다시 계산합니다.
-3. **구속.** 구속이 걸린 형상을 끌거나 구동 치수 값을 바꾸면 `ConstraintService`(`src/constraints/service.ts`)가 planegcs로 나머지 점을 다시 풀고, 결과 형상을 실행 취소 가능한 명령(`SetGeometry` 등)으로 기록합니다.
+3. **구속.** 구속이 걸린 형상을 끌거나 구동 치수 값을 바꾸면 `ConstraintService`(`src/constraints/service.ts`)가 planegcs로 나머지 점을 다시 풀고, 결과 형상을 실행 취소 가능한 명령(`SetGeometry` 등)으로 기록합니다. 거리·각도 치수 구속(`distance`, `angle`)의 선택 규칙·측정·각도 방향·그리기 위치는 DOM 없는 `src/constraints/dimensions.ts` 한 곳에 있어 솔버, 렌더러, 선택 도구(값 더블클릭), 속성 패널이 같은 정의를 씁니다.
 4. **그리기.** `App.render()`가 requestAnimationFrame마다 한 번 `Renderer.render(state)`를 부릅니다. 순서: 밑그림 → 그리드 → 다른 층의 연결 구조(점선) → 도형 면 채움(그리기 순서대로) → 선(양식별로 묶어서) → 설비·구조 기호 → 치수 → 이름표 → 선택·호버 → 도구 미리보기.
 
 ## 핵심 개념

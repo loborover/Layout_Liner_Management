@@ -973,3 +973,14 @@ body.viewer-app {
   font-size: 11px;
   color: var(--ink-muted);
 }
+
+/* Dimension constraint rows (치수 구속): value and a remove button on one line. */
+.props .v .dim-value {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.props .v .dim-value input[type='number'] {
+  min-width: 0;
+}
