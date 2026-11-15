@@ -194,17 +194,27 @@ export function moveToLayer(doc: DocumentModel, entityIds: Id[], layer: Id): Com
  * Moves objects to a layer, which may be on another floor (dragging them in the object tree onto a layer, folder or
  * floor). A shape takes its edge lines along, as a face can't be on another layer than its loop. When objects
  * leave their floor, points they share with objects staying behind are split off, so editing one floor never
- * moves geometry on another. Locked or hidden objects are left where they are. Returns null when nothing moves.
+ * moves geometry on another. Objects on locked or hidden layers are left where they are. Returns null when nothing moves.
  */
 export function transferItems(doc: DocumentModel, entityIds: Id[], layer: Id): Command | null {
   const target = doc.layers.get(layer);
   if (!target) return null;
+  // Objects on any floor can be moved from the tree, as long as their layer is on and unlocked. A shape goes with
+  // its edges and an edge line with its shapes (and their other edges), so a face never splits across layers.
   const ids = new Set<Id>();
+  const add = (e: Entity) => {
+    if (ids.has(e.id) || !doc.isLayerOpen(e.layer)) return;
+    ids.add(e.id);
+    if (e.kind === 'shape') {
+      for (const edge of e.edges) {
+        const l = doc.entities.get(edge);
+        if (l) add(l);
+      }
+    } else if (e.kind === 'line') for (const s of doc.shapesUsing([e.id])) add(s);
+  };
   for (const id of entityIds) {
     const e = doc.entities.get(id);
-    if (!e || !doc.isEditable(e)) continue;
-    ids.add(id);
-    if (e.kind === 'shape') for (const edge of e.edges) ids.add(edge);
+    if (e) add(e);
   }
   const moving = [...doc.entities.values()].filter((e) => ids.has(e.id) && e.layer !== layer);
   if (moving.length === 0) return null;

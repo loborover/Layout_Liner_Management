@@ -24,7 +24,16 @@ import type { Tool, ToolContext, ToolPointer } from './tool';
 
 type State =
   | { kind: 'idle' }
-  | { kind: 'press'; start: Vec2; startRaw: Vec2; startScreen: Vec2; onEntity: boolean; copy: boolean }
+  | {
+      kind: 'press';
+      start: Vec2;
+      startRaw: Vec2;
+      startScreen: Vec2;
+      onEntity: boolean;
+      copy: boolean;
+      /** Ctrl+press on an unselected object while something else is selected: a click (no drag) selects it. */
+      clickSelects: Id | null;
+    }
   | {
       kind: 'move';
       start: Vec2;
@@ -75,16 +84,18 @@ export class SelectTool implements Tool {
     if (p.button !== 0) return;
     const { selection } = this.ctx;
     const hit = this.hitAt(p.raw);
-    if (hit) {
-      // With Ctrl, Shift locks the drag's direction instead of adding to the selection.
-      if (p.shift && !p.ctrl) selection.toggle(hit);
+    // Ctrl with something selected grabs that selection wherever the press is, even over another object.
+    const grab = p.ctrl && selection.size > 0;
+    if (hit && !grab) {
+      if (p.shift) selection.toggle(hit);
       else if (!selection.has(hit)) selection.set([hit]);
     }
     // A press on a vertex starts the drag from the vertex itself, so it lands exactly on the snap target.
     const start = hit && this.ctx.doc.isVertex(hit) ? { ...this.ctx.doc.vertex(hit) } : p.world;
     // Ctrl grabs the selection wherever the press is, like Photoshop's Ctrl+drag (the move tool).
-    const onEntity = (!!hit && selection.has(hit)) || (p.ctrl && selection.size > 0);
-    this.state = { kind: 'press', start, startRaw: p.raw, startScreen: p.screen, onEntity, copy: !!p.alt };
+    const onEntity = (!!hit && selection.has(hit)) || grab;
+    const clickSelects = grab && hit && !selection.has(hit) ? hit : null;
+    this.state = { kind: 'press', start, startRaw: p.raw, startScreen: p.screen, onEntity, copy: !!p.alt, clickSelects };
   }
 
   move(p: ToolPointer): void {
@@ -142,7 +153,9 @@ export class SelectTool implements Tool {
     const { ctx } = this;
     const s = this.state;
     this.state = { kind: 'idle' };
-    if (s.kind === 'press' && !s.onEntity && !p.shift) {
+    if (s.kind === 'press' && s.clickSelects) {
+      ctx.selection.set([s.clickSelects]);
+    } else if (s.kind === 'press' && !s.onEntity && !p.shift) {
       ctx.selection.clear();
     } else if (s.kind === 'move') {
       const steps: Command[] = s.copy ? [s.copy.command] : [];

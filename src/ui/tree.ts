@@ -9,7 +9,7 @@
  * Clicking a floor shows it; clicking an object selects it (Shift adds), double-clicking zooms to it. In edit
  * mode floors, folders and layers can be added, renamed (double-click), deleted, hidden and locked, and a
  * layer can be dragged onto a folder or a floor. Objects can be dragged onto a layer, a folder or a floor to move
- * them there (the selected objects when the dragged one is selected); Alt+drag copies them instead, keeping their
+ * them there (the selected objects when the dragged one is selected; an edge line takes its shape along, and objects on floors not in view can be moved too); Alt+drag copies them instead, keeping their
  * properties and giving named copies new unique names (src/model/edit.ts duplicateItems, transferItems). Object order and properties are edited with the ribbon's
  * 순서 group and the property panel. Tree edits are undoable commands (SetLayerTree); visibility and locks are
  * view state applied directly, as in most CAD tools.
@@ -397,7 +397,7 @@ export class ObjectTree {
     const layerId = layerForDrop(doc, target, this.host.currentLayer());
     if (!layerId) return this.host.notify('이 폴더에는 레이어가 없습니다. 레이어를 먼저 추가하십시오.');
     const layer = doc.layers.get(layerId)!;
-    if (!doc.isLayerEditable(layerId)) return this.host.notify(`레이어 ${layer.name}(이)나 그 폴더가 잠겨 있거나 숨겨져 있어 옮길 수 없습니다.`);
+    if (!doc.isLayerOpen(layerId)) return this.host.notify(`레이어 ${layer.name}(이)나 그 폴더가 잠겨 있거나 숨겨져 있어 옮길 수 없습니다.`);
     const floor = doc.floors.get(layer.floor)?.name ?? '';
     if (copy) {
       const dup = duplicateItems(doc, ids, [{ x: 0, y: 0 }], { layer: layerId, label: '복사' });

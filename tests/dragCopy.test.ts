@@ -115,6 +115,21 @@ describe('modifier drags (select tool)', () => {
     expect(doc.point('a')).toMatchObject({ x: 40, y: 0 });
   });
 
+  it('Ctrl+drag over another object still moves the selection, and Ctrl+click selects that object', () => {
+    const { doc, history, selection, tool, at } = setup();
+    history.execute(new AddItems([{ id: 'c', x: 300, y: 200 }], [{ id: 'pt', kind: 'point', at: 'c', layer: 'layer-0' }]));
+    selection.set(['l']);
+    tool.down(at(300, 200, { ctrl: true }));
+    tool.move(at(310, 230, { ctrl: true }));
+    tool.up(at(310, 230, { ctrl: true }));
+    expect(doc.point('a')).toMatchObject({ x: 10, y: 30 });
+    expect(doc.point('c')).toMatchObject({ x: 300, y: 200 });
+    expect(selection.values()).toEqual(['l']);
+    tool.down(at(300, 200, { ctrl: true }));
+    tool.up(at(300, 200, { ctrl: true }));
+    expect(selection.values()).toEqual(['pt']);
+  });
+
   it('Ctrl+Shift+click on an object selects it rather than toggling it', () => {
     const { selection, tool, at } = setup();
     selection.set(['l']);
@@ -205,6 +220,24 @@ describe('object tree drops', () => {
     expect(doc.entities.get('e0')!.layer).toBe('layer-0');
     const back = doc.entities.get('e0')!;
     if (back.kind === 'line') expect(back.p2).toBe('p2');
+  });
+
+  it('moves objects from a floor that is not the one in view', () => {
+    const { doc, history } = twoFloors();
+    history.execute(transferItems(doc, ['s'], 'l-2')!);
+    doc.activeFloor = 'floor-2';
+    history.execute(transferItems(doc, ['x'], 'l-g1')!); // x is on floor 1, not in view
+    expect(doc.entities.get('x')!.layer).toBe('l-g1');
+    doc.layers.get('l-g1')!.locked = true;
+    expect(transferItems(doc, ['e0'], 'l-g1')).not.toBeNull(); // from floor 2 (open) …
+    expect(transferItems(doc, ['x'], 'l-2')).toBeNull(); // … but not off a locked layer
+  });
+
+  it('takes a dragged edge line along with its shape and the shape\'s other edges', () => {
+    const { doc, history } = twoFloors();
+    history.execute(transferItems(doc, ['e1'], 'l-g1')!);
+    for (const id of ['s', 'e0', 'e1', 'e2', 'e3']) expect(doc.entities.get(id)!.layer).toBe('l-g1');
+    expect(doc.entities.get('x')!.layer).toBe('layer-0');
   });
 
   it('keeps shared points within one floor and removes coincident constraints that would span floors', () => {
