@@ -37,6 +37,7 @@ import { labelRows, shapeLabelPlacement } from '../model/labels';
 import { buildScene } from '../model/scene3d';
 import { MAX_RECORD_KEY, parseRecordRef, recordKey } from '../data/records';
 import { newId } from '../model/ids';
+import { moveFolder, moveLayer } from '../model/layerTree';
 import { CATEGORY_LABELS, COLUMN_SECTIONS, type ColumnSection, PROP_DEFS, categoryOf, cleanProps, columnTypeFor, presetInfo } from '../model/presets';
 import type { CircleEntity, DocumentData, Entity, EquipmentType, Floor, Folder, Id, Layer, LineEntity, Point, ShapeEntity, StructureCategory } from '../model/types';
 import { LAYER_DEFAULT } from '../theme';
@@ -75,8 +76,9 @@ export class EditorApi {
     return {
       activeFloor: doc.activeFloor,
       floors: [...doc.floors.values()],
-      folders: [...doc.folders.values()],
-      layers: [...doc.layers.values()].map((l) => ({ ...l, objects: perLayer.get(l.id) ?? 0 })),
+      // Names may repeat; `id` identifies a folder or layer, `path` says where it is for people.
+      folders: [...doc.folders.values()].map((f) => ({ ...f, path: doc.treePath(f.id) })),
+      layers: [...doc.layers.values()].map((l) => ({ ...l, path: doc.treePath(l.id), objects: perLayer.get(l.id) ?? 0 })),
       objects: kinds,
       library: [...doc.equipmentTypes.values()].map((t) => ({ ...t, category: categoryOf(t) })),
       extents: doc.extents(),
@@ -601,12 +603,35 @@ export class EditorApi {
     return { ok: true };
   }
 
-  addFolder(p: { name: string; floor?: Id }) {
-    const floor = p.floor ?? this.doc.activeFloor;
+  /** Adds a folder under a floor, or inside another folder (`parent`, which also sets the floor). */
+  addFolder(p: { name: string; floor?: Id; parent?: Id }) {
+    const parent = p.parent ? this.doc.folders.get(p.parent) : undefined;
+    if (p.parent && !parent) throw new ApiError(`폴더가 없습니다: ${p.parent}`);
+    const floor = parent?.floor ?? p.floor ?? this.doc.activeFloor;
     if (!this.doc.floors.has(floor)) throw new ApiError(`층이 없습니다: ${floor}`);
-    const folder: Folder = { id: newId('folder'), name: String(p.name || '폴더'), floor, visible: true, locked: false };
+    const folder: Folder = { id: newId('folder'), name: String(p.name || '폴더'), floor, ...(parent ? { parent: parent.id } : {}), visible: true, locked: false };
     this.tree('폴더 추가', (t) => t.folders.push(folder));
-    return { folder: folder.id };
+    return { folder: folder.id, path: this.doc.treePath(folder.id) };
+  }
+
+  /**
+   * Renames, hides, locks or moves a folder with everything in it: `parent` puts it inside another folder,
+   * `parent: null` takes it out to its floor (or to `floor`, moving it to another floor).
+   */
+  updateFolder(p: { id: Id; name?: string; visible?: boolean; locked?: boolean; parent?: Id | null; floor?: Id }) {
+    const folder = this.doc.folders.get(p.id);
+    if (!folder) throw new ApiError(`폴더가 없습니다: ${p.id}`);
+    let error: string | null = null;
+    this.tree('폴더 수정', (t) => {
+      const f = t.folders.find((x) => x.id === p.id)!;
+      if (p.name !== undefined) f.name = String(p.name);
+      if (p.visible !== undefined) f.visible = !!p.visible;
+      if (p.locked !== undefined) f.locked = !!p.locked;
+      if (p.parent) error = moveFolder(t, p.id, { kind: 'folder', id: p.parent });
+      else if (p.parent === null || p.floor !== undefined) error = moveFolder(t, p.id, { kind: 'floor', id: p.floor ?? f.floor });
+      if (error) throw new ApiError(error);
+    });
+    return { ok: true, path: this.doc.treePath(p.id) };
   }
 
   addLayer(p: { name: string; floor?: Id; folder?: Id; color?: string }) {
@@ -624,7 +649,7 @@ export class EditorApi {
       ...(folder ? { folder: folder.id } : {}),
     };
     this.tree('레이어 추가', (t) => t.layers.push(layer));
-    return { layer: layer.id };
+    return { layer: layer.id, path: this.doc.treePath(layer.id) };
   }
 
   /** Renames, recolours, hides, locks or re-files a layer (`folder: null` takes it out of its folder). */
@@ -637,11 +662,8 @@ export class EditorApi {
       if (p.color !== undefined) l.color = this.color(p.color);
       if (p.visible !== undefined) l.visible = !!p.visible;
       if (p.locked !== undefined) l.locked = !!p.locked;
-      if (p.folder === null) delete l.folder;
-      else if (p.folder !== undefined) {
-        l.folder = p.folder;
-        l.floor = this.doc.folders.get(p.folder)!.floor;
-      }
+      if (p.folder === null) moveLayer(t, p.id, { kind: 'floor', id: l.floor });
+      else if (p.folder !== undefined) moveLayer(t, p.id, { kind: 'folder', id: p.folder });
     });
     return { ok: true };
   }

@@ -185,9 +185,21 @@ function parseFillImage(v: Raw, where: string): FillImage {
 const isHeight = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v) && v >= 0;
 
 /**
+ * Folder and layer names may repeat (the user's choice, 2026-11-15), so their ids are what tells them apart, in
+ * files, the API and for AI agents: two nodes with one id are refused rather than silently merged.
+ */
+function unique(nodes: { id: string }[], what: string): void {
+  const seen = new Set<string>();
+  for (const n of nodes) {
+    if (seen.has(n.id)) throw new FormatError(`${what} id가 중복됩니다: ${n.id}`);
+    seen.add(n.id);
+  }
+}
+
+/**
  * Parses and validates a saved drawing. Throws FormatError with a readable message.
  * Versions 2 to 4 load as they are (later versions only added optional fields, the coincident constraint and label
- * objects; Z and heights default to 0); files before version 5 also get the H-beam column preset added to their
+ * objects; Z and heights default to 0; version 6 added the optional folder `parent`); files before version 5 also get the H-beam column preset added to their
  * library. Version 1 files (before floors, folders and shapes) are upgraded: everything goes on one floor "1층" and
  * the structural presets are added to the library.
  */
@@ -205,7 +217,7 @@ export function deserialize(text: string): DocumentData {
 export function validate(raw: unknown): DocumentData {
   const obj = raw as Raw;
   if (!obj || obj.format !== 'layout-liner') throw new FormatError('Layout Liner 도면 파일이 아닙니다.');
-  if (![1, 2, 3, 4, 5].includes(obj.version)) throw new FormatError(`지원하지 않는 파일 버전입니다: ${String(obj.version)}`);
+  if (![1, 2, 3, 4, 5, 6].includes(obj.version)) throw new FormatError(`지원하지 않는 파일 버전입니다: ${String(obj.version)}`);
   if (!Array.isArray(obj.points) || !Array.isArray(obj.entities)) throw new FormatError('points/entities 항목이 없습니다.');
 
   const points: Point[] = obj.points.map((p: Raw, i: number) => {
@@ -229,7 +241,8 @@ export function validate(raw: unknown): DocumentData {
   const floorIds = new Set(floors.map((f) => f.id));
   const floorOr = (id: unknown) => (isStr(id) && floorIds.has(id) ? id : floors[0].id);
 
-  const folders: Folder[] = (Array.isArray(obj.folders) ? obj.folders : []).map((f: Raw, i: number) => {
+  const rawFolders: Raw[] = Array.isArray(obj.folders) ? obj.folders : [];
+  const folders: Folder[] = rawFolders.map((f: Raw, i: number) => {
     if (!isStr(f?.id)) throw new FormatError(`잘못된 폴더 데이터 (#${i})`);
     return {
       id: f.id,
@@ -239,7 +252,16 @@ export function validate(raw: unknown): DocumentData {
       locked: f.locked === true,
     };
   });
+  unique(folders, '폴더');
   const folderFloor = new Map(folders.map((f) => [f.id, f.floor]));
+  // Nested folders (version 6): a parent must be another folder on the same floor, and a loop is cut where it closes.
+  folders.forEach((f, i) => {
+    const parent = rawFolders[i].parent;
+    if (!isStr(parent) || parent === f.id || folderFloor.get(parent) !== f.floor) return;
+    const byId = new Map(folders.map((x) => [x.id, x]));
+    for (let p: Folder | undefined = byId.get(parent); p; p = p.parent ? byId.get(p.parent) : undefined) if (p.id === f.id) return;
+    f.parent = parent;
+  });
 
   const layers: Layer[] =
     Array.isArray(obj.layers) && obj.layers.length > 0
@@ -259,6 +281,7 @@ export function validate(raw: unknown): DocumentData {
           return layer;
         })
       : [{ id: DEFAULT_LAYER_ID, name: '0', color: LAYER_DEFAULT, visible: true, locked: false, floor: floors[0].id }];
+  unique(layers, '레이어');
   const layerIds = new Set(layers.map((l) => l.id));
 
   // Drawings saved before equipment existed get the default library; older ones also get the structural presets.
@@ -384,7 +407,7 @@ export function validate(raw: unknown): DocumentData {
 
   return {
     format: 'layout-liner',
-    version: 5,
+    version: 6,
     units: 'mm',
     points,
     entities,

@@ -76,3 +76,55 @@ describe('serialize', () => {
     expect(() => deserialize(JSON.stringify({ ...data, constraints: [{ id: 'j', kind: 'coincident', refs: ['b'] }] }))).toThrow(/두 개 이상/);
   });
 });
+
+describe('nested folders (version 6)', () => {
+  const base = (folders: unknown[], layers: unknown[] = []) =>
+    JSON.stringify({
+      format: 'layout-liner',
+      version: 6,
+      units: 'mm',
+      points: [],
+      entities: [],
+      constraints: [],
+      floors: [
+        { id: 'floor-1', name: '1층', elevation: 0, height: 4000 },
+        { id: 'floor-2', name: '2층', elevation: 4000, height: 4000 },
+      ],
+      folders,
+      layers: [{ id: 'layer-0', name: '0', color: '#000000', visible: true, locked: false, floor: 'floor-1' }, ...layers],
+      activeFloor: 'floor-1',
+      equipmentTypes: [],
+    });
+  const folder = (id: string, parent?: string, floor = 'floor-1') => ({ id, name: id, floor, visible: true, locked: false, ...(parent ? { parent } : {}) });
+
+  it('keeps a folder inside a folder through a save and load', () => {
+    const data = deserialize(base([folder('a'), folder('b', 'a'), folder('c', 'b')]));
+    expect(data.version).toBe(6);
+    expect(data.folders.map((f) => f.parent)).toEqual([undefined, 'a', 'b']);
+    const doc = new DocumentModel();
+    doc.load(data);
+    expect(deserialize(serialize(doc.toData())).folders.map((f) => f.parent)).toEqual([undefined, 'a', 'b']);
+  });
+
+  it('drops a parent on another floor, a missing one and a loop', () => {
+    const data = deserialize(base([folder('a', 'b'), folder('b', 'a'), folder('x', 'missing'), folder('y', 'a', 'floor-2')]));
+    const parents = Object.fromEntries(data.folders.map((f) => [f.id, f.parent]));
+    // The loop a ⇄ b is cut where it closes.
+    expect([parents.a, parents.b].filter(Boolean)).toHaveLength(1);
+    expect(parents.x).toBeUndefined();
+    expect(parents.y).toBeUndefined();
+  });
+
+  it('refuses two folders or two layers with one id (names may repeat, ids may not)', () => {
+    expect(() => deserialize(base([folder('a'), folder('a')]))).toThrow(FormatError);
+    expect(() => deserialize(base([], [{ id: 'layer-0', name: '0', floor: 'floor-1' }]))).toThrow(FormatError);
+    const sameNames = deserialize(base([{ ...folder('a'), name: '협력사' }, { ...folder('b'), name: '협력사' }]));
+    expect(sameNames.folders.map((f) => f.name)).toEqual(['협력사', '협력사']);
+  });
+
+  it('opens version 5 files (folders without parents) as before', () => {
+    const v5 = JSON.parse(base([folder('a')]));
+    v5.version = 5;
+    expect(deserialize(JSON.stringify(v5)).folders[0].parent).toBeUndefined();
+  });
+});

@@ -18,6 +18,7 @@ import {
 } from './commands';
 import { type DocumentModel, cloneEntity } from './document';
 import { newId } from './ids';
+import { folderSubtree } from './layerTree';
 import type { Constraint, Entity, EquipmentType, Id, LineEntity, Point, ShapeEntity } from './types';
 
 /** Next free tag for a type, e.g. "MC-4" after "MC-1".."MC-3". `taken` holds tags handed out but not yet in the document. */
@@ -511,16 +512,22 @@ export interface TreeDropTarget {
 
 /**
  * Layer that objects dropped on a tree node go to: the layer itself; for a folder or a floor, the current layer
- * when it is in there, else its first layer (for a floor, preferring layers outside folders). Null when the
- * folder has no layer.
+ * when it is in there, else its first layer (for a floor, preferring layers outside folders; for a folder, its own
+ * layers before those of its sub-folders). Null when the folder holds no layer at all.
  */
 export function layerForDrop(doc: DocumentModel, target: TreeDropTarget, current: Id): Id | null {
   if (target.kind === 'layer') return doc.layers.has(target.id) ? target.id : null;
   const layers = [...doc.layers.values()];
-  const inside = target.kind === 'folder' ? layers.filter((l) => l.folder === target.id) : layers.filter((l) => l.floor === target.id);
+  if (target.kind === 'floor') {
+    const inside = layers.filter((l) => l.floor === target.id);
+    if (inside.some((l) => l.id === current)) return current;
+    return (inside.find((l) => !l.folder) ?? inside[0])?.id ?? null;
+  }
+  // A folder: its own layers first, then those of its sub-folders (folders nest).
+  const sub = folderSubtree([...doc.folders.values()], target.id);
+  const inside = layers.filter((l) => l.folder && sub.has(l.folder));
   if (inside.some((l) => l.id === current)) return current;
-  if (target.kind === 'floor') return (inside.find((l) => !l.folder) ?? inside[0])?.id ?? null;
-  return inside[0]?.id ?? null;
+  return (inside.find((l) => l.folder === target.id) ?? inside[0])?.id ?? null;
 }
 
 /**

@@ -297,15 +297,22 @@ export interface Floor {
   height: number;
 }
 
-/** Group of layers on one floor. Hiding or locking a folder hides or locks all of its layers. */
+/**
+ * Group of layers and other folders on one floor. Folders nest (e.g. 작업구역 > 협력사 > 회사별, the user's request
+ * 2026-11-15): hiding or locking a folder hides or locks everything inside it, however deep. Names need not be
+ * unique; the `id` is what identifies a folder (in files, the API and to AI agents).
+ */
 export interface Folder {
   id: Id;
   name: string;
   floor: Id;
+  /** Folder this one sits in (on the same floor); directly under the floor when absent. */
+  parent?: Id;
   visible: boolean;
   locked: boolean;
 }
 
+/** Layer of objects, under a floor or a folder. Like folders, names may repeat and the `id` is the identity. */
 export interface Layer {
   id: Id;
   name: string;
@@ -338,10 +345,10 @@ export interface DocumentData {
   /**
    * 2 added floors, folders, shapes, line styles, presets and bindings; 3 added point Z, object heights (3D) and point objects;
    * 4 added border opacity and patterns, circle borders, face opacity and images, coincident constraints and the
-   * underlay lock; 5 added border corner joins, shape labels, label objects and the H-beam column section. Older
-   * versions are upgraded on load.
+   * underlay lock; 5 added border corner joins, shape labels, label objects and the H-beam column section; 6 added
+   * nested folders (`Folder.parent`). Older versions are upgraded on load.
    */
-  version: 5;
+  version: 6;
   units: 'mm';
   points: Point[];
   entities: Entity[];

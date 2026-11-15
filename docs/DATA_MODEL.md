@@ -14,33 +14,36 @@
 ```jsonc
 {
   "format": "layout-liner",
-  "version": 5,
+  "version": 6,
   "units": "mm",
   "points": [ { "id": "p1", "x": 0, "y": 0, "z": 0 } ],
   "entities": [ /* 아래 객체들, 배열 순서 = 그리기 순서 = 트리 순서 */ ],
   "constraints": [ { "id": "c1", "kind": "horizontal", "refs": ["l1"] }, { "id": "c2", "kind": "coincident", "refs": ["p1", "p9"] } ],
   "floors":  [ { "id": "floor-1", "name": "1층", "elevation": 0, "height": 4000 } ],
-  "folders": [ { "id": "f1", "name": "구조", "floor": "floor-1", "visible": true, "locked": false } ],
-  "layers":  [ { "id": "layer-0", "name": "0", "color": "#1e293b", "visible": true, "locked": false, "floor": "floor-1", "folder": "f1" } ],
+  "folders": [ { "id": "f1", "name": "작업구역", "floor": "floor-1", "visible": true, "locked": false },
+               { "id": "f2", "name": "협력사", "floor": "floor-1", "parent": "f1", "visible": true, "locked": false } ],
+  "layers":  [ { "id": "layer-0", "name": "0", "color": "#1e293b", "visible": true, "locked": false, "floor": "floor-1", "folder": "f2" } ],
   "activeFloor": "floor-1",
   "equipmentTypes": [ { "id": "st-stair", "name": "계단", "width": 1200, "depth": 4200, "prefix": "ST", "category": "stair" } ],
   "underlay": { "src": "data:image/png;base64,…", "x": 0, "y": 0, "width": 30000, "height": 20000, "opacity": 0.5, "visible": true, "locked": false }
 }
 ```
 
-## 계층: 층 > 폴더 > 레이어 > 객체
+## 계층: 층 > 폴더 (> 폴더 …) > 레이어 > 객체
 
 | 단위 | 필드 | 설명 |
 | --- | --- | --- |
 | 층 `Floor` | `elevation`, `height` | 다층 건물의 한 층. `height`(층고)는 계단 단수와 경사로 기울기 계산에 쓰입니다. 활성 층(`activeFloor`)만 보이고 편집됩니다. |
-| 폴더 `Folder` | `floor`, `visible`, `locked` | 한 층 안에서 레이어를 묶습니다. 숨김·잠금이 안의 레이어에 모두 적용됩니다. |
+| 폴더 `Folder` | `floor`, `parent?`, `visible`, `locked` | 한 층 안에서 레이어와 다른 폴더를 묶습니다. `parent`(같은 층의 폴더 id, 버전 6)가 있으면 그 폴더 안에 있고, 없으면 층 바로 아래에 있습니다. 숨김·잠금은 안의 폴더와 레이어 전체에 깊이와 관계없이 적용됩니다. |
 | 레이어 `Layer` | `floor`, `folder?`, `color` | 객체가 속하는 단위. `folder`가 없으면 층 바로 아래에 있습니다. |
 | 객체 `Entity` | `layer` | 객체의 층은 레이어의 층입니다. |
+
+폴더와 레이어의 **이름은 겹쳐도 됩니다**(예: 회사마다 "설비" 레이어). 구분은 `id`로 합니다. id는 파일 안에서 종류별로 유일해야 하며, 같은 id가 둘이면 파일을 열 때 거부합니다. API `summary`는 각 폴더·레이어에 사람이 읽는 위치 `path`(예: `1층 / 작업구역 / 협력사 / A사 / 설비`)를 덧붙여 돌려주므로, AI나 연결된 시스템은 `id`로 지정하고 `path`로 확인하면 됩니다. 다른 층의 폴더나 없는 폴더를 가리키는 `parent`, 순환하는 `parent`는 열 때 끊습니다.
 
 ## 객체 (entities)
 
 모든 객체의 공통 필드: `id`, `kind`, `layer`, `name?`(사용자 이름), `binding?`(모니터링 키, [VIEWER.md](VIEWER.md)), `record?`(원본 데이터 참조 `{ dataset, key? }`, [DATA_SOURCES.md](DATA_SOURCES.md)).
-`record`는 데이터 게이트웨이의 데이터셋 이름(영문·숫자·`_-.` 64자 이내)과 레코드 키(200자 이내)입니다. `key`가 없으면 설비 번호(`tag`), 없으면 `name`이 키입니다. 원본 값은 파일에 저장하지 않습니다. 형식이 잘못된 `record`는 열 때 버려집니다. 버전 5에 더해진 선택 필드라 `version`은 그대로이며, 이전 편집기는 이 필드를 무시합니다.
+`record`는 데이터 게이트웨이의 데이터셋 이름(영문·숫자·`_-.` 64자 이내)과 레코드 키(200자 이내)입니다. `key`가 없으면 설비 번호(`tag`), 없으면 `name`이 키입니다. 원본 값은 파일에 저장하지 않습니다. 형식이 잘못된 `record`는 열 때 버려집니다. 버전 5에 더해진 선택 필드라 그때 `version`을 올리지 않았으며, 이전 편집기는 이 필드를 무시합니다.
 `line`, `circle`, `equipment`, `shape`와 설비 종류(`equipmentTypes`)에는 3D 보기용 `height?`(mm, 0 이상)가 있습니다. 점 객체, 라벨, 치수에는 높이가 없습니다(점의 높이는 `z`).
 
 | kind | 필드 | 설명 |
@@ -140,8 +143,9 @@ H형강 기둥(`shape: "hbeam"`, version 5)은 종류의 `width`가 춤 H(웨브
 | 3 | 점의 `z`, 객체와 설비 종류의 `height`, 점 객체(`point`) |
 | 4 | 테두리 `opacity`·`pattern`, 원의 `stroke`, 도형의 `fillOpacity`·`fillImage`, `coincident` 구속, 밑그림 `locked` |
 | 5 | 테두리 `join`, 도형의 `label`, 라벨 객체(`label`), 기둥 `shape: "hbeam"`과 `webThickness`·`flangeThickness`, 기본 종류 `st-column-h` |
+| 6 | 중첩 폴더(폴더의 `parent`) |
 
-버전 1 파일은 열 때 자동으로 변환됩니다. 모든 레이어가 `1층`(`floor-1`)에 들어가고 구조 프리셋 종류가 라이브러리에 추가됩니다. 버전 2~4 파일은 그대로 열립니다(새 필드가 없으면 기본값). 버전 5보다 오래된 파일에는 H형강 기둥 종류(`st-column-h`)가 라이브러리에 추가됩니다. 저장하면 버전 5가 됩니다. 버전 5 파일은 이전 버전 편집기에서 열리지 않습니다.
+버전 1 파일은 열 때 자동으로 변환됩니다. 모든 레이어가 `1층`(`floor-1`)에 들어가고 구조 프리셋 종류가 라이브러리에 추가됩니다. 버전 2~4 파일은 그대로 열립니다(새 필드가 없으면 기본값). 버전 5보다 오래된 파일에는 H형강 기둥 종류(`st-column-h`)가 라이브러리에 추가됩니다. 버전 5 파일은 그대로 열립니다(모든 폴더가 층 바로 아래). 저장하면 버전 6이 됩니다. 버전 6 파일은 이전 버전 편집기에서 열리지 않습니다.
 
 ## 형식을 바꿀 때 (체크리스트)
 

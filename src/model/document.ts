@@ -356,31 +356,57 @@ export class DocumentModel {
     return layer.floor === this.activeFloor && this.isLayerShown(id);
   }
 
-  /** Whether a layer and its folder are switched on, whatever floor is active (cross-floor ghosts use this). */
+  /** A folder and the folders it sits in, innermost first (stops at a missing parent or a loop). */
+  folderChain(id: Id | undefined): Folder[] {
+    const chain: Folder[] = [];
+    const seen = new Set<Id>();
+    for (let f = id ? this.folders.get(id) : undefined; f && !seen.has(f.id); f = f.parent ? this.folders.get(f.parent) : undefined) {
+      seen.add(f.id);
+      chain.push(f);
+    }
+    return chain;
+  }
+
+  /** Whether a layer and every folder around it are switched on, whatever floor is active (cross-floor ghosts use this). */
   isLayerShown(id: Id): boolean {
     const layer = this.layers.get(id);
     if (!layer) return true;
-    const folder = layer.folder ? this.folders.get(layer.folder) : undefined;
-    return layer.visible && (!folder || folder.visible);
+    return layer.visible && this.folderChain(layer.folder).every((f) => f.visible);
   }
 
-  /** Whether a layer accepts edits: visible and neither it nor its folder locked. */
+  private isLayerLocked(layer: Layer): boolean {
+    return layer.locked || this.folderChain(layer.folder).some((f) => f.locked);
+  }
+
+  /** Whether a layer accepts edits: visible and neither it nor any folder around it locked. */
   isLayerEditable(id: Id): boolean {
     const layer = this.layers.get(id);
     if (!layer) return true;
-    const folder = layer.folder ? this.folders.get(layer.folder) : undefined;
-    return this.isLayerVisible(id) && !layer.locked && !folder?.locked;
+    return this.isLayerVisible(id) && !this.isLayerLocked(layer);
   }
 
   /**
-   * Whether a layer can be edited from the object tree on any floor: switched on and neither it nor its folder
-   * locked. Unlike isLayerEditable it doesn't need the layer's floor to be the active one.
+   * Whether a layer can be edited from the object tree on any floor: switched on and neither it nor any folder
+   * around it locked. Unlike isLayerEditable it doesn't need the layer's floor to be the active one.
    */
   isLayerOpen(id: Id): boolean {
     const layer = this.layers.get(id);
     if (!layer) return true;
-    const folder = layer.folder ? this.folders.get(layer.folder) : undefined;
-    return this.isLayerShown(id) && !layer.locked && !folder?.locked;
+    return this.isLayerShown(id) && !this.isLayerLocked(layer);
+  }
+
+  /**
+   * Where a layer or folder sits, as names: "1층 / 작업구역 / 협력사 / A사". Names may repeat, so this is for people;
+   * the id identifies the node.
+   */
+  treePath(id: Id): string {
+    const layer = this.layers.get(id);
+    const folder = layer ? undefined : this.folders.get(id);
+    const node = layer ?? folder;
+    if (!node) return '';
+    const chain = this.folderChain(layer ? layer.folder : folder!.id).reverse();
+    const floor = this.floors.get(node.floor)?.name ?? '';
+    return [floor, ...chain.map((f) => f.name), ...(layer ? [layer.name] : [])].join(' / ');
   }
 
   isVisible(e: Entity): boolean {
@@ -394,7 +420,7 @@ export class DocumentModel {
   toData(): DocumentData {
     return {
       format: 'layout-liner',
-      version: 5,
+      version: 6,
       units: 'mm',
       points: [...this.points.values()].map((p) => ({ ...p })),
       entities: [...this.entities.values()].map(cloneEntity),
