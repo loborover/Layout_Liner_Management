@@ -268,19 +268,34 @@ export interface EquipmentType {
   height?: number;
 }
 
-export type ConstraintKind = 'horizontal' | 'vertical' | 'parallel' | 'perpendicular' | 'equal' | 'fixed' | 'radius' | 'coincident';
+export type ConstraintKind =
+  | 'horizontal'
+  | 'vertical'
+  | 'parallel'
+  | 'perpendicular'
+  | 'equal'
+  | 'fixed'
+  | 'radius'
+  | 'coincident'
+  | 'distance'
+  | 'angle';
 
 /**
  * Geometric constraint solved by planegcs.
  * `refs` are entity ids (lines/circles), except for 'fixed' and 'coincident', which reference point ids.
  * 'coincident' holds two or more points of different objects at one place: drawing from another object's point
  * makes one, so the objects stay separate and can be pulled apart by removing it (the user's request, 2026-11-15).
+ * Dimensional constraints (driving dimensions between points and edges, file version 6):
+ * - 'distance': `value` mm between two points ([point, point]), a point and a line's infinite extension
+ *   ([point, line]) or two parallel lines ([line, line], measured from the second line's first point to the first line).
+ * - 'angle': `value` degrees (0 < value < 180) between two lines ([line, line]), measured between the arms that
+ *   run away from where the lines meet (see src/constraints/dimensions.ts).
  */
 export interface Constraint {
   id: Id;
   kind: ConstraintKind;
   refs: Id[];
-  /** Radius in mm for 'radius'. */
+  /** Radius or distance in mm for 'radius' and 'distance', degrees for 'angle'. */
   value?: number;
 }
 
@@ -338,10 +353,10 @@ export interface DocumentData {
   /**
    * 2 added floors, folders, shapes, line styles, presets and bindings; 3 added point Z, object heights (3D) and point objects;
    * 4 added border opacity and patterns, circle borders, face opacity and images, coincident constraints and the
-   * underlay lock; 5 added border corner joins, shape labels, label objects and the H-beam column section. Older
-   * versions are upgraded on load.
+   * underlay lock; 5 added border corner joins, shape labels, label objects and the H-beam column section; 6 added
+   * distance and angle (dimensional) constraints. Older versions are upgraded on load.
    */
-  version: 5;
+  version: 6;
   units: 'mm';
   points: Point[];
   entities: Entity[];

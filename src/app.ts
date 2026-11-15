@@ -16,6 +16,7 @@
 import type { Box, Vec2 } from './geom/vec';
 import { FormatError, deserialize, serialize } from './io/serialize';
 import { hasConstraints } from './constraints/components';
+import { angleFromSelection, distanceFromSelection } from './constraints/dimensions';
 import { type ClusterStatus, ConstraintService } from './constraints/service';
 import { Batch, type Command, History, RemoveConstraints, RemoveEntities, SetDimensionValue, SetEquipmentTypes, SetUnderlay, UpdateEntities } from './model/commands';
 import { type ColumnSection, columnTypeFor } from './model/presets';
@@ -263,6 +264,13 @@ export class App implements UiHost {
   setPoint(id: Id, to: { x: number; y: number; z?: number }): void {
     if (this.currentMode !== 'edit') return this.notify('뷰어 모드에서는 편집할 수 없습니다.');
     void this.constraints.setPoint(id, to).then((r) => {
+      if (!r.ok) this.notify(r.message);
+    });
+  }
+
+  setConstraintValue(id: Id, value: number): void {
+    if (this.currentMode !== 'edit') return this.notify('뷰어 모드에서는 편집할 수 없습니다.');
+    void this.constraints.setValue(id, value).then((r) => {
       if (!r.ok) this.notify(r.message);
     });
   }
@@ -1333,7 +1341,25 @@ export class App implements UiHost {
     const lines = selected.filter((e) => e.kind === 'line').map((e) => e.id);
     const circles = selected.filter((e) => e.kind === 'circle').map((e) => e.id);
     let refs: Id[][] = [];
+    let value: number | undefined;
     switch (kind) {
+      case 'distance':
+      case 'angle': {
+        const pick = kind === 'distance' ? distanceFromSelection(this.doc, this.selection.values()) : angleFromSelection(this.doc, this.selection.values());
+        if (!pick.ok) return this.notify(pick.message);
+        const angle = kind === 'angle';
+        const answer = this.ask(
+          angle ? '각도(°)를 입력하십시오. 0보다 크고 180보다 작아야 합니다.' : '거리(mm)를 입력하십시오.',
+          String(Math.round(pick.value * (angle ? 100 : 10)) / (angle ? 100 : 10)),
+        );
+        if (answer === null) return;
+        value = Number(answer);
+        if (!(value > 0) || (angle && !(value < 180))) {
+          return this.notify(angle ? '각도는 0°보다 크고 180°보다 작아야 합니다.' : '0보다 큰 숫자를 입력하십시오.');
+        }
+        refs = [pick.refs];
+        break;
+      }
       case 'horizontal':
       case 'vertical':
         if (lines.length === 0) return this.notify('선을 하나 이상 선택하십시오.');
@@ -1373,7 +1399,10 @@ export class App implements UiHost {
         return;
     }
     try {
-      const r = await this.constraints.add(kind, refs);
+      const r =
+        (kind === 'distance' || kind === 'angle') && value !== undefined
+          ? await this.constraints.addDimension(kind, refs[0], value)
+          : await this.constraints.add(kind, refs, value);
       if (!r.ok) this.notify(r.message);
     } catch (err) {
       this.notify(`구속 솔버를 불러오지 못했습니다: ${String(err)}`);

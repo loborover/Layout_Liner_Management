@@ -13,6 +13,7 @@
  * edge label the major grid lines with their distance from the origin (0,0) in mm, cm or m (`showRulers`).
  */
 import { dimensionGeometry } from '../geom/dimension';
+import { dimensionScale, dimensionShape, dimensionText, isDimensionConstraint } from '../constraints/dimensions';
 import type { Vec2 } from '../geom/vec';
 import { SNAP_LABELS, type SnapResult } from '../snap/snap';
 import { type DocumentModel, midpointId } from '../model/document';
@@ -325,6 +326,8 @@ const BADGES: Record<ConstraintKind, string> = {
   fixed: '',
   radius: 'R',
   coincident: '',
+  distance: '',
+  angle: '',
 };
 
 interface Styled {
@@ -497,6 +500,7 @@ export class Renderer {
 
     this.labelEntities(visible, state);
     if (!state.clean) this.drawConstraintBadges(new Set(visible.map((v) => v.e.id)));
+    if (!state.clean) this.drawDimensionConstraints(new Set(visible.map((v) => v.e.id)), state.unit);
     if (!state.clean) this.drawUnderlayFrame(state.hover);
     const painter = new Painter(ctx, view);
     if (!state.clean) {
@@ -874,6 +878,54 @@ export class Renderer {
     ctx.restore();
   }
 
+  /**
+   * Distance and angle constraints, drawn like dimensions in the driving colour with their value, when all of the
+   * geometry they reference is visible. Double-clicking the value edits it (src/tools/select.ts).
+   */
+  private drawDimensionConstraints(visible: ReadonlySet<Id>, unit: DisplayUnit): void {
+    const { ctx, view, doc } = this;
+    const scale = dimensionScale(view.pxToMm(1));
+    for (const c of doc.constraints.values()) {
+      if (!isDimensionConstraint(c)) continue;
+      if (!c.refs.every((r) => (doc.points.has(r) ? doc.isPointVisible(r) : visible.has(r)))) continue;
+      const shape = dimensionShape(doc, c, scale);
+      if (!shape) continue;
+      const text = dimensionText(c, (mm) => formatLength(mm, unit));
+      if (shape.kind === 'linear') {
+        ctx.beginPath();
+        traceDimension(ctx, view, shape.a, shape.b, shape.offset);
+        ctx.strokeStyle = COLORS.driving;
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'alphabetic';
+        labelDimension(ctx, view, shape.a, shape.b, shape.offset, text, COLORS.driving);
+        continue;
+      }
+      if (shape.kind === 'arc') {
+        const c0 = view.toScreen(shape.center);
+        const r = shape.radius * view.scale;
+        // Screen Y points down, so world angles turn the other way.
+        ctx.beginPath();
+        ctx.arc(c0.x, c0.y, r, -shape.start, -(shape.start + shape.sweep), shape.sweep > 0);
+        ctx.strokeStyle = COLORS.driving;
+        ctx.lineWidth = 1;
+        ctx.stroke();
+      }
+      const s = view.toScreen(shape.label);
+      ctx.font = '12px system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      const w = ctx.measureText(text).width;
+      ctx.fillStyle = COLORS.labelPlate;
+      ctx.fillRect(s.x - w / 2 - 2, s.y - 7, w + 4, 14);
+      ctx.fillStyle = COLORS.driving;
+      ctx.fillText(text, s.x, s.y);
+    }
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
+  }
+
   private drawConstraintBadges(visible: ReadonlySet<Id>): void {
     if (this.doc.constraints.size === 0) return;
     const { ctx, view } = this;
@@ -895,6 +947,7 @@ export class Renderer {
         }
         continue;
       }
+      if (isDimensionConstraint(c)) continue; // drawn as dimensions (drawDimensionConstraints)
       const text = c.kind === 'radius' ? `R${Math.round(c.value ?? 0)}` : BADGES[c.kind];
       for (const id of c.refs) {
         if (!visible.has(id)) continue;

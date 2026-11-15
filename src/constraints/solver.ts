@@ -9,6 +9,7 @@ import type { GcsWrapper } from '@salusoft89/planegcs';
 import type { DocumentModel } from '../model/document';
 import type { Id } from '../model/types';
 import type { ConstraintCluster } from './components';
+import { angleArms, measureDimension } from './dimensions';
 
 export interface SolveResult {
   ok: boolean;
@@ -30,6 +31,8 @@ const COLLAPSED = 0.5;
 /** How far (mm, or sine of an angle) a constraint between immovable points may be off and still hold. */
 const TOLERANCE = 1e-3;
 const ANGLE_TOLERANCE = 1e-6;
+/** How far (degrees) an angle constraint between immovable lines may be off and still hold. */
+const ANGLE_TOLERANCE_DEG = 1e-3;
 
 // planegcs SolveStatus: Success 0, Converged 1, Failed 2, SuccessfulSolutionInvalid 3.
 const SOLVED = new Set([0, 1]);
@@ -120,6 +123,11 @@ export class ConstraintSolver {
     for (const id of cluster.constraintIds) {
       const c = doc.constraints.get(id);
       if (!c) continue;
+      if ((c.kind === 'distance' || c.kind === 'angle') && immovable(c.refs.flatMap(pointsOf))) {
+        const tolerance = c.kind === 'angle' ? ANGLE_TOLERANCE_DEG : TOLERANCE;
+        if (!(Math.abs(measureDimension(doc, c) - (c.value ?? 0)) <= tolerance)) unmet.push(id);
+        continue;
+      }
       const hasFreeSize = c.kind === 'radius' || (c.kind === 'equal' && doc.entities.get(c.refs[0])?.kind === 'circle');
       if (c.kind !== 'horizontal' && c.kind !== 'vertical' && !hasFreeSize && immovable(c.refs.flatMap(pointsOf))) {
         if (!this.holds(doc, c.kind, c.refs)) unmet.push(id);
@@ -152,6 +160,38 @@ export class ConstraintSolver {
           // One pair per extra point, all tied to the first: planegcs has no n-point coincidence.
           c.refs.slice(1).forEach((p, i) => primitives.push({ id: `${id}#${i}`, type: 'p2p_coincident', p1_id: a, p2_id: p }));
           break;
+        case 'distance': {
+          const la = doc.entities.get(a);
+          const lb = doc.entities.get(b);
+          if (la?.kind === 'line' && lb?.kind === 'line') {
+            // Between parallel lines: from the second line's first point to the first line (they are kept parallel
+            // by other constraints, if at all, so the dimension never doubles up with a parallel constraint).
+            primitives.push({ id, type: 'p2l_distance', p_id: lb.p1, l_id: a, distance: c.value ?? 0 });
+          } else if (lb?.kind === 'line') {
+            primitives.push({ id, type: 'p2l_distance', p_id: a, l_id: b, distance: c.value ?? 0 });
+          } else {
+            primitives.push({ id, type: 'p2p_distance', p1_id: a, p2_id: b, distance: c.value ?? 0 });
+          }
+          break;
+        }
+        case 'angle': {
+          const la = doc.entities.get(a);
+          const lb = doc.entities.get(b);
+          if (la?.kind !== 'line' || lb?.kind !== 'line') break;
+          // Arms run away from the corner, and the current turn direction is kept, so the solver adjusts the
+          // angle in place instead of jumping to the mirrored or supplementary solution.
+          const arms = angleArms(doc, la, lb);
+          primitives.push({
+            id,
+            type: 'l2l_angle_pppp',
+            l1p1_id: arms.a[0],
+            l1p2_id: arms.a[1],
+            l2p1_id: arms.b[0],
+            l2p2_id: arms.b[1],
+            angle: (arms.sign * (c.value ?? 0) * Math.PI) / 180,
+          });
+          break;
+        }
         case 'fixed':
           break; // expressed through the points' fixed flag
       }
