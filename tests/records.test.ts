@@ -149,4 +149,20 @@ describe('source data as formula values', () => {
     expect(store.base).toBe('http://other');
     expect(store.peek('equipment', 'MC-1')).toBeUndefined();
   });
+
+  it('drops answers from the previous gateway after the address changes', async () => {
+    let release: () => void = () => undefined;
+    const slow = (url: string) =>
+      new Promise<{ ok: boolean; status: number; json(): Promise<unknown> }>((resolve) => {
+        release = () => resolve({ ok: true, status: 200, json: async () => ({ records: { A: { from: url } }, missing: [] }) });
+      });
+    const store = new RecordStore('http://old', slow);
+    const inFlight = store.get('ds', 'A');
+    await new Promise((r) => setTimeout(r, 5));
+    store.setBase('http://new');
+    expect(await inFlight).toEqual({ status: 'error', message: '게이트웨이 주소가 바뀌었습니다.' });
+    release();
+    await new Promise((r) => setTimeout(r, 5));
+    expect(store.peek('ds', 'A')).toBeUndefined();
+  });
 });

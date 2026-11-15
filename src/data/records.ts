@@ -112,6 +112,8 @@ export class RecordStore {
   private cache = new Map<string, CacheEntry>();
   private pending = new Map<string, Set<string>>();
   private flushQueued = false;
+  /** Bumped when the gateway changes, so answers to requests sent to the old one are dropped. */
+  private generation = 0;
   private datasetList: { at: number; value: Promise<DatasetInfo[]> } | null = null;
   private listeners = new Set<() => void>();
   private baseUrl: string;
@@ -137,7 +139,13 @@ export class RecordStore {
     const next = base.trim().replace(/\/+$/, '');
     if (next === this.baseUrl) return;
     this.baseUrl = next;
-    this.clear();
+    this.generation++;
+    // Lookups still waiting on the old gateway end now; their answers would describe another source.
+    const moved: RecordState = { status: 'error', message: '게이트웨이 주소가 바뀌었습니다.' };
+    for (const entry of this.cache.values()) for (const w of entry.waiters) w(moved);
+    this.cache.clear();
+    this.pending.clear();
+    this.datasetList = null;
     for (const fn of this.listeners) fn();
   }
 
@@ -226,6 +234,7 @@ export class RecordStore {
   }
 
   private async fetchChunk(dataset: string, keys: string[]): Promise<void> {
+    const generation = this.generation;
     const q = new URLSearchParams();
     for (const k of keys) q.append('key', k);
     let states: Map<string, RecordState>;
@@ -242,6 +251,7 @@ export class RecordStore {
       const message = err instanceof Error ? err.message : String(err);
       states = new Map(keys.map((k) => [k, { status: 'error', message }]));
     }
+    if (generation !== this.generation) return;
     const now = Date.now();
     for (const [k, state] of states) {
       const id = cacheKey(dataset, k);
