@@ -16,7 +16,7 @@ import { type Vec2, dist } from '../geom/vec';
 import { drawingSvg } from '../io/svg';
 import { writeDxf } from '../io/dxfExport';
 import { equipmentCsv } from '../io/equipmentList';
-import { FormatError, parseStroke, validate } from '../io/serialize';
+import { FormatError, parseLabelFields, parseShapeLabel, parseStroke, validate } from '../io/serialize';
 import {
   AddItems,
   type History,
@@ -31,10 +31,12 @@ import {
 import { type DocumentModel, cloneEntity, midpointId } from '../model/document';
 import { cloneStroke } from '../model/borders';
 import { arrayOffsets, copyItems, makeShapes, nextTag, type ReorderMove, reorderItems, rotateItems } from '../model/edit';
-import { heightOf } from '../model/heights';
+import { hasHeight, heightOf } from '../model/heights';
+import { type CornerMode, editCorner, insertVertex, removeVertex } from '../model/corners';
+import { labelRows, shapeLabelPlacement } from '../model/labels';
 import { buildScene } from '../model/scene3d';
 import { newId } from '../model/ids';
-import { CATEGORY_LABELS, PROP_DEFS, categoryOf, cleanProps, presetInfo } from '../model/presets';
+import { CATEGORY_LABELS, COLUMN_SECTIONS, type ColumnSection, PROP_DEFS, categoryOf, cleanProps, columnTypeFor, presetInfo } from '../model/presets';
 import type { CircleEntity, DocumentData, Entity, EquipmentType, Floor, Folder, Id, Layer, LineEntity, Point, ShapeEntity, StructureCategory } from '../model/types';
 import { LAYER_DEFAULT } from '../theme';
 
@@ -126,7 +128,7 @@ export class EditorApi {
       const pt = doc.point(id);
       return { id, x: pt.x, y: pt.y, z: pt.z ?? 0 };
     };
-    const base = { ...cloneEntity(e), floor: doc.floorOf(e), ...(e.kind !== 'dimension' && e.kind !== 'point' ? { effectiveHeight: heightOf(doc, e) } : {}) };
+    const base = { ...cloneEntity(e), floor: doc.floorOf(e), ...(hasHeight(e) ? { effectiveHeight: heightOf(doc, e) } : {}) };
     switch (e.kind) {
       case 'point':
         return { ...base, position: at(e.at) };
@@ -138,8 +140,12 @@ export class EditorApi {
         return { ...base, start: at(e.p1), end: at(e.p2), length: dist(doc.point(e.p1), doc.point(e.p2)) };
       case 'circle':
         return { ...base, centerAt: at(e.center) };
-      case 'shape':
-        return { ...base, polygon: e.points.map(at), area: doc.shapeArea(e) };
+      case 'shape': {
+        const { at: labelAt, anchor } = shapeLabelPlacement(doc, e);
+        return { ...base, polygon: e.points.map(at), area: doc.shapeArea(e), labelAt: { ...labelAt, anchor } };
+      }
+      case 'label':
+        return { ...base, position: at(e.at), text: labelRows(e.items) };
       case 'equipment': {
         const type = doc.equipmentTypes.get(e.type);
         return { ...base, position: at(e.at), typeName: type?.name, category: categoryOf(type), corners: doc.cornersOf(e), checks: presetInfo(doc, e) };
@@ -248,6 +254,50 @@ export class EditorApi {
     return { id: e.id, point: at };
   }
 
+  /**
+   * Label object: "제목: 내용" rows (`items`) or a plain `text` (one row per line) at x, y, in world-size text.
+   * `anchor` says which side of the text block sits on the point; size is the text height in mm.
+   */
+  addLabel(p: { x: number; y: number; items?: unknown; text?: string; size?: number; anchor?: string; color?: string; opacity?: number; visible?: boolean; layer?: Id; name?: string }) {
+    const items = p.items ?? (p.text === undefined ? undefined : String(p.text).split('\n').map((value) => ({ title: '', value })));
+    if (items === undefined) throw new ApiError('items([{title, value}]) 또는 text가 필요합니다.');
+    const fields = this.parse(() => parseLabelFields({ ...p, items }, '라벨'));
+    if (labelRows(fields.items).length === 0) throw new ApiError('라벨에 쓸 내용이 없습니다.');
+    const at: Point = { id: newId('p'), ...this.vec([p.x, p.y]) };
+    const e: Entity = { id: newId('e'), kind: 'label', at: at.id, layer: this.layer(p.layer), ...fields, ...(p.name ? { name: String(p.name) } : {}) };
+    this.history.execute(new AddItems([at], [e]));
+    return { id: e.id, point: at.id };
+  }
+
+  /**
+   * Column from the column generator: a section (rect, round, hbeam), its size and material. A library type with the
+   * same section and size is reused, otherwise one is added; then a column is placed centred at x, y.
+   */
+  placeColumn(p: { section: string; width: number; depth?: number; webThickness?: number; flangeThickness?: number; material?: string; x: number; y: number; rotation?: number; tag?: string; layer?: Id }) {
+    if (!Object.hasOwn(COLUMN_SECTIONS, p.section)) throw new ApiError('section은 rect, round, hbeam 중 하나입니다.');
+    const section = p.section as ColumnSection;
+    const width = this.num(p.width, 'width');
+    const depth = section === 'round' ? width : this.num(p.depth ?? width, 'depth');
+    if (!(width > 0) || !(depth > 0)) throw new ApiError('width와 depth는 0보다 커야 합니다.');
+    const tw = p.webThickness === undefined ? undefined : this.num(p.webThickness, 'webThickness');
+    const tf = p.flangeThickness === undefined ? undefined : this.num(p.flangeThickness, 'flangeThickness');
+    if (section === 'hbeam' && ((tw !== undefined && !(tw > 0 && tw < depth)) || (tf !== undefined && !(tf > 0 && 2 * tf < width)))) {
+      throw new ApiError('H형강의 두께가 잘못되었습니다: 0 < tw < depth(플랜지 폭), 0 < 2×tf < width(춤).');
+    }
+    if (p.material !== undefined && !['RC', 'S', 'SRC'].includes(p.material)) throw new ApiError('material은 RC, S, SRC 중 하나입니다.');
+    const { type, isNew } = columnTypeFor(this.doc, { section, width, depth, webThickness: tw, flangeThickness: tf, material: p.material }, () => newId('st'));
+    const start = this.history.size;
+    if (isNew) this.history.execute(new SetEquipmentTypes('기둥 종류 추가', [...this.doc.equipmentTypes.values()].map((t) => structuredClone(t)), [...[...this.doc.equipmentTypes.values()].map((t) => structuredClone(t)), type]));
+    try {
+      const r = this.placeEquipment({ type: type.id, x: p.x, y: p.y, rotation: p.rotation, tag: p.tag, layer: p.layer });
+      this.history.squash(start, '기둥 배치');
+      return { ...r, type: type.id, typeName: type.name, newType: isNew };
+    } catch (err) {
+      if (isNew) this.history.undo();
+      throw err;
+    }
+  }
+
   addCircle(p: { x: number; y: number; radius: number; layer?: Id; name?: string }) {
     if (!(this.num(p.radius, 'radius') > 0)) throw new ApiError('radius는 0보다 커야 합니다.');
     const fresh: Point[] = [];
@@ -309,11 +359,12 @@ export class EditorApi {
     radius?: number;
     props?: Record<string, unknown> | null;
     height?: number | null;
+    label?: Record<string, unknown> | null;
   }) {
     const e = this.entity(p.id);
     const c = cloneEntity(e);
     if (p.height !== undefined) {
-      if (c.kind === 'dimension' || c.kind === 'point') throw new ApiError('치수와 점에는 높이가 없습니다. 점의 높이는 setPoint의 z로 바꾸십시오.');
+      if (!hasHeight(c)) throw new ApiError('치수·점·라벨에는 높이가 없습니다. 점의 높이는 setPoint의 z로 바꾸십시오.');
       if (p.height === null) delete c.height;
       else {
         const h = this.num(p.height, 'height');
@@ -370,6 +421,20 @@ export class EditorApi {
       if (c.kind !== 'circle') throw new ApiError('radius는 원에만 지정합니다.');
       if (!(this.num(p.radius, 'radius') > 0)) throw new ApiError('radius는 0보다 커야 합니다.');
       c.radius = p.radius;
+    }
+    if (p.label !== undefined) {
+      if (c.kind === 'shape') {
+        // Merged into the shape's current label settings; null back to the defaults (name and area in the middle).
+        const merged = p.label === null ? undefined : this.parse(() => parseShapeLabel({ ...c.label, ...p.label }, '도형'));
+        if (merged) c.label = merged;
+        else delete c.label;
+      } else if (c.kind === 'label') {
+        if (p.label === null) throw new ApiError('라벨 객체의 label은 지울 수 없습니다. deleteEntities로 지우십시오.');
+        const { items, size, anchor, color, opacity, visible } = c;
+        const f = this.parse(() => parseLabelFields({ items, size, anchor, color, opacity, visible, ...p.label }, '라벨'));
+        for (const k of ['size', 'anchor', 'color', 'opacity', 'visible'] as const) delete c[k];
+        Object.assign(c, f);
+      } else throw new ApiError('label은 도형과 라벨 객체에만 지정합니다.');
     }
     this.history.execute(new UpdateEntities('속성 변경', [e], [c]));
     return this.describe(this.doc.entities.get(e.id)!);
@@ -431,6 +496,36 @@ export class EditorApi {
     const before = this.doc.entities.size;
     this.history.execute(new RemoveEntities(ids));
     return { deleted: before - this.doc.entities.size };
+  }
+
+  /**
+   * Fillet (round, `size` = radius) or chamfer (cut, `size` = distance along each edge) of the corner at a point where
+   * exactly two lines meet. Shapes built on the corner follow; a fillet is made of short lines along the arc.
+   */
+  editCorner(p: { point: Id; mode: string; size: number }) {
+    if (p.mode !== 'fillet' && p.mode !== 'chamfer') throw new ApiError('mode는 fillet 또는 chamfer입니다.');
+    const before = new Set(this.doc.entities.keys());
+    const cmd = editCorner(this.doc, String(p.point), p.mode as CornerMode, this.num(p.size, 'size'));
+    if (typeof cmd === 'string') throw new ApiError(cmd);
+    this.history.execute(cmd);
+    return { lines: [...this.doc.entities.keys()].filter((id) => !before.has(id)) };
+  }
+
+  /** Splits a line (a free line or a shape's edge) at the point of it nearest x, y, adding a corner there. */
+  insertVertex(p: { line: Id; x: number; y: number }) {
+    const r = insertVertex(this.doc, String(p.line), this.vec([p.x, p.y]));
+    if (typeof r === 'string') throw new ApiError(r);
+    const before = new Set(this.doc.entities.keys());
+    this.history.execute(r.command);
+    return { point: r.point, line: [...this.doc.entities.keys()].find((id) => !before.has(id)) ?? null };
+  }
+
+  /** Removes a corner where two lines meet: the first line runs on to the second's far end. */
+  removeVertex(p: { point: Id }) {
+    const cmd = removeVertex(this.doc, String(p.point));
+    if (typeof cmd === 'string') throw new ApiError(cmd);
+    this.history.execute(cmd);
+    return { ok: true };
   }
 
   /** Turns closed loops among the given lines into shapes. */
@@ -628,6 +723,16 @@ export class EditorApi {
   private color(v: unknown): string {
     if (typeof v !== 'string' || !COLOR.test(v)) throw new ApiError('색은 #rrggbb 형식이어야 합니다.');
     return v;
+  }
+
+  /** Runs a file-format validator, turning its FormatError into an ApiError for the caller. */
+  private parse<T>(fn: () => T): T {
+    try {
+      return fn();
+    } catch (err) {
+      if (err instanceof FormatError) throw new ApiError(err.message);
+      throw err;
+    }
   }
 
   private stroke(v: unknown) {

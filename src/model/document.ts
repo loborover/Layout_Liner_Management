@@ -10,6 +10,7 @@ import { equipmentCorners } from '../geom/equipment';
 import type { Box, Vec2 } from '../geom/vec';
 import { polygonArea } from '../geom/polygon';
 import { cloneStroke } from './borders';
+import { labelBox } from './labels';
 import { DEFAULT_STRUCTURE_TYPES } from './presets';
 import {
   type Constraint,
@@ -248,7 +249,7 @@ export class DocumentModel {
   /** Point ids an entity depends on. */
   pointIdsOf(e: Entity): Id[] {
     if (e.kind === 'circle') return [e.center];
-    if (e.kind === 'equipment' || e.kind === 'point') return [e.at];
+    if (e.kind === 'equipment' || e.kind === 'point' || e.kind === 'label') return [e.at];
     if (e.kind === 'shape') return e.points;
     return [e.p1, e.p2];
   }
@@ -320,6 +321,7 @@ export class DocumentModel {
       const ys = [a.y, b.y, d1.y, d2.y];
       return { minX: Math.min(...xs), minY: Math.min(...ys), maxX: Math.max(...xs), maxY: Math.max(...ys) };
     }
+    if (e.kind === 'label') return labelBox(this, e);
     if (e.kind === 'equipment' || e.kind === 'shape') {
       const cs = e.kind === 'equipment' ? this.cornersOf(e) : this.shapePolygon(e);
       const xs = cs.map((c) => c.x);
@@ -381,7 +383,7 @@ export class DocumentModel {
   toData(): DocumentData {
     return {
       format: 'layout-liner',
-      version: 4,
+      version: 5,
       units: 'mm',
       points: [...this.points.values()].map((p) => ({ ...p })),
       entities: [...this.entities.values()].map(cloneEntity),
@@ -423,7 +425,9 @@ export function cloneEntity<T extends Entity>(e: T): T {
     c.points = [...c.points];
     c.edges = [...c.edges];
     if (c.fillImage) c.fillImage = { ...c.fillImage };
+    if (c.label) c.label = { ...c.label, ...(c.label.items ? { items: c.label.items.map((it) => ({ ...it })) } : {}) };
   } else if ((c.kind === 'line' || c.kind === 'circle') && c.stroke) c.stroke = cloneStroke(c.stroke);
   else if (c.kind === 'equipment' && c.props) c.props = { ...c.props };
+  else if (c.kind === 'label') c.items = c.items.map((it) => ({ ...it }));
   return c;
 }

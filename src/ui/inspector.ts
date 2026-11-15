@@ -5,6 +5,7 @@
  * what it is, where it is, its preset properties and design checks, and its live monitoring value.
  * Read-only by design.
  */
+import { labelRow } from '../model/labels';
 import type { DocumentModel } from '../model/document';
 import { CATEGORY_LABELS, PROP_DEFS, categoryOf, presetInfo, propValue } from '../model/presets';
 import type { Entity } from '../model/types';
@@ -36,6 +37,9 @@ export function describe(doc: DocumentModel, e: Entity, unit: DisplayUnit): { ti
   } else if (e.kind === 'shape') {
     title ||= '도형';
     rows.push(['면적', formatArea(doc.shapeArea(e))]);
+  } else if (e.kind === 'label') {
+    title ||= '라벨';
+    for (const it of e.items) if (labelRow(it)) rows.push([it.title || '내용', it.value]);
   } else if (e.kind === 'point') {
     title ||= '점';
     const p = doc.point(e.at);

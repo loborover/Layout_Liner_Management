@@ -664,6 +664,33 @@ button.wide {
   min-width: 0;
 }
 
+/* Label rows ("제목: 내용"): title narrower than the content, both shrinking on a narrow side bar. */
+.props .label-item {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 3fr) auto;
+  gap: 4px;
+}
+
+.props .label-item input {
+  min-width: 0;
+  width: 100%;
+}
+
+/* Column generator: compact size fields. */
+.panel-row input[id^='col-'] {
+  width: 64px;
+}
+
+.panel-row #col-tw,
+.panel-row #col-tf {
+  width: 48px;
+}
+
+/* Ribbon fields that only apply to some choices (e.g. H-beam thickness) are hidden with the hidden attribute. */
+.panel-row [hidden] {
+  display: none !important;
+}
+
 /* Viewer inspector card shown next to a clicked object. */
 .inspector {
   position: absolute;

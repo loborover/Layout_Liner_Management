@@ -9,12 +9,12 @@
 - **Z(높이)는 위쪽**이며 점의 `z`는 그 점이 속한 층의 바닥(`elevation`)에서 잰 높이입니다. 없으면 0입니다.
 - id는 문자열이며 파일 안에서 유일해야 합니다.
 
-## 최상위 구조 (version 4)
+## 최상위 구조 (version 5)
 
 ```jsonc
 {
   "format": "layout-liner",
-  "version": 4,
+  "version": 5,
   "units": "mm",
   "points": [ { "id": "p1", "x": 0, "y": 0, "z": 0 } ],
   "entities": [ /* 아래 객체들, 배열 순서 = 그리기 순서 = 트리 순서 */ ],
@@ -40,7 +40,7 @@
 ## 객체 (entities)
 
 모든 객체의 공통 필드: `id`, `kind`, `layer`, `name?`(사용자 이름), `binding?`(모니터링 키, [VIEWER.md](VIEWER.md)).
-`line`, `circle`, `equipment`, `shape`와 설비 종류(`equipmentTypes`)에는 3D 보기용 `height?`(mm, 0 이상)가 있습니다. 점 객체와 치수에는 높이가 없습니다(점의 높이는 `z`).
+`line`, `circle`, `equipment`, `shape`와 설비 종류(`equipmentTypes`)에는 3D 보기용 `height?`(mm, 0 이상)가 있습니다. 점 객체, 라벨, 치수에는 높이가 없습니다(점의 높이는 `z`).
 
 | kind | 필드 | 설명 |
 | --- | --- | --- |
@@ -49,7 +49,8 @@
 | `circle` | `center`, `radius`, `stroke?` | 원. `stroke`는 원의 테두리 띠입니다(안쪽 = 중심 쪽). |
 | `dimension` | `p1`, `p2`, `offset`, `value?` | 정렬 치수. `value`가 있으면 구동 치수(형상을 그 길이로 고정)입니다. |
 | `equipment` | `type`, `at`, `rotation`, `tag`, `props?` | 설비 또는 구조 프리셋 배치. 크기는 종류(`equipmentTypes`)에서 옵니다. 회전 0°에서 너비는 X, 앞면은 -Y. |
-| `shape` | `points`, `edges`, `fill?`, `fillOpacity?`, `fillImage?` | 닫힌 도형(면). `points[i]` → `points[i+1]`을 잇는 선이 `edges[i]`이고 마지막 점은 `points[0]`으로 돌아갑니다. 도형의 테두리는 변 선들의 `stroke`입니다. |
+| `shape` | `points`, `edges`, `fill?`, `fillOpacity?`, `fillImage?`, `label?` | 닫힌 도형(면). `points[i]` → `points[i+1]`을 잇는 선이 `edges[i]`이고 마지막 점은 `points[0]`으로 돌아갑니다. 도형의 테두리는 변 선들의 `stroke`입니다. |
+| `label` | `at`, `items`, `size?`, `anchor?`, `color?`, `opacity?`, `visible?` | 독립 라벨(version 5). `items`는 `{ "title", "value" }` 행 목록으로 "제목: 내용"으로 표시됩니다(제목이 비면 내용만). `size`는 글자 높이 mm(기본 300, 도면 크기라 확대·인쇄 시 실제 크기), `anchor`는 글 상자의 어느 쪽이 점에 오는지입니다(`top`이면 점 아래로 매달림). |
 
 ### 테두리(Border, 선 양식) `stroke` (version 4에서 `opacity`, `pattern` 추가)
 
@@ -60,6 +61,7 @@
 
 - `width`(Weight): 띠 두께 mm. 0이면 `color`로 그린 가는 선입니다.
 - `align`: `center`(기준선 중앙), `inside`(도형 안쪽, 도형이 없으면 p1→p2 진행 방향 왼쪽, 원은 중심 쪽), `outside`(반대쪽).
+- `join`(version 5): 같은 두께·위치의 다른 띠와 만나는 모서리의 **바깥쪽** 처리. `miter`(뾰족, 기본, 너무 뾰족하면 띠 두께의 4배에서 모따기로 잘림), `round`(라운드), `bevel`(모따기, Chamfer). 모서리의 **안쪽**은 두 띠의 경계선이 만나는 곳에서 정확히 잘리고, 기준선 자체(오프셋 0)는 늘 꼭짓점에서 만납니다. 그래서 `inside` 띠는 아무리 뾰족한 모서리에서도 기준선 밖으로, `outside` 띠는 도형 안으로 나가지 않습니다(2026-11-15 사용자 요청, [`src/model/strokes.ts`](../src/model/strokes.ts)). 같은 점을 공유하거나 일치 구속으로 같은 자리에 있는 두 선이 만나는 곳에 적용되며, 세 선 이상이 만나는 곳과 자유 끝은 직각으로 끝납니다.
 - `color`(Color): 없으면 레이어 색입니다. 패턴이 있으면 띠의 외곽선과 가는 선의 색입니다.
 - `opacity`: 0~1 불투명도(편집기에서는 투명도 % = 100 − 불투명도×100). 없으면 띠 0.85, 가는 선 1입니다.
 - `pattern`(Pattern): 띠를 채우는 줄무늬. `stripes`(1~16개, 순서대로 반복)의 각 줄무늬 폭은 `size × unit` mm(실제 바닥 치수)입니다. `angle`은 선의 진행 방향 기준 각도(원은 X축 기준)이며 0이면 선과 나란한 줄, 90이면 선을 가로지르는 줄입니다. 두께가 0이면 패턴은 보이지 않습니다.
@@ -70,6 +72,18 @@
 - `fill`: 면 색. 없으면 레이어 색을 옅게 칠합니다.
 - `fillOpacity`: 면만의 0~1 불투명도(테두리에는 영향 없음). 없으면 색·이미지가 있을 때 0.35, 없을 때 0.06입니다.
 - `fillImage`: `{ "src": "data:image/png;base64,…", "fit": "stretch" | "tile", "size"?: 1000 }`. `stretch`는 도형의 외곽 상자에 맞추고, `tile`은 `size` mm 너비로 반복합니다. 밑그림처럼 **`data:` URL만 허용**합니다(파일을 열 때 외부 주소를 불러오지 않도록).
+
+### 도형 라벨 `label` (version 5)
+
+```json
+{ "items": [ { "title": "담당", "value": "생산1팀" } ], "showName": true, "showArea": true,
+  "anchor": "center", "dx": 0, "dy": 0, "opacity": 1, "visible": true }
+```
+
+- 모든 필드는 생략할 수 있고, 생략하면 기본값입니다. `label`이 없으면 **이름과 면적을 도형 면적의 중심**(면적 중심, L·U자처럼 면적 중심이 도형 밖이면 도형 안에서 외곽선과 가장 먼 점)에 표시합니다.
+- `items`: 이름·면적 아래에 붙는 "제목: 내용" 행(최대 50개, 각 500자).
+- `anchor`: `center`(면적 중심), `top`·`bottom`(외곽 상자 위·아래 가장자리 안쪽, 가로는 면적 중심), `left`·`right`(왼쪽·오른쪽 가장자리 안쪽, 세로는 면적 중심). `dx`·`dy`는 거기서 옮길 거리(mm, X 오른쪽·Y 위쪽 +).
+- `opacity`: 글자 불투명도 0~1, `visible`: `false`면 그리지 않습니다(SVG·DXF·인쇄에서도 빠짐).
 
 ### 점 공유와 일치 구속 `coincident` (version 4)
 
@@ -105,12 +119,14 @@
 
 | 범주 | 주요 특성 |
 | --- | --- |
-| 기둥 `column` | `shape`(rect/round), `material`(RC/S/SRC), `bearing`, `fireHours` |
+| 기둥 `column` | `shape`(rect/round/hbeam), `webThickness`·`flangeThickness`(H형강 tw·tf, mm), `material`(RC/S/SRC), `bearing`, `fireHours` |
 | 계단 `stair` | `toFloor`(연결 층), `direction`, `riser`, `tread`, 검토값 `maxRiser`, `minTread` |
 | 경사로 `ramp` | `toFloor`, `rise`(0이면 층고), 검토값 `maxSlope`(1/n), `minWidth` |
 | 리프트 `lift` | `liftKind`, `capacity`, `speed`, `floors`(운행 층 id를 쉼표로) |
 
 계단·경사로·리프트가 다른 층과 연결되면 그 층에서 점선으로 표시됩니다.
+
+H형강 기둥(`shape: "hbeam"`, version 5)은 종류의 `width`가 춤 H(웨브 방향, 로컬 X), `depth`가 플랜지 폭 B이고, 회전 0°에서 H자 모양입니다(I자로 쓰려면 90° 회전). 기본 종류 `st-column-h`는 H-300×300×10×15이며, 편집 가능한 시작값으로 임의로 고른 일반적인 치수입니다. 리본의 **기둥 생성기**(API `placeColumn`)는 같은 단면·크기·재료의 종류가 있으면 그것을, 없으면 새 종류(이름 예: `H형강 기둥 H-400×400×13×21`)를 추가해 배치합니다.
 
 > 검토값의 기본값(단높이 180 mm 이하, 단너비 260 mm 이상, 경사로 1/12, 폭 1.2 m)은 국내 규정을 설명한 2차 자료를 참고한 편집 가능한 기본값입니다. 실제 설계에는 반드시 [국가법령정보센터](https://www.law.go.kr)의 현행 「건축물의 피난·방화구조 등의 기준에 관한 규칙」, 「장애인·노인·임산부 등의 편의증진 보장에 관한 법률 시행규칙」 등 원문으로 확인하십시오.
 
@@ -122,8 +138,9 @@
 | 2 | 층, 폴더, 도형, 선 양식, 구조 프리셋과 특성, `name`·`binding` |
 | 3 | 점의 `z`, 객체와 설비 종류의 `height`, 점 객체(`point`) |
 | 4 | 테두리 `opacity`·`pattern`, 원의 `stroke`, 도형의 `fillOpacity`·`fillImage`, `coincident` 구속, 밑그림 `locked` |
+| 5 | 테두리 `join`, 도형의 `label`, 라벨 객체(`label`), 기둥 `shape: "hbeam"`과 `webThickness`·`flangeThickness`, 기본 종류 `st-column-h` |
 
-버전 1 파일은 열 때 자동으로 변환됩니다. 모든 레이어가 `1층`(`floor-1`)에 들어가고 구조 프리셋 종류가 라이브러리에 추가됩니다. 버전 2, 3 파일은 그대로 열립니다(새 필드가 없으면 기본값). 저장하면 버전 4가 됩니다. 버전 4 파일은 이전 버전 편집기에서 열리지 않습니다.
+버전 1 파일은 열 때 자동으로 변환됩니다. 모든 레이어가 `1층`(`floor-1`)에 들어가고 구조 프리셋 종류가 라이브러리에 추가됩니다. 버전 2~4 파일은 그대로 열립니다(새 필드가 없으면 기본값). 버전 5보다 오래된 파일에는 H형강 기둥 종류(`st-column-h`)가 라이브러리에 추가됩니다. 저장하면 버전 5가 됩니다. 버전 5 파일은 이전 버전 편집기에서 열리지 않습니다.
 
 ## 형식을 바꿀 때 (체크리스트)
 

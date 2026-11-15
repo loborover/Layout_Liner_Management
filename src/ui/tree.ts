@@ -17,6 +17,7 @@
 import { SetLayerTree, captureLayerTree, type LayerTree } from '../model/commands';
 import { midpointId } from '../model/document';
 import { newId } from '../model/ids';
+import { labelRows } from '../model/labels';
 import { categoryOf } from '../model/presets';
 import type { Entity, Floor, Folder, Id, Layer } from '../model/types';
 import { formatArea, formatLength } from '../view/format';
@@ -25,7 +26,7 @@ import { type IconName, icon } from './icons';
 import { LAYER_COLORS } from '../theme';
 
 const MAX_ROWS = 300;
-const KIND_LABEL: Record<Entity['kind'], string> = { point: '점', line: '선', circle: '원', dimension: '치수', equipment: '설비', shape: '도형' };
+const KIND_LABEL: Record<Entity['kind'], string> = { point: '점', line: '선', circle: '원', dimension: '치수', equipment: '설비', shape: '도형', label: '라벨' };
 
 export class ObjectTree {
   /** Explicit open/closed choices by node key; nodes without one use their default. */
@@ -257,7 +258,7 @@ export class ObjectTree {
     const row = this.node(depth, key, expandable, pointSelected);
     row.classList.toggle('selected', selection.has(e.id));
     let iconName: IconName =
-      e.kind === 'shape' ? 'shape' : e.kind === 'dimension' ? 'dimension' : e.kind === 'circle' ? 'circle' : e.kind === 'point' ? 'point' : 'line';
+      e.kind === 'shape' ? 'shape' : e.kind === 'dimension' ? 'dimension' : e.kind === 'circle' ? 'circle' : e.kind === 'point' ? 'point' : e.kind === 'label' ? 'label' : 'line';
     let text = e.name || KIND_LABEL[e.kind];
     let meta = '';
     if (e.kind === 'point') {
@@ -267,7 +268,10 @@ export class ObjectTree {
       const a = doc.point(e.p1);
       const b = doc.point(e.p2);
       meta = formatLength(Math.hypot(b.x - a.x, b.y - a.y), unit) + (e.stroke && e.stroke.width > 0 ? ` · ${e.stroke.width}` : '');
-    } else if (e.kind === 'shape') meta = formatArea(doc.shapeArea(e));
+    } else if (e.kind === 'label') {
+      text = e.name || labelRows(e.items)[0] || KIND_LABEL.label;
+      meta = e.visible === false ? '숨김' : `${labelRows(e.items).length}줄`;
+    } else if (e.kind === 'shape') meta = formatArea(doc.shapeArea(e)) + (e.label?.visible === false ? ' · 라벨 숨김' : '');
     else if (e.kind === 'circle') meta = `R ${formatLength(e.radius, unit)}`;
     else if (e.kind === 'dimension') {
       const a = doc.point(e.p1);

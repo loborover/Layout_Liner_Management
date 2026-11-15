@@ -4,6 +4,7 @@
  * Drawing file format (JSON) save/load. `deserialize` validates every field and upgrades older files, so it is
  * the single gate for untrusted input (files, autosave, API/MCP loads). See docs/DATA_MODEL.md.
  */
+import { MAX_LABEL_ITEMS, MAX_LABEL_TEXT } from '../model/labels';
 import { DEFAULT_STRUCTURE_TYPES, cleanProps } from '../model/presets';
 import {
   type Constraint,
@@ -15,11 +16,16 @@ import {
   type Entity,
   type EquipmentType,
   type FillImage,
+  type LabelAnchor,
+  type LabelEntity,
+  type LabelItem,
+  type ShapeLabel,
   type Floor,
   type Folder,
   type Layer,
   type Point,
   type StripePattern,
+  type StrokeJoin,
   type StrokeStyle,
   type StructureCategory,
   type Underlay,
@@ -33,6 +39,7 @@ const DATA_IMAGE = /^data:image\/(png|jpeg|gif|webp);base64,/;
 const MAX_STRIPE_COUNT = 16;
 const CATEGORIES: StructureCategory[] = ['equipment', 'column', 'stair', 'ramp', 'lift'];
 const COLOR = /^#[0-9a-f]{6}$/i;
+const JOINS: StrokeJoin[] = ['miter', 'round', 'bevel'];
 
 export class FormatError extends Error {}
 
@@ -66,6 +73,10 @@ export function parseStroke(v: Raw, where: string): StrokeStyle | undefined {
     out.opacity = v.opacity;
   }
   if (v.pattern !== undefined && v.pattern !== null) out.pattern = parsePattern(v.pattern, where);
+  if (v.join !== undefined && v.join !== null) {
+    if (!JOINS.includes(v.join)) throw new FormatError(`${where}의 테두리 모서리 처리가 잘못되었습니다(miter, round, bevel).`);
+    if (v.join !== 'miter') out.join = v.join;
+  }
   return out;
 }
 
@@ -82,6 +93,76 @@ export function parsePattern(v: Raw, where: string): StripePattern {
   if (!isNum(v.unit) || v.unit <= 0 || v.unit > 100000) throw bad('단위 길이(mm)는 0보다 커야 합니다');
   if (!isNum(v.angle)) throw bad('기울기는 숫자여야 합니다');
   return { stripes, unit: v.unit, angle: v.angle };
+}
+
+/** Library presets added in file version 5, given to older files on load. */
+const PRESETS_SINCE_5 = ['st-column-h'];
+const ANCHORS: LabelAnchor[] = ['center', 'top', 'bottom', 'left', 'right'];
+
+/** Validates "제목: 내용" label rows; throws on malformed ones. Numbers are accepted and kept as text. */
+export function parseLabelItems(v: Raw, where: string): LabelItem[] {
+  const bad = (what: string) => new FormatError(`${where}의 라벨 항목이 잘못되었습니다: ${what}`);
+  if (!Array.isArray(v)) throw bad('목록이 아닙니다');
+  if (v.length > MAX_LABEL_ITEMS) throw bad(`항목은 ${MAX_LABEL_ITEMS}개까지입니다`);
+  return v.map((it: Raw) => {
+    const text = (x: unknown) => {
+      if (x === undefined || x === null) return '';
+      if (typeof x !== 'string' && typeof x !== 'number') throw bad('제목과 내용은 글자여야 합니다');
+      const s = String(x);
+      if (s.length > MAX_LABEL_TEXT) throw bad(`제목·내용은 ${MAX_LABEL_TEXT}자까지입니다`);
+      return s;
+    };
+    if (!it || typeof it !== 'object') throw bad('항목은 {title, value} 객체여야 합니다');
+    return { title: text(it.title), value: text(it.value) };
+  });
+}
+
+/** Validates the common label display fields (anchor, opacity, visibility) into `out`. */
+function parseLabelLook(v: Raw, where: string, out: { anchor?: LabelAnchor; opacity?: number; visible?: boolean }): void {
+  if (v.anchor !== undefined && v.anchor !== null) {
+    if (!ANCHORS.includes(v.anchor)) throw new FormatError(`${where}의 라벨 배치 기준이 잘못되었습니다(center, top, bottom, left, right).`);
+    if (v.anchor !== 'center') out.anchor = v.anchor;
+  }
+  if (v.opacity !== undefined && v.opacity !== null) {
+    if (!isNum(v.opacity) || v.opacity < 0 || v.opacity > 1) throw new FormatError(`${where}의 라벨 투명도가 잘못되었습니다(0~1).`);
+    if (v.opacity !== 1) out.opacity = v.opacity;
+  }
+  if (v.visible === false) out.visible = false;
+}
+
+/** Validates a shape's label settings; undefined when they are all defaults. Throws on malformed ones. */
+export function parseShapeLabel(v: Raw, where: string): ShapeLabel | undefined {
+  if (v === undefined || v === null) return undefined;
+  if (typeof v !== 'object') throw new FormatError(`${where}의 라벨이 잘못되었습니다.`);
+  const out: ShapeLabel = {};
+  if (v.items !== undefined && v.items !== null) {
+    const items = parseLabelItems(v.items, where);
+    if (items.length > 0) out.items = items;
+  }
+  if (v.showName === false) out.showName = false;
+  if (v.showArea === false) out.showArea = false;
+  for (const k of ['dx', 'dy'] as const) {
+    if (v[k] === undefined || v[k] === null) continue;
+    if (!isNum(v[k])) throw new FormatError(`${where}의 라벨 위치(${k})가 잘못되었습니다.`);
+    if (v[k] !== 0) out[k] = v[k];
+  }
+  parseLabelLook(v, where, out);
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/** Validates a label object's own fields (everything but id, layer and point). Throws on malformed ones. */
+export function parseLabelFields(v: Raw, where: string): Pick<LabelEntity, 'items' | 'size' | 'anchor' | 'color' | 'opacity' | 'visible'> {
+  const out: Pick<LabelEntity, 'items' | 'size' | 'anchor' | 'color' | 'opacity' | 'visible'> = { items: parseLabelItems(v.items ?? [], where) };
+  if (v.size !== undefined && v.size !== null) {
+    if (!isNum(v.size) || v.size <= 0 || v.size > 1e6) throw new FormatError(`${where}의 글자 높이(mm)가 잘못되었습니다.`);
+    out.size = v.size;
+  }
+  if (v.color !== undefined && v.color !== null) {
+    if (!(typeof v.color === 'string' && COLOR.test(v.color))) throw new FormatError(`${where}의 라벨 색이 잘못되었습니다.`);
+    out.color = v.color;
+  }
+  parseLabelLook(v, where, out);
+  return out;
 }
 
 /** Validates a shape's face image; throws on a malformed one. */
@@ -101,9 +182,10 @@ const isHeight = (v: unknown): v is number => typeof v === 'number' && Number.is
 
 /**
  * Parses and validates a saved drawing. Throws FormatError with a readable message.
- * Versions 2 and 3 need nothing (version 4 only added optional fields and the coincident constraint). Version 2 files need nothing (Z and heights default to 0 / derived values). Version 1 files (before floors, folders
- * and shapes) are upgraded: everything goes on one floor "1층" and the
- * structural presets are added to the library.
+ * Versions 2 to 4 load as they are (later versions only added optional fields, the coincident constraint and label
+ * objects; Z and heights default to 0); files before version 5 also get the H-beam column preset added to their
+ * library. Version 1 files (before floors, folders and shapes) are upgraded: everything goes on one floor "1층" and
+ * the structural presets are added to the library.
  */
 export function deserialize(text: string): DocumentData {
   let raw: unknown;
@@ -119,7 +201,7 @@ export function deserialize(text: string): DocumentData {
 export function validate(raw: unknown): DocumentData {
   const obj = raw as Raw;
   if (!obj || obj.format !== 'layout-liner') throw new FormatError('Layout Liner 도면 파일이 아닙니다.');
-  if (![1, 2, 3, 4].includes(obj.version)) throw new FormatError(`지원하지 않는 파일 버전입니다: ${String(obj.version)}`);
+  if (![1, 2, 3, 4, 5].includes(obj.version)) throw new FormatError(`지원하지 않는 파일 버전입니다: ${String(obj.version)}`);
   if (!Array.isArray(obj.points) || !Array.isArray(obj.entities)) throw new FormatError('points/entities 항목이 없습니다.');
 
   const points: Point[] = obj.points.map((p: Raw, i: number) => {
@@ -196,8 +278,10 @@ export function validate(raw: unknown): DocumentData {
         return type;
       })
     : DEFAULT_EQUIPMENT_TYPES.map((t) => ({ ...t }));
-  if (obj.version === 1) {
-    for (const t of DEFAULT_STRUCTURE_TYPES) if (!equipmentTypes.some((x) => x.id === t.id)) equipmentTypes.push(structuredClone(t));
+  if (obj.version < 5) {
+    // Version 1 predates every preset; later files only lack the ones added since (the H-beam column in 5).
+    const added = obj.version === 1 ? DEFAULT_STRUCTURE_TYPES : DEFAULT_STRUCTURE_TYPES.filter((t) => PRESETS_SINCE_5.includes(t.id));
+    for (const t of added) if (!equipmentTypes.some((x) => x.id === t.id)) equipmentTypes.push(structuredClone(t));
   }
   const typeById = new Map(equipmentTypes.map((t) => [t.id, t]));
 
@@ -210,6 +294,7 @@ export function validate(raw: unknown): DocumentData {
     const layer = isStr(e.layer) && layerIds.has(e.layer) ? e.layer : layers[0].id;
     const base = { id: e.id, layer, ...common(e), ...(isHeight(e.height) ? { height: e.height } : {}) };
     if (e.kind === 'point') return { id: e.id, layer, ...common(e), kind: 'point', at: ref(e.at, i) };
+    if (e.kind === 'label') return { id: e.id, layer, ...common(e), kind: 'label', at: ref(e.at, i), ...parseLabelFields(e, `라벨 #${i}`) };
     if (e.kind === 'line') {
       const stroke = parseStroke(e.stroke, `선 #${i}`);
       return { ...base, kind: 'line', p1: ref(e.p1, i), p2: ref(e.p2, i), ...(stroke ? { stroke } : {}) };
@@ -244,6 +329,8 @@ export function validate(raw: unknown): DocumentData {
         shape.fillOpacity = e.fillOpacity;
       }
       if (e.fillImage !== undefined && e.fillImage !== null) shape.fillImage = parseFillImage(e.fillImage, `도형 #${i}`);
+      const label = parseShapeLabel(e.label, `도형 #${i}`);
+      if (label) shape.label = label;
       return shape;
     }
     throw new FormatError(`알 수 없는 엔티티 종류 (#${i})`);
@@ -293,7 +380,7 @@ export function validate(raw: unknown): DocumentData {
 
   return {
     format: 'layout-liner',
-    version: 4,
+    version: 5,
     units: 'mm',
     points,
     entities,

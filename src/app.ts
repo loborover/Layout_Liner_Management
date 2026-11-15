@@ -17,7 +17,9 @@ import type { Box, Vec2 } from './geom/vec';
 import { FormatError, deserialize, serialize } from './io/serialize';
 import { hasConstraints } from './constraints/components';
 import { type ClusterStatus, ConstraintService } from './constraints/service';
-import { Batch, type Command, History, RemoveConstraints, RemoveEntities, SetDimensionValue, SetUnderlay, UpdateEntities } from './model/commands';
+import { Batch, type Command, History, RemoveConstraints, RemoveEntities, SetDimensionValue, SetEquipmentTypes, SetUnderlay, UpdateEntities } from './model/commands';
+import { type ColumnSection, columnTypeFor } from './model/presets';
+import { newId } from './model/ids';
 import { DocumentModel, cloneEntity } from './model/document';
 import { BORDER_TEMPLATES, applyTemplate, cloneStroke } from './model/borders';
 import { arrayOffsets, copyItems, detachPoints, makeShapes, moveToLayer, type ReorderMove, reorderItems, rotateItems, deletionTargets } from './model/edit';
@@ -45,10 +47,13 @@ import { Library } from './ui/library';
 import { Selection, UNDERLAY_ID } from './model/selection';
 import { SpatialIndex } from './model/spatial';
 import { SnapEngine, type SnapResult, type SnapSettings } from './snap/snap';
-import { type ConstraintKind, DEFAULT_LAYER_ID, type Id, type StrokeStyle, type Underlay } from './model/types';
+import { type ConstraintKind, DEFAULT_LAYER_ID, type Id, type StrokeJoin, type StrokeStyle, type Underlay } from './model/types';
 import { CircleTool, DimensionTool, LineTool, PointTool, RectTool } from './tools/draw';
 import { MeasureAngleTool, MeasureAreaTool, MeasureDistanceTool } from './tools/measure';
 import { SelectTool } from './tools/select';
+import { VertexTool } from './tools/vertex';
+import { LabelTool } from './tools/label';
+import { type CornerMode, editCorner, removeVertex } from './model/corners';
 import type { Tool, ToolContext, ToolPointer } from './tools/tool';
 import { type DisplayUnit, formatLength } from './view/format';
 import { type EntityStatus, Renderer } from './view/renderer';
@@ -62,7 +67,7 @@ const WHEEL_ZOOM_STEP = 1.0015;
 /** A finger must move this far (px) before a touch press counts as a drag rather than a tap. */
 const TOUCH_SLOP_PX = 8;
 /** Tools that create geometry on the current layer. */
-const DRAWING_TOOLS = new Set(['point', 'line', 'rect', 'circle', 'dimension', 'equipment']);
+const DRAWING_TOOLS = new Set(['point', 'line', 'rect', 'circle', 'dimension', 'equipment', 'label']);
 /** Monitoring status → fill colour (docs/VIEWER.md). */
 const STATUS_COLORS: Record<string, string> = STATUS;
 
@@ -161,6 +166,8 @@ export class App implements UiHost {
       'measure-area': new MeasureAreaTool(ctx),
       equipment: (this.equipmentTool = new EquipmentTool(ctx)),
       underlay: new UnderlayTool(ctx),
+      vertex: new VertexTool(ctx),
+      label: new LabelTool(ctx),
       inspect: new InspectTool(ctx, (id, at) => this.showInspector(id, at)),
     };
     this.library = new Library(this, $<HTMLUListElement>('#type-list'));
@@ -647,6 +654,10 @@ export class App implements UiHost {
       'to-layer': e(() => this.selectionToLayer()),
       'make-shape': e(() => this.makeShapeFromSelection()),
       unshape: e(() => this.unshapeSelection()),
+      fillet: e(() => this.cornerSelection('fillet')),
+      chamfer: e(() => this.cornerSelection('chamfer')),
+      'remove-vertex': e(() => this.removeSelectedVertices()),
+      'place-column': e(() => this.placeColumn()),
       'order-front': e(() => this.reorderSelection('front')),
       'order-forward': e(() => this.reorderSelection('forward')),
       'order-backward': e(() => this.reorderSelection('backward')),
@@ -744,6 +755,44 @@ export class App implements UiHost {
     });
     const floor = $<HTMLSelectElement>('#floor-select');
     floor.addEventListener('change', () => this.setFloor(floor.value));
+    const section = $<HTMLSelectElement>('#col-section');
+    section.addEventListener('change', () => this.columnSectionChanged(section.value as ColumnSection));
+  }
+
+  /** Column generator: a section's usual starting size and material, and only the fields it uses. */
+  private columnSectionChanged(section: ColumnSection): void {
+    const preset = { rect: [600, 600, 'RC'], round: [600, 600, 'RC'], hbeam: [300, 300, 'S'] } as const;
+    const [w, d, material] = preset[section];
+    $<HTMLInputElement>('#col-width').value = String(w);
+    $<HTMLInputElement>('#col-depth').value = String(d);
+    $<HTMLSelectElement>('#col-material').value = material;
+    $<HTMLSpanElement>('#col-width-text').textContent = section === 'round' ? '지름' : section === 'hbeam' ? '춤 H' : '폭';
+    $<HTMLSpanElement>('#col-depth-text').textContent = section === 'hbeam' ? '폭 B' : '깊이';
+    document.querySelectorAll<HTMLElement>('.col-depth').forEach((el) => (el.hidden = section === 'round'));
+    document.querySelectorAll<HTMLElement>('.col-hbeam').forEach((el) => (el.hidden = section !== 'hbeam'));
+  }
+
+  /**
+   * "기둥 생성기": places a column of the ribbon's section, size and material. Columns of one size share one library
+   * type (found or added here, see columnTypeFor), so editing the type later changes all of them.
+   */
+  private placeColumn(): void {
+    const section = $<HTMLSelectElement>('#col-section').value as ColumnSection;
+    const num = (sel: string) => Number($<HTMLInputElement>(sel).value);
+    const width = num('#col-width');
+    const depth = section === 'round' ? width : num('#col-depth');
+    const tw = num('#col-tw');
+    const tf = num('#col-tf');
+    if (!(width > 0) || !(depth > 0)) return this.notify('기둥 크기는 0보다 커야 합니다.');
+    if (section === 'hbeam' && !(tw > 0 && tw < depth && tf > 0 && 2 * tf < width)) return this.notify('H형강 두께를 확인하십시오: 0 < tw < 폭 B, 0 < 2×tf < 춤 H.');
+    const spec = { section, width, depth, material: $<HTMLSelectElement>('#col-material').value, ...(section === 'hbeam' ? { webThickness: tw, flangeThickness: tf } : {}) };
+    const { type, isNew } = columnTypeFor(this.doc, spec, () => newId('st'));
+    if (isNew) {
+      const types = [...this.doc.equipmentTypes.values()].map((t) => structuredClone(t));
+      this.history.execute(new SetEquipmentTypes('기둥 종류 추가', types, [...types, type]));
+    }
+    this.placeEquipment(type.id);
+    this.notify(`${type.name}: 클릭해 배치합니다${isNew ? ' (라이브러리에 새 종류로 추가함)' : ''}. R로 회전, Esc로 끝냅니다.`);
   }
 
   private bindKeyboard(): void {
@@ -799,6 +848,7 @@ export class App implements UiHost {
               r: () => this.setTool('rect'),
               c: () => this.setTool('circle'),
               d: () => this.setTool('dimension'),
+              t: () => this.setTool('label'),
               m: () => this.setTool('measure-distance'),
               n: () => this.setTool('measure-angle'),
               a: () => this.setTool('measure-area'),
@@ -850,6 +900,8 @@ export class App implements UiHost {
       color: $<HTMLInputElement>('#style-color').value,
       ...(opacity >= 0 && opacity <= 100 ? { opacity: 1 - opacity / 100 } : {}),
     };
+    const join = $<HTMLSelectElement>('#style-join').value as StrokeJoin;
+    if (join !== 'miter') style.join = join;
     const template = BORDER_TEMPLATES.find((t) => t.id === $<HTMLSelectElement>('#style-template').value);
     return template ? applyTemplate(style, template) : style;
   }
@@ -878,6 +930,68 @@ export class App implements UiHost {
       return c;
     });
     this.history.execute(new UpdateEntities(style ? '테두리' : '테두리 지우기', before, after));
+  }
+
+  /** Last fillet radius and chamfer distance, offered again next time (mm). */
+  private cornerSize: Record<CornerMode, number> = { fillet: 500, chamfer: 300 };
+
+  /**
+   * Fillet ("필렛") or chamfer ("모따기") of the selected corners, or of every corner of the selected shapes, with one
+   * radius/distance asked for. All corners go in one undo step; corners that can't take it are skipped and reported.
+   */
+  private cornerSelection(mode: CornerMode): void {
+    const pids = new Set<Id>();
+    for (const id of this.selection.values()) {
+      if (this.doc.points.has(id)) pids.add(id);
+      const e = this.doc.entities.get(id);
+      if (e?.kind === 'shape') for (const p of e.points) pids.add(p);
+    }
+    const name = mode === 'fillet' ? '필렛' : '모따기';
+    if (pids.size === 0) return this.notify(`${name}할 꼭짓점(클릭해서 점 선택)이나 도형을 선택하십시오.`);
+    const text = this.ask(mode === 'fillet' ? '필렛 반지름 (mm)' : '모따기 거리 (mm, 꼭짓점에서 각 변을 따라)', String(this.cornerSize[mode]));
+    if (text === null) return;
+    const size = Number(text);
+    if (!(size > 0) || !Number.isFinite(size)) return this.notify('0보다 큰 숫자를 입력하십시오.');
+    this.cornerSize[mode] = size;
+    this.tool.interrupt?.();
+    const start = this.history.size;
+    let done = 0;
+    let reason = '';
+    for (const pid of pids) {
+      const cmd = editCorner(this.doc, pid, mode, size);
+      if (typeof cmd === 'string') {
+        reason = cmd;
+        continue;
+      }
+      this.history.execute(cmd);
+      done++;
+    }
+    this.history.squash(start, name);
+    const skipped = pids.size - done;
+    if (done === 0) return this.notify(reason);
+    this.notify(`모서리 ${done}개에 ${name}을 적용했습니다.${skipped > 0 ? ` ${skipped}개는 건너뜀: ${reason}` : ''}`);
+  }
+
+  /** Removes the selected corners where two lines meet, joining the lines ("꼭짓점 삭제"). */
+  private removeSelectedVertices(): void {
+    const pids = this.selection.values().filter((id) => this.doc.points.has(id));
+    if (pids.length === 0) return this.notify('지울 꼭짓점을 클릭해서 선택하십시오. 두 선이 만나는 점만 지울 수 있습니다.');
+    this.tool.interrupt?.();
+    const start = this.history.size;
+    let done = 0;
+    let reason = '';
+    for (const pid of pids) {
+      const cmd = removeVertex(this.doc, pid);
+      if (typeof cmd === 'string') {
+        reason = cmd;
+        continue;
+      }
+      this.history.execute(cmd);
+      done++;
+    }
+    this.history.squash(start, '꼭짓점 삭제');
+    if (done === 0) return this.notify(reason);
+    this.notify(`꼭짓점 ${done}개를 지우고 양쪽 선을 이었습니다.${pids.length > done ? ` ${pids.length - done}개는 건너뜀: ${reason}` : ''}`);
   }
 
   /** "분리": separates the selected objects or the objects at the selected points (see detachPoints). */

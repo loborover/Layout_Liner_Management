@@ -15,16 +15,21 @@
 | [`addLines`](#addlines) | 예 | 점들을 잇는 연속 선을 그립니다. closed=true면 닫고 도형(면)을 만듭니다. 기존 끝점과 0.5 mm 안이면 연결됩니다. |
 | [`addRectangle`](#addrectangle) | 예 | 왼쪽 아래 모서리 (x, y)에서 width×height 사각형(선 4개 + 도형)을 그립니다. 방·구역에 쓰십시오. |
 | [`addPoint`](#addpoint) | 예 | 독립 점 객체(기준점, 측량점, 센서 위치 등)를 놓습니다. 기존 점과 0.5 mm 안이면 그 점을 공유합니다. |
+| [`addLabel`](#addlabel) | 예 | 독립 라벨 객체(제목: 내용 행 목록 또는 text)를 x, y에 놓습니다. 글자 높이 size(mm, 기본 300)는 도면 크기라 확대해도 실제 크기를 유지합니다. anchor는 글 상자의 어느 쪽이 점에 오는지(top이면 점 아래로 매달림). |
+| [`placeColumn`](#placecolumn) | 예 | 기둥 생성기: 단면(section: rect 사각, round 원형, hbeam H형강)과 크기로 기둥을 x, y에 놓습니다. 같은 단면·크기·재료의 라이브러리 종류가 있으면 그것을, 없으면 새 종류를 추가해 씁니다. H형강은 width=춤 H(웨브 방향, 로컬 X), depth=플랜지 폭 B, webThickness=tw, flangeThickness=tf. 회전 0에서 H자 모양. |
 | [`addCircle`](#addcircle) | 예 | 원을 그립니다. |
 | [`addDimension`](#adddimension) | 예 | 두 점 사이 정렬 치수를 추가합니다. 기존 끝점에 붙으면 형상을 따라 값이 바뀝니다. |
 | [`placeEquipment`](#placeequipment) | 예 | 설비 또는 구조 프리셋(기둥·계단·경사로·리프트)을 중심 (x, y)에 배치합니다. type은 라이브러리 id나 이름. |
-| [`updateEntity`](#updateentity) | 예 | 객체 속성 변경: name, layer, binding(모니터링 키), stroke(선·원의 테두리), fill/fillOpacity(도형 면 색·면 불투명도 0~1), tag/rotation/props(설비·구조), radius(원), height(3D 높이 mm). null은 지움. |
+| [`updateEntity`](#updateentity) | 예 | 객체 속성 변경: name, layer, binding(모니터링 키), stroke(선·원의 테두리), fill/fillOpacity(도형 면 색·면 불투명도 0~1), tag/rotation/props(설비·구조), radius(원), height(3D 높이 mm), label(도형 라벨·라벨 객체 설정). null은 지움. |
 | [`setPoint`](#setpoint) | 예 | 점(꼭짓점)을 X·Y·Z(mm) 위치로 옮깁니다. 이 점을 쓰는 선·도형·치수가 함께 바뀝니다. Z는 층 바닥 기준 높이. 점 id는 getEntity의 start/middle/end/position/polygon에 있습니다. 선의 중간점(middle)을 옮기면 선 전체가 옮겨집니다. |
 | [`setStroke`](#setstroke) | 예 | 선·원과 도형의 변에 테두리(벽 두께, 바닥 표시 줄무늬 등)를 지정합니다. stroke=null이면 지웁니다. |
 | [`moveEntities`](#moveentities) | 예 | 객체를 (dx, dy)만큼 옮깁니다. 공유된 점에 연결된 형상도 따라 움직입니다. |
 | [`rotateEntities`](#rotateentities) | 예 | 90° 단위로 회전합니다. 설비만 선택하면 제자리 회전입니다. |
 | [`copyEntities`](#copyentities) | 예 | 객체를 (dx, dy)만큼 떨어뜨려 복사합니다. columns·rows를 주면 그 간격의 배열 복사입니다. |
 | [`deleteEntities`](#deleteentities) | 예 | 객체를 삭제합니다. 도형은 변 선과 함께, 선은 그 선을 쓰는 도형과 함께 지워집니다. |
+| [`editCorner`](#editcorner) | 예 | 두 선이 만나는 꼭짓점(point id)에 필렛(mode=fillet, size=반지름 mm) 또는 모따기(mode=chamfer, size=각 변을 따라 자를 거리 mm)를 적용합니다. 그 꼭짓점의 도형도 함께 바뀝니다. 필렛은 호를 따라 짧은 선들로 만듭니다. |
+| [`insertVertex`](#insertvertex) | 예 | 선(도형의 변 포함)에서 x, y에 가장 가까운 자리에 꼭짓점을 넣어 선을 둘로 나눕니다. |
+| [`removeVertex`](#removevertex) | 예 | 두 선이 만나는 꼭짓점을 지우고 두 선을 하나로 잇습니다(도형은 꼭짓점 3개 이상 유지). |
 | [`makeShapes`](#makeshapes) | 예 | 선들 중 닫힌 고리를 도형(면)으로 만듭니다. |
 | [`reorder`](#reorder) | 예 | 그리기 순서(트리 순서) 변경: front(맨 앞), back(맨 뒤), forward, backward. |
 | [`addFloor`](#addfloor) | 예 | 층을 추가합니다(레이어 "0" 포함). elevation 생략 시 가장 높은 층 위. |
@@ -90,7 +95,7 @@
 | `points` | number[] \| {x, y}[] | 예 |  |
 | `closed` | boolean |  |  |
 | `layer` | string |  | 레이어 id (생략 시 현재 레이어) |
-| `stroke` | object \| null |  | 테두리(Border, 선 양식). width(mm, Weight, 0=가는 선), align(center\|inside\|outside: 그린 선 기준 띠 위치), color(#rrggbb), opacity(0~1, 불투명도), pattern(줄무늬: stripes[{color, size(상대 크기)}], unit(크기 1의 폭 mm), angle(선 방향 기준 °)). null이면 지움. 템플릿: 구역색 color #FFCC00; 설비구역색 pattern stripes [#FFCC00×1, #1A1A1A×1], unit 50, angle 45; 안전구역색 [#FFFFFF×1, #D32F2F×1], unit 50, angle 45 |
+| `stroke` | object \| null |  | 테두리(Border, 선 양식). width(mm, Weight, 0=가는 선), align(center\|inside\|outside: 그린 선 기준 띠 위치), color(#rrggbb), opacity(0~1, 불투명도), join(miter\|round\|bevel: 다른 띠와 만나는 모서리의 바깥쪽 처리), pattern(줄무늬: stripes[{color, size(상대 크기)}], unit(크기 1의 폭 mm), angle(선 방향 기준 °)). null이면 지움. 템플릿: 구역색 color #FFCC00; 설비구역색 pattern stripes [#FFCC00×1, #1A1A1A×1], unit 50, angle 45; 안전구역색 [#FFFFFF×1, #D32F2F×1], unit 50, angle 45 |
 | `name` | string |  | 도형 이름 (closed일 때) |
 | `fill` | string |  | 도형 채우기 색 #rrggbb (closed일 때) |
 
@@ -105,7 +110,7 @@
 | `width` | number | 예 | mm |
 | `height` | number | 예 | mm |
 | `layer` | string |  | 레이어 id |
-| `stroke` | object \| null |  | 테두리(Border, 선 양식). width(mm, Weight, 0=가는 선), align(center\|inside\|outside: 그린 선 기준 띠 위치), color(#rrggbb), opacity(0~1, 불투명도), pattern(줄무늬: stripes[{color, size(상대 크기)}], unit(크기 1의 폭 mm), angle(선 방향 기준 °)). null이면 지움. 템플릿: 구역색 color #FFCC00; 설비구역색 pattern stripes [#FFCC00×1, #1A1A1A×1], unit 50, angle 45; 안전구역색 [#FFFFFF×1, #D32F2F×1], unit 50, angle 45 |
+| `stroke` | object \| null |  | 테두리(Border, 선 양식). width(mm, Weight, 0=가는 선), align(center\|inside\|outside: 그린 선 기준 띠 위치), color(#rrggbb), opacity(0~1, 불투명도), join(miter\|round\|bevel: 다른 띠와 만나는 모서리의 바깥쪽 처리), pattern(줄무늬: stripes[{color, size(상대 크기)}], unit(크기 1의 폭 mm), angle(선 방향 기준 °)). null이면 지움. 템플릿: 구역색 color #FFCC00; 설비구역색 pattern stripes [#FFCC00×1, #1A1A1A×1], unit 50, angle 45; 안전구역색 [#FFFFFF×1, #D32F2F×1], unit 50, angle 45 |
 | `name` | string |  | 도형 이름 |
 | `fill` | string |  | #rrggbb |
 
@@ -120,6 +125,42 @@
 | `z` | number |  | 층 바닥 기준 높이 mm |
 | `layer` | string |  | 레이어 id |
 | `name` | string |  | 이름 |
+
+## addLabel
+
+독립 라벨 객체(제목: 내용 행 목록 또는 text)를 x, y에 놓습니다. 글자 높이 size(mm, 기본 300)는 도면 크기라 확대해도 실제 크기를 유지합니다. anchor는 글 상자의 어느 쪽이 점에 오는지(top이면 점 아래로 매달림).
+
+| 매개변수 | 형식 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `x` | number | 예 | mm |
+| `y` | number | 예 | mm |
+| `items` | object[] |  | "제목: 내용" 행 목록. 제목이 비면 내용만 표시 |
+| `text` | string |  | items 대신 쓸 글(줄바꿈으로 여러 행) |
+| `size` | number |  | 글자 높이 mm |
+| `anchor` | center \| top \| bottom \| left \| right |  | 배치 기준: center(중심), top(상단), bottom(하단), left(좌측), right(우측) |
+| `color` | string |  | #rrggbb (기본: 레이어 색) |
+| `opacity` | number |  | 불투명도 0~1 |
+| `visible` | boolean |  | false면 숨김 |
+| `layer` | string |  | 레이어 id |
+| `name` | string |  | 이름 |
+
+## placeColumn
+
+기둥 생성기: 단면(section: rect 사각, round 원형, hbeam H형강)과 크기로 기둥을 x, y에 놓습니다. 같은 단면·크기·재료의 라이브러리 종류가 있으면 그것을, 없으면 새 종류를 추가해 씁니다. H형강은 width=춤 H(웨브 방향, 로컬 X), depth=플랜지 폭 B, webThickness=tw, flangeThickness=tf. 회전 0에서 H자 모양.
+
+| 매개변수 | 형식 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `section` | rect \| round \| hbeam | 예 |  |
+| `width` | number | 예 | mm (원형은 지름, H형강은 춤 H) |
+| `depth` | number |  | mm (H형강은 플랜지 폭 B, 원형은 무시) |
+| `webThickness` | number |  | H형강 웨브 두께 tw mm (기본 10) |
+| `flangeThickness` | number |  | H형강 플랜지 두께 tf mm (기본 15) |
+| `material` | RC \| S \| SRC |  |  |
+| `x` | number | 예 | 중심 mm |
+| `y` | number | 예 | 중심 mm |
+| `rotation` | number |  | °, 반시계 |
+| `tag` | string |  | 번호 (생략 시 자동) |
+| `layer` | string |  | 레이어 id |
 
 ## addCircle
 
@@ -162,7 +203,7 @@
 
 ## updateEntity
 
-객체 속성 변경: name, layer, binding(모니터링 키), stroke(선·원의 테두리), fill/fillOpacity(도형 면 색·면 불투명도 0~1), tag/rotation/props(설비·구조), radius(원), height(3D 높이 mm). null은 지움.
+객체 속성 변경: name, layer, binding(모니터링 키), stroke(선·원의 테두리), fill/fillOpacity(도형 면 색·면 불투명도 0~1), tag/rotation/props(설비·구조), radius(원), height(3D 높이 mm), label(도형 라벨·라벨 객체 설정). null은 지움.
 
 | 매개변수 | 형식 | 필수 | 설명 |
 | --- | --- | --- | --- |
@@ -170,7 +211,7 @@
 | `name` | string \| null |  |  |
 | `layer` | string |  | 같은 층의 레이어 id |
 | `binding` | string \| null |  |  |
-| `stroke` | object \| null |  | 테두리(Border, 선 양식). width(mm, Weight, 0=가는 선), align(center\|inside\|outside: 그린 선 기준 띠 위치), color(#rrggbb), opacity(0~1, 불투명도), pattern(줄무늬: stripes[{color, size(상대 크기)}], unit(크기 1의 폭 mm), angle(선 방향 기준 °)). null이면 지움. 템플릿: 구역색 color #FFCC00; 설비구역색 pattern stripes [#FFCC00×1, #1A1A1A×1], unit 50, angle 45; 안전구역색 [#FFFFFF×1, #D32F2F×1], unit 50, angle 45 |
+| `stroke` | object \| null |  | 테두리(Border, 선 양식). width(mm, Weight, 0=가는 선), align(center\|inside\|outside: 그린 선 기준 띠 위치), color(#rrggbb), opacity(0~1, 불투명도), join(miter\|round\|bevel: 다른 띠와 만나는 모서리의 바깥쪽 처리), pattern(줄무늬: stripes[{color, size(상대 크기)}], unit(크기 1의 폭 mm), angle(선 방향 기준 °)). null이면 지움. 템플릿: 구역색 color #FFCC00; 설비구역색 pattern stripes [#FFCC00×1, #1A1A1A×1], unit 50, angle 45; 안전구역색 [#FFFFFF×1, #D32F2F×1], unit 50, angle 45 |
 | `fill` | string \| null |  |  |
 | `fillOpacity` | number \| null |  | 도형 면만의 불투명도(0~1). null이면 기본값 |
 | `tag` | string |  |  |
@@ -178,6 +219,7 @@
 | `radius` | number |  |  |
 | `props` | object \| null |  |  |
 | `height` | number \| null |  | 3D 높이(mm). null이면 기본값(벽·구조물은 층고, 설비 1000) |
+| `label` | object \| null |  | 라벨. 도형: items(추가 행), showName, showArea, anchor, dx/dy(mm 이동), opacity(0~1), visible을 기존 값에 덮어씀(null이면 기본: 이름·면적을 면적 중심에). 라벨 객체: items, size(mm), anchor, color, opacity, visible. |
 
 ## setPoint
 
@@ -197,7 +239,7 @@
 | 매개변수 | 형식 | 필수 | 설명 |
 | --- | --- | --- | --- |
 | `ids` | string[] | 예 | 객체 id 목록 |
-| `stroke` | object \| null | 예 | 테두리(Border, 선 양식). width(mm, Weight, 0=가는 선), align(center\|inside\|outside: 그린 선 기준 띠 위치), color(#rrggbb), opacity(0~1, 불투명도), pattern(줄무늬: stripes[{color, size(상대 크기)}], unit(크기 1의 폭 mm), angle(선 방향 기준 °)). null이면 지움. 템플릿: 구역색 color #FFCC00; 설비구역색 pattern stripes [#FFCC00×1, #1A1A1A×1], unit 50, angle 45; 안전구역색 [#FFFFFF×1, #D32F2F×1], unit 50, angle 45 |
+| `stroke` | object \| null | 예 | 테두리(Border, 선 양식). width(mm, Weight, 0=가는 선), align(center\|inside\|outside: 그린 선 기준 띠 위치), color(#rrggbb), opacity(0~1, 불투명도), join(miter\|round\|bevel: 다른 띠와 만나는 모서리의 바깥쪽 처리), pattern(줄무늬: stripes[{color, size(상대 크기)}], unit(크기 1의 폭 mm), angle(선 방향 기준 °)). null이면 지움. 템플릿: 구역색 color #FFCC00; 설비구역색 pattern stripes [#FFCC00×1, #1A1A1A×1], unit 50, angle 45; 안전구역색 [#FFFFFF×1, #D32F2F×1], unit 50, angle 45 |
 
 ## moveEntities
 
@@ -237,6 +279,34 @@
 | 매개변수 | 형식 | 필수 | 설명 |
 | --- | --- | --- | --- |
 | `ids` | string[] | 예 | 객체 id 목록 |
+
+## editCorner
+
+두 선이 만나는 꼭짓점(point id)에 필렛(mode=fillet, size=반지름 mm) 또는 모따기(mode=chamfer, size=각 변을 따라 자를 거리 mm)를 적용합니다. 그 꼭짓점의 도형도 함께 바뀝니다. 필렛은 호를 따라 짧은 선들로 만듭니다.
+
+| 매개변수 | 형식 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `point` | string | 예 | 꼭짓점 id (getEntity의 polygon/start/end) |
+| `mode` | fillet \| chamfer | 예 |  |
+| `size` | number | 예 | mm |
+
+## insertVertex
+
+선(도형의 변 포함)에서 x, y에 가장 가까운 자리에 꼭짓점을 넣어 선을 둘로 나눕니다.
+
+| 매개변수 | 형식 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `line` | string | 예 | 선 id |
+| `x` | number | 예 | mm |
+| `y` | number | 예 | mm |
+
+## removeVertex
+
+두 선이 만나는 꼭짓점을 지우고 두 선을 하나로 잇습니다(도형은 꼭짓점 3개 이상 유지).
+
+| 매개변수 | 형식 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `point` | string | 예 | 꼭짓점 id |
 
 ## makeShapes
 

@@ -16,6 +16,7 @@ import type { Vec2 } from '../geom/vec';
 import type { DocumentModel } from './document';
 import { heightOf } from './heights';
 import { categoryOf, propValue } from './presets';
+import { planSymbol } from './symbols';
 import { StrokeGeometry } from './strokes';
 import type { Entity, Id } from './types';
 import { CANVAS, SHAPE_FILL } from '../theme';
@@ -80,8 +81,12 @@ export function buildScene(doc: DocumentModel, opts: SceneOptions = {}): Scene3D
         const b = doc.point(e.p2);
         const band = strokes.band(e.id);
         if (band) {
-          // Band corners: start-u1, end-u1, end-u2, start-u2. Without a height the band lies flat on the floor.
-          const bottom = [z(e.p1), z(e.p2), z(e.p2), z(e.p1)];
+          // Each band corner (two per plain end, more at round or chamfered joins) takes the Z of the line where it
+          // projects onto it, so a sloping line's wall slopes too. Without a height the band lies flat on the floor.
+          const za = z(e.p1);
+          const zb = z(e.p2);
+          const len2 = (b.x - a.x) ** 2 + (b.y - a.y) ** 2 || 1;
+          const bottom = band.map((q) => za + (zb - za) * Math.min(1, Math.max(0, ((q.x - a.x) * (b.x - a.x) + (q.y - a.y) * (b.y - a.y)) / len2)));
           solids.push({ id: e.id, outline: band, bottom, top: bottom.map((v) => v + h), color: override ?? e.stroke?.color ?? layerColor, opacity: 1 });
         } else if (h > 0) {
           // A plain line with a height: a thin vertical panel.
@@ -174,6 +179,10 @@ function equipmentSolids(doc: DocumentModel, e: Extract<Entity, { kind: 'equipme
     case 'column':
       if (propValue(doc, e, 'shape') === 'round') {
         const outline = circle(c, w / 2);
+        return [{ id: e.id, outline, bottom: outline.map(() => z0), top: outline.map(() => z0 + h), color, opacity: 1 }];
+      }
+      if (propValue(doc, e, 'shape') === 'hbeam') {
+        const outline = planSymbol(doc, e).polygon;
         return [{ id: e.id, outline, bottom: outline.map(() => z0), top: outline.map(() => z0 + h), color, opacity: 1 }];
       }
       return [box(-d / 2, d / 2, z0, z0 + h)];

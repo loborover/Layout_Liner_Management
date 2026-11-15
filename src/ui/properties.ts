@@ -16,12 +16,15 @@ import { UNDERLAY_ID } from '../model/selection';
 import { defaultHeight } from '../model/heights';
 import { CATEGORY_LABELS, PROP_DEFS, type PropDef, categoryOf, presetInfo, propValue } from '../model/presets';
 import { polygonPerimeter } from '../geom/polygon';
-import type { CircleEntity, Entity, Id, LineEntity, PropValue, ShapeEntity, StrokeStyle, Underlay } from '../model/types';
+import { hasHeight } from '../model/heights';
+import { ANCHOR_LABELS, MAX_LABEL_ITEMS, MAX_LABEL_TEXT, labelOpacity, labelSize, labelVisible } from '../model/labels';
+import type { CircleEntity, Entity, Id, LabelAnchor, LabelEntity, LabelItem, LineEntity, PropValue, ShapeEntity, ShapeLabel, StrokeJoin, StrokeStyle, Underlay } from '../model/types';
 import { formatArea, formatLength } from '../view/format';
 import type { UiHost } from './host';
 import { CANVAS, LAYER_DEFAULT, MARKING, SHAPE_FILL } from '../theme';
 
 const ALIGN_LABELS = { inside: '내측', center: '중심', outside: '외측' } as const;
+const JOIN_LABELS = { miter: '뾰족 (Miter)', round: '라운드 (Round)', bevel: '모따기 (Chamfer)' } as const;
 
 export class PropertyPanel {
   private timer: number | undefined;
@@ -171,16 +174,16 @@ export class PropertyPanel {
           ]
         : e.kind === 'circle'
           ? [['중심', e.center]]
-          : e.kind === 'equipment' || e.kind === 'point'
+          : e.kind === 'equipment' || e.kind === 'point' || e.kind === 'label'
             ? [['위치', e.at]]
             : e.points.map((id, i) => [`꼭짓점 ${i + 1}`, id] as [string, Id]);
     const MAX = 12;
     for (const [label, id] of named.slice(0, MAX)) this.row(f, label, this.xyz(id));
     if (named.length > MAX) this.row(f, '', `외 ${named.length - MAX}개 (꼭짓점을 클릭해 편집)`);
-    if (e.kind !== 'dimension' && e.kind !== 'point') {
+    if (hasHeight(e)) {
       const h = this.input('number', e.height !== undefined ? String(e.height) : '', (v) =>
         this.update('높이 변경', [e], (c) => {
-          if (c.kind === 'dimension' || c.kind === 'point') return;
+          if (!hasHeight(c)) return;
           const n = Number(v);
           if (v.trim() === '') delete c.height;
           else if (Number.isFinite(n) && n >= 0) c.height = n;
@@ -262,7 +265,7 @@ export class PropertyPanel {
 
   private kindLabel(e: Entity): string {
     if (e.kind === 'equipment') return CATEGORY_LABELS[categoryOf(this.host.doc.equipmentTypes.get(e.type))];
-    return { point: '점', line: '선', circle: '원', dimension: '치수', shape: '도형' }[e.kind];
+    return { point: '점', line: '선', circle: '원', dimension: '치수', shape: '도형', label: '라벨' }[e.kind];
   }
 
   private single(e: Entity): HTMLElement[] {
@@ -288,6 +291,14 @@ export class PropertyPanel {
         return l?.kind === 'line' ? [l] : [];
       });
       sets.push(this.strokeSet(lines, '테두리 (Border, 변 전체)'));
+      sets.push(this.labelSet(e));
+      const edit = document.createElement('div');
+      edit.className = 'actions';
+      edit.append(
+        this.button('필렛', '도형의 모든 꼭짓점을 둥글게 합니다 (꼭짓점 하나만 하려면 그 점을 클릭해 선택)', () => this.host.runAction('fillet')),
+        this.button('모따기', '도형의 모든 꼭짓점을 비스듬히 자릅니다', () => this.host.runAction('chamfer')),
+      );
+      f.append(edit);
     } else if (e.kind === 'circle') {
       const constrained = doc.constraintsOn([e.id]).length > 0;
       const r = this.input('number', String(Math.round(e.radius * 100) / 100), (v) => {
@@ -306,6 +317,8 @@ export class PropertyPanel {
       this.row(f, '종류', e.value !== undefined ? `구동 (${e.value} mm)` : '참조');
     } else if (e.kind === 'equipment') {
       sets.push(...this.equipmentSets(e));
+    } else if (e.kind === 'label') {
+      sets.push(this.labelSet(e));
     }
     sets.splice(1, 0, this.coordinates(e));
     return sets;
@@ -328,7 +341,10 @@ export class PropertyPanel {
     const defs = PROP_DEFS[categoryOf(type)];
     if (defs.length > 0) {
       const p = this.fieldset('특성 (이 객체)');
-      for (const def of defs) this.row(p, def.label + (def.unit ? ` (${def.unit})` : ''), this.propInput(e, def));
+      for (const def of defs) {
+        if (def.when && propValue(doc, e, def.when.key) !== def.when.value) continue;
+        this.row(p, def.label + (def.unit ? ` (${def.unit})` : ''), this.propInput(e, def));
+      }
       const reset = this.button('기본값으로', '이 객체의 특성을 종류 기본값으로 되돌립니다', () =>
         this.update('특성 초기화', [e], (c) => c.kind === 'equipment' && delete c.props),
       );
@@ -454,6 +470,13 @@ export class PropertyPanel {
       draft.align = v as StrokeStyle['align'];
       commit();
     }));
+    const join = this.select(JOIN_LABELS, current.join ?? 'miter', (v) => {
+      if (v === 'miter') delete draft.join;
+      else draft.join = v as StrokeJoin;
+      commit();
+    });
+    join.title = '다른 테두리와 만나는 모서리의 바깥쪽 처리. 안쪽은 항상 정확히 만나며, 내측 테두리는 그린 선 밖으로 나가지 않습니다';
+    this.row(f, '모서리', join);
     const width = field('number', same ? String(current.width) : '', (v) => {
       const n = Number(v);
       if (v.trim() === '' || !(n >= 0)) return false;
@@ -555,6 +578,112 @@ export class PropertyPanel {
     f.append(actions);
     if (!same) this.warning(f, '객체마다 테두리가 다릅니다. 바꾸면 모두 같은 값이 됩니다.');
     if (current.pattern && !(current.width > 0)) this.warning(f, '두께가 0이면 패턴이 보이지 않습니다. 두께를 지정하십시오.');
+    return f;
+  }
+
+  /**
+   * Label editor for a shape's label or a label object: shown or hidden, opacity, placement ("배치 기준": centre,
+   * top, bottom, left, right) and the "제목: 내용" rows; a shape also chooses whether its name and area show and
+   * shifts its label by X/Y mm, a label object sets its text height and colour.
+   */
+  private labelSet(e: ShapeEntity | LabelEntity): HTMLElement {
+    const f = this.fieldset(e.kind === 'shape' ? '라벨 (도형)' : '라벨 내용');
+    const look = e.kind === 'shape' ? (e.label ?? {}) : e;
+    const set = (label: string, edit: (l: ShapeLabel | LabelEntity) => void) =>
+      this.update(label, [e], (c) => {
+        if (c.kind === 'shape') {
+          const l: ShapeLabel = c.label ?? {};
+          edit(l);
+          if (Object.keys(l).length > 0) c.label = l;
+          else delete c.label;
+        } else if (c.kind === 'label') edit(c);
+      });
+    const visible = this.input('checkbox', '', () => set(visible.checked ? '라벨 표시' : '라벨 숨기기', (l) => (visible.checked ? delete l.visible : (l.visible = false))));
+    visible.checked = labelVisible(look);
+    visible.title = '끄면 라벨을 그리지 않습니다 (인쇄·SVG·DXF에도 빠집니다)';
+    this.row(f, '표시', visible);
+    const opacity = this.input('number', String(Math.round((1 - labelOpacity(look)) * 100)), (v) => {
+      const n = Number(v);
+      if (v.trim() === '' || !(n >= 0 && n <= 100)) return this.host.notify('투명도는 0~100(%)입니다.');
+      set('라벨 투명도', (l) => (n === 0 ? delete l.opacity : (l.opacity = 1 - n / 100)));
+    });
+    opacity.min = '0';
+    opacity.max = '100';
+    opacity.step = '10';
+    opacity.title = '라벨 글자의 투명도 (%): 0 불투명, 100 완전 투명';
+    this.row(f, '투명도 (%)', opacity);
+    const anchor = this.select(ANCHOR_LABELS, look.anchor ?? 'center', (v) => set('라벨 배치', (l) => (v === 'center' ? delete l.anchor : (l.anchor = v as LabelAnchor))));
+    anchor.title =
+      e.kind === 'shape' ? '라벨을 놓을 곳: 중심(면적 중심), 상단·하단·좌측·우측(도형의 그쪽 가장자리 안쪽)' : '글 상자의 어느 쪽이 점에 오는지: 상단이면 점 아래로, 좌측이면 점 오른쪽으로 씁니다';
+    this.row(f, '배치 기준', anchor);
+    if (e.kind === 'shape') {
+      const sl = e.label ?? {};
+      const flag = (key: 'showName' | 'showArea', text: string) => {
+        const box = this.input('checkbox', '', () =>
+          set(text, (l) => {
+            const sl2 = l as ShapeLabel;
+            if (box.checked) delete sl2[key];
+            else sl2[key] = false;
+          }),
+        );
+        box.checked = sl[key] !== false;
+        return box;
+      };
+      this.row(f, '이름 표시', flag('showName', '라벨 이름 표시'));
+      this.row(f, '면적 표시', flag('showArea', '라벨 면적 표시'));
+      for (const [key, text] of [
+        ['dx', 'X 이동 (mm)'],
+        ['dy', 'Y 이동 (mm)'],
+      ] as const) {
+        const i = this.input('number', String(sl[key] ?? 0), (v) => {
+          const n = Number(v);
+          if (!Number.isFinite(n)) return this.host.notify('숫자를 입력하십시오.');
+          set('라벨 위치', (l) => (n === 0 ? delete (l as ShapeLabel)[key] : ((l as ShapeLabel)[key] = n)));
+        });
+        i.step = '100';
+        i.title = '배치 기준에서 옮길 거리 (mm). X는 오른쪽, Y는 위쪽이 +';
+        this.row(f, text, i);
+      }
+    } else {
+      const size = this.input('number', String(labelSize(e)), (v) => {
+        const n = Number(v);
+        if (!(n > 0)) return this.host.notify('글자 높이는 0보다 커야 합니다.');
+        set('글자 높이', (l) => ((l as LabelEntity).size = n));
+      });
+      size.min = '1';
+      size.step = '50';
+      size.title = '글자 높이 (mm, 도면 크기): 확대·축소하면 함께 커지고 작아집니다';
+      this.row(f, '글자 높이 (mm)', size);
+      const layerColor = this.host.doc.layers.get(e.layer)?.color ?? LAYER_DEFAULT;
+      this.row(f, '색', this.input('color', e.color ?? layerColor, (v) => set('라벨 색', (l) => ((l as LabelEntity).color = v))));
+    }
+    // "제목: 내용" rows.
+    const items = (e.kind === 'shape' ? e.label?.items : e.items) ?? [];
+    const setItems = (label: string, edit: (list: LabelItem[]) => void) =>
+      set(label, (l) => {
+        const list = (l.items ?? []).map((it) => ({ ...it }));
+        edit(list);
+        if (list.length > 0 || 'kind' in l) l.items = list;
+        else delete l.items;
+      });
+    items.forEach((it, i) => {
+      const box = document.createElement('span');
+      box.className = 'row label-item';
+      const title = this.input('text', it.title, (v) => setItems('라벨 항목', (list) => (list[i].title = v)));
+      title.placeholder = '제목';
+      title.maxLength = MAX_LABEL_TEXT;
+      const value = this.input('text', it.value, (v) => setItems('라벨 항목', (list) => (list[i].value = v)));
+      value.placeholder = '내용';
+      value.maxLength = MAX_LABEL_TEXT;
+      box.append(title, value, this.button('×', '이 항목 삭제', () => setItems('라벨 항목 삭제', (list) => list.splice(i, 1))));
+      this.row(f, `항목 ${i + 1}`, box);
+    });
+    const actions = document.createElement('div');
+    actions.className = 'actions';
+    const add = this.button('+ 항목 추가', '"제목: 내용" 한 줄을 추가합니다', () => setItems('라벨 항목 추가', (list) => list.push({ title: '', value: '' })));
+    add.disabled = items.length >= MAX_LABEL_ITEMS;
+    actions.append(add);
+    f.append(actions);
     return f;
   }
 

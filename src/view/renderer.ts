@@ -7,8 +7,9 @@
  * keeps large drawings fast), then labels. Structures that reach the active floor from another floor (stairs,
  * ramps, lifts) are drawn as dashed ghosts. The viewer passes live `status` colours per entity (docs/VIEWER.md).
  * Border bands are filled with their colour or stripe pattern (src/model/borders.ts) at their opacity; shape faces
- * with a colour or picture at the face opacity. A selected underlay gets a frame, and a scale bar with the
- * approximate screen scale sits in the lower left.
+ * with a colour or picture at the face opacity. Shape labels and label objects are placed by src/model/labels.ts
+ * (shape labels in screen-size text, label objects in world-millimetre text). A selected underlay gets a frame,
+ * and a scale bar with the approximate screen scale sits in the lower left.
  */
 import { dimensionGeometry } from '../geom/dimension';
 import type { Vec2 } from '../geom/vec';
@@ -20,7 +21,8 @@ import type { SpatialIndex } from '../model/spatial';
 import { connectedFloors } from '../model/presets';
 import { StrokeGeometry } from '../model/strokes';
 import { planSymbol } from '../model/symbols';
-import type { ConstraintKind, Entity, EquipmentEntity, FillImage, Id, ShapeEntity, StrokeStyle } from '../model/types';
+import { LINE_SPACING, blockLayout, labelOpacity, labelRows, labelSize, labelVisible, shapeLabelPlacement, shapeLabelRows } from '../model/labels';
+import type { ConstraintKind, Entity, EquipmentEntity, FillImage, Id, LabelEntity, ShapeEntity, StrokeStyle } from '../model/types';
 import { type DisplayUnit, formatArea, formatLength } from './format';
 import { type Viewport, formatScaleLength, gridSpacing, scaleBarLength, screenScaleRatio } from './viewport';
 import { CANVAS } from '../theme';
@@ -472,6 +474,8 @@ export class Renderer {
     const batches = new Map<string, { color: string; width: number; alpha: number; items: Styled[] }>();
     for (const v of visible) {
       if (v.e.kind === 'shape' && !v.highlighted) continue;
+      // A label's frame only shows while it is selected or hovered, or (editing) when its text is hidden.
+      if (v.e.kind === 'label' && !v.highlighted && (state.clean || labelVisible(v.e))) continue;
       const key = `${v.color}|${v.width}|${v.alpha}`;
       let batch = batches.get(key);
       if (!batch) batches.set(key, (batch = { color: v.color, width: v.width, alpha: v.alpha, items: [] }));
@@ -597,7 +601,7 @@ export class Renderer {
         const c = view.toScreen(doc.point(e.at));
         const r = ((doc.equipmentTypes.get(e.type)?.width ?? 0) / 2) * view.scale;
         ctx.arc(c.x, c.y, Math.max(r, 0.5), 0, Math.PI * 2);
-      } else this.path(doc.cornersOf(e));
+      } else this.path(sym.polygon);
       ctx.globalAlpha = status ? 0.55 : sym.solid ? 0.7 : 0.08;
       ctx.fillStyle = status?.color ?? v.color;
       ctx.fill();
@@ -708,6 +712,10 @@ export class Renderer {
         lines.forEach((text, i) => ctx.fillText(text, c.x, c.y + (i - (lines.length - 1) / 2) * (font + 2)));
       } else if (e.kind === 'shape') {
         this.labelShape(e, color, status);
+      } else if (e.kind === 'label') {
+        this.drawLabel(e, color, status);
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
       } else if (e.kind === 'dimension') {
         const a = doc.point(e.p1);
         const b = doc.point(e.p2);
@@ -722,17 +730,48 @@ export class Renderer {
     ctx.textBaseline = 'alphabetic';
   }
 
+  /**
+   * A shape's label: name, area and its extra "제목: 내용" rows at the face's centre (area centroid) or against the
+   * chosen side, shifted by its offset, at its opacity; a live value is added below. Small shapes stay unlabelled.
+   */
   private labelShape(e: ShapeEntity, color: string, status: EntityStatus | undefined): void {
     const { ctx, view, doc } = this;
+    if (!labelVisible(e.label) && !status) return;
     const b = doc.bboxOf(e);
     const size = Math.min(b.maxX - b.minX, b.maxY - b.minY) * view.scale;
     if (size < 40) return;
-    // Area-weighted centroid would be nicer for L-shapes, but the box centre is stable while dragging.
-    const c = view.toScreen({ x: (b.minX + b.maxX) / 2, y: (b.minY + b.maxY) / 2 });
-    const lines = [e.name ?? '', formatArea(doc.shapeArea(e)), status?.text ?? ''].filter(Boolean);
+    const rows = labelVisible(e.label) ? shapeLabelRows(e, formatArea(doc.shapeArea(e))) : [];
+    if (status?.text) rows.push(status.text);
+    if (rows.length === 0) return;
+    const { at, anchor } = shapeLabelPlacement(doc, e);
+    const layout = blockLayout(anchor, view.toScreen(at), rows.length, 15, 6);
+    ctx.save();
     ctx.font = '12px system-ui, sans-serif';
+    ctx.textAlign = layout.align;
+    ctx.textBaseline = 'middle';
+    ctx.globalAlpha = labelOpacity(e.label);
     ctx.fillStyle = color === COLORS.selected || color === COLORS.hover ? color : COLORS.text;
-    lines.forEach((text, i) => ctx.fillText(text, c.x, c.y + (i - (lines.length - 1) / 2) * 15));
+    rows.forEach((text, i) => ctx.fillText(text, layout.x, layout.ys[i]));
+    ctx.restore();
+  }
+
+  /** A label object: its rows in world-size text (CAD-like), at its colour and opacity; nothing when hidden. */
+  private drawLabel(e: LabelEntity, color: string, status: EntityStatus | undefined): void {
+    const { ctx, view, doc } = this;
+    const rows = labelVisible(e) ? labelRows(e.items) : [];
+    if (status?.text) rows.push(status.text);
+    const px = labelSize(e) * view.scale;
+    if (rows.length === 0 || px < 3) return;
+    const layout = blockLayout(e.anchor ?? 'center', view.toScreen(doc.point(e.at)), rows.length, px * LINE_SPACING);
+    const own = color === COLORS.selected || color === COLORS.hover;
+    ctx.save();
+    ctx.font = `${px}px system-ui, sans-serif`;
+    ctx.textAlign = layout.align;
+    ctx.textBaseline = 'middle';
+    ctx.globalAlpha = labelOpacity(e);
+    ctx.fillStyle = own ? color : (e.color ?? color);
+    rows.forEach((text, i) => ctx.fillText(text, layout.x, layout.ys[i]));
+    ctx.restore();
   }
 
   private drawConstraintBadges(visible: ReadonlySet<Id>): void {
@@ -813,7 +852,7 @@ export class Renderer {
           const r = Math.max(((doc.equipmentTypes.get(e.type)?.width ?? 0) / 2) * view.scale, 0.5);
           ctx.moveTo(c.x + r, c.y);
           ctx.arc(c.x, c.y, r, 0, Math.PI * 2);
-        } else this.path(doc.cornersOf(e));
+        } else this.path(sym.polygon);
         for (const [p, q] of sym.segments) {
           const a = view.toScreen(p);
           const b = view.toScreen(q);
@@ -829,6 +868,12 @@ export class Renderer {
         ctx.lineTo(c.x, c.y + POINT_MARK_PX);
         ctx.moveTo(c.x + POINT_MARK_PX * 0.6, c.y);
         ctx.arc(c.x, c.y, POINT_MARK_PX * 0.6, 0, Math.PI * 2);
+      } else if (e.kind === 'label') {
+        // A label is its text (drawn with the other labels); a selected, hovered or hidden one shows its frame.
+        const box = doc.bboxOf(e);
+        const a = view.toScreen({ x: box.minX, y: box.maxY });
+        const b = view.toScreen({ x: box.maxX, y: box.minY });
+        ctx.rect(a.x - 2, a.y - 2, b.x - a.x + 4, b.y - a.y + 4);
       } else {
         const c = view.toScreen(doc.point(e.center));
         const r = Math.max(e.radius * view.scale, 0.5);

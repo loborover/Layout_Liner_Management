@@ -4,13 +4,16 @@
  * Exports visible layers as an SVG in millimetres; also used for printing. Borders keep their opacity and stripe
  * patterns (SVG <pattern> in world millimetres), faces their opacity and pictures. Every export carries a graphic
  * scale bar, which stays true however the page is scaled; with a fixed print scale (e.g. 1:100) the SVG is sized so
- * that it prints at that scale and the ratio is written next to the bar.
+ * that it prints at that scale and the ratio is written next to the bar. Shape labels (name, area, extra rows) and
+ * label objects are placed as on the canvas (src/model/labels.ts), at their opacity; hidden ones are left out.
  */
 import { dimensionGeometry } from '../geom/dimension';
-import type { Box } from '../geom/vec';
+import type { Box, Vec2 } from '../geom/vec';
 import type { DocumentModel } from '../model/document';
 import { borderOpacity, circleBandRadii, patternPeriod } from '../model/borders';
-import type { StripePattern, StrokeStyle } from '../model/types';
+import { LINE_SPACING, blockLayout, labelOpacity, labelRows, labelSize, labelVisible, shapeLabelPlacement, shapeLabelRows } from '../model/labels';
+import type { LabelAnchor, StripePattern, StrokeStyle } from '../model/types';
+import { formatArea } from '../view/format';
 import { dataImageSize } from './imageSize';
 import { formatScaleLength, scaleBarLength } from '../view/viewport';
 import { CANVAS } from '../theme';
@@ -106,6 +109,10 @@ export function drawingSvg(doc: DocumentModel, opts: SvgOptions = {}): string | 
             );
           }
         } else shapes.push(`<polygon points="${pts(poly)}" fill="${e.fill ?? layer.color}" fill-opacity="${n(opacity)}" stroke="none"/>`);
+        if (labelVisible(e.label)) {
+          const { at, anchor } = shapeLabelPlacement(doc, e);
+          textBlock(labels, shapeLabelRows(e, formatArea(doc.shapeArea(e))), anchor, at, textSize, labelOpacity(e.label), CANVAS.text, textSize * 0.5);
+        }
       } else if (e.kind === 'line') {
         const a = doc.point(e.p1);
         const b = doc.point(e.p2);
@@ -135,7 +142,7 @@ export function drawingSvg(doc: DocumentModel, opts: SvgOptions = {}): string | 
         const opacity = sym.solid ? 0.6 : 0.08;
         if (sym.outline === 'circle') {
           shapes.push(`<circle cx="${n(at.x)}" cy="${y(at.y)}" r="${n((type?.width ?? 0) / 2)}" fill="${layer.color}" fill-opacity="${opacity}"/>`);
-        } else shapes.push(`<polygon points="${pts(doc.cornersOf(e))}" fill="${layer.color}" fill-opacity="${opacity}"/>`);
+        } else shapes.push(`<polygon points="${pts(sym.polygon)}" fill="${layer.color}" fill-opacity="${opacity}"/>`);
         if (sym.segments.length > 0) {
           shapes.push(`<path d="${sym.segments.map(([p, q]) => `M${n(p.x)} ${y(p.y)}L${n(q.x)} ${y(q.y)}`).join('')}"/>`);
         }
@@ -147,6 +154,8 @@ export function drawingSvg(doc: DocumentModel, opts: SvgOptions = {}): string | 
             labels.push(`<text x="${n(at.x)}" y="${n(-at.y + dy)}" font-size="${n(fs)}">${esc(t)}</text>`);
           });
         }
+      } else if (e.kind === 'label') {
+        if (labelVisible(e)) textBlock(labels, labelRows(e.items), e.anchor ?? 'center', doc.point(e.at), labelSize(e), labelOpacity(e), e.color ?? layer.color);
       } else if (e.kind === 'point') {
         const p = doc.point(e.at);
         const r = textSize * 0.25;
@@ -200,6 +209,15 @@ export function drawingSvg(doc: DocumentModel, opts: SvgOptions = {}): string | 
   ].join('\n');
 }
 
+/** Writes rows of text whose `anchor` side sits on world point `at`, `size` mm high (see blockLayout). */
+function textBlock(out: string[], rows: string[], anchor: LabelAnchor, at: Vec2, size: number, opacity: number, color: string, pad = 0): void {
+  if (rows.length === 0) return;
+  const layout = blockLayout(anchor, { x: at.x, y: -at.y }, rows.length, size * LINE_SPACING, pad);
+  const align = layout.align === 'left' ? 'start' : layout.align === 'right' ? 'end' : 'middle';
+  const alpha = opacity < 1 ? ` fill-opacity="${n(opacity)}"` : '';
+  rows.forEach((t, i) => out.push(`<text x="${n(layout.x)}" y="${n(layout.ys[i])}" font-size="${n(size)}" fill="${color}"${alpha} style="text-anchor:${align}">${esc(t)}</text>`));
+}
+
 /** Bounds of what the SVG shows: entities on visible layers and a visible underlay. */
 function visibleExtents(doc: DocumentModel): Box | null {
   // Accumulated in a loop: spreading every box into Math.min would overflow the argument limit on big drawings.
@@ -209,7 +227,8 @@ function visibleExtents(doc: DocumentModel): Box | null {
       ? { minX: Math.min(box.minX, b.minX), minY: Math.min(box.minY, b.minY), maxX: Math.max(box.maxX, b.maxX), maxY: Math.max(box.maxY, b.maxY) }
       : b;
   };
-  for (const e of doc.entities.values()) if (doc.isVisible(e)) grow(doc.bboxOf(e));
+  // Hidden labels are not drawn, so they must not stretch the sheet either.
+  for (const e of doc.entities.values()) if (doc.isVisible(e) && !(e.kind === 'label' && !labelVisible(e))) grow(doc.bboxOf(e));
   const u = doc.underlay;
   if (u?.visible) grow({ minX: u.x, minY: u.y, maxX: u.x + u.width, maxY: u.y + u.height });
   return box;

@@ -71,6 +71,7 @@
             <button data-tool="rect" data-icon="rect" title="사각형 (R): 네 선과 도형으로 그립니다">사각형</button>
             <button data-tool="circle" data-icon="circle" title="원 (C)">원</button>
             <button data-tool="dimension" data-icon="dimension" title="치수 (D)">치수</button>
+            <button data-tool="label" data-icon="label" title="라벨 (T): 도형과 별개인 글 객체. 클릭한 자리에 &quot;제목: 내용&quot; 행을 씁니다">라벨</button>
           </div>
           <span class="glabel">그리기</span>
         </div>
@@ -83,6 +84,15 @@
             <button data-action="to-layer" title="선택한 객체를 현재 레이어로 옮깁니다">현재 레이어로</button>
           </div>
           <span class="glabel">편집</span>
+        </div>
+        <div class="rgroup">
+          <div class="items">
+            <button data-action="fillet" title="필렛: 선택한 꼭짓점(또는 도형의 모든 꼭짓점)을 반지름만큼 둥글게 합니다">필렛</button>
+            <button data-action="chamfer" title="모따기(코너): 선택한 꼭짓점(또는 도형의 모든 꼭짓점)을 거리만큼 비스듬히 자릅니다">모따기</button>
+            <button data-tool="vertex" title="꼭짓점(버텍스) 추가: 선이나 도형의 변을 클릭한 자리에 꼭짓점을 넣습니다">꼭짓점 추가</button>
+            <button data-action="remove-vertex" title="선택한 꼭짓점을 지우고 양쪽 선을 하나로 잇습니다">꼭짓점 삭제</button>
+          </div>
+          <span class="glabel">모서리·꼭짓점</span>
         </div>
         <div class="rgroup">
           <div class="items">
@@ -101,6 +111,14 @@
                 <option value="inside">내측</option>
                 <option value="center">중심</option>
                 <option value="outside">외측</option>
+              </select>
+            </label>
+            <label title="다른 테두리와 만나는 모서리 바깥쪽 처리 (안쪽은 항상 정확히 만납니다)">
+              모서리
+              <select id="style-join">
+                <option value="miter">뾰족</option>
+                <option value="round">라운드</option>
+                <option value="bevel">모따기</option>
               </select>
             </label>
             <label title="테두리 두께 Weight (mm), 0이면 가는 선">두께 <input id="style-width" type="number" min="0" step="10" value="200" /></label>
@@ -126,8 +144,32 @@
       <div class="panel-row" role="tabpanel" data-panel="insert">
         <div class="rgroup">
           <div class="items">
-            <button data-preset="st-column" data-icon="column" title="사각 기둥 배치">기둥</button>
-            <button data-preset="st-column-round" data-icon="circle" title="원형 기둥 배치">원형 기둥</button>
+            <label title="기둥 단면: 사각형, 원형, H형강">
+              단면
+              <select id="col-section">
+                <option value="rect">사각형</option>
+                <option value="round">원형</option>
+                <option value="hbeam">H형강</option>
+              </select>
+            </label>
+            <label title="사각형: X 방향 폭 · 원형: 지름 · H형강: 춤 H (웨브 방향)"><span id="col-width-text">폭</span> <input id="col-width" type="number" min="1" step="50" value="600" /></label>
+            <label class="col-depth" title="사각형: Y 방향 깊이 · H형강: 플랜지 폭 B"><span id="col-depth-text">깊이</span> <input id="col-depth" type="number" min="1" step="50" value="600" /></label>
+            <label class="col-hbeam" title="H형강 웨브 두께 tw (mm)" hidden>tw <input id="col-tw" type="number" min="1" step="1" value="10" /></label>
+            <label class="col-hbeam" title="H형강 플랜지 두께 tf (mm)" hidden>tf <input id="col-tf" type="number" min="1" step="1" value="15" /></label>
+            <label title="기둥 재료">
+              재료
+              <select id="col-material">
+                <option value="RC">철근콘크리트</option>
+                <option value="S">철골</option>
+                <option value="SRC">철골철근콘크리트</option>
+              </select>
+            </label>
+            <button data-action="place-column" data-icon="column" title="이 단면·크기로 기둥을 배치합니다. 같은 크기의 종류가 라이브러리에 없으면 새로 추가합니다 (R: 회전)">기둥 배치</button>
+          </div>
+          <span class="glabel">기둥 생성기</span>
+        </div>
+        <div class="rgroup">
+          <div class="items">
             <button data-preset="st-stair" data-icon="stair" title="계단 배치: 단높이·단너비로 단 수와 길이를 검토합니다">계단</button>
             <button data-preset="st-ramp" data-icon="ramp" title="경사로 배치: 기울기를 검토합니다">경사로</button>
             <button data-preset="st-lift" data-icon="lift" title="리프트 배치: 운행 층을 지정합니다">리프트</button>

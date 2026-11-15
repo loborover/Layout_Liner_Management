@@ -125,7 +125,7 @@ describe('floors and folders', () => {
       equipmentTypes: [{ id: 'eq-bench', name: '작업대', width: 1800, depth: 750, prefix: 'WB' }],
     };
     const data = deserialize(JSON.stringify(v1));
-    expect(data.version).toBe(4);
+    expect(data.version).toBe(5);
     expect(data.floors).toHaveLength(1);
     expect(data.layers[0].floor).toBe(data.floors[0].id);
     expect(data.equipmentTypes.some((t) => t.category === 'stair')).toBe(true);
