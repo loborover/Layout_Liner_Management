@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { EditorApi } from '../src/api/editorApi';
 import { dispatch } from '../src/api/rpc';
 import { RecordStore, gatewayAddress, parseRecordRef, recordKey } from '../src/data/records';
-import { asFormulaValue, fieldRefOf, formatFieldRef, prefetch, recordFunctions, refsFromCalls } from '../src/data/recordValues';
+import { asFormulaValue, drawingRecordRefs, fieldRefOf, formatFieldRef, prefetch, recordFunctions, recordRefsIn, refsFromCalls } from '../src/data/recordValues';
 import { deserialize, serialize } from '../src/io/serialize';
 import { History } from '../src/model/commands';
 import { DocumentModel } from '../src/model/document';
@@ -164,5 +164,31 @@ describe('source data as formula values', () => {
     release();
     await new Promise((r) => setTimeout(r, 5));
     expect(store.peek('ds', 'A')).toBeUndefined();
+  });
+});
+
+describe('DB values in parameters', () => {
+  it('finds DB references in a drawing and fills parameters when records arrive', async () => {
+    const { GcsWrapper, init_planegcs_module } = await import('@salusoft89/planegcs');
+    const { ConstraintService } = await import('../src/constraints/service');
+    const { ConstraintSolver } = await import('../src/constraints/solver');
+    const mod = await init_planegcs_module();
+    const solver = new ConstraintSolver(new GcsWrapper(new mod.GcsSystem()));
+    const doc = new DocumentModel();
+    const constraints = new ConstraintService(doc, new History(doc), () => Promise.resolve(solver));
+    const { store } = fakeGateway({ equipment: { 'MC-1': { kw: '22' } } });
+    constraints.functions = recordFunctions(store);
+    await constraints.setParameters([
+      { id: 'p', name: '전력', expression: 'DB("equipment", "MC-1", "kw") * 2' },
+      { id: 'q', name: '여유', expression: '전력 + 1' },
+    ]);
+    expect(drawingRecordRefs(doc)).toEqual([{ dataset: 'equipment', key: 'MC-1', field: 'kw' }]);
+    expect(recordRefsIn(['1 +', 'max(1, 2)', 'DB(x, "k", "f")'])).toEqual([]);
+    // The record was not cached yet: the parameter has no value until the lookup finishes.
+    expect(constraints.parameterErrors().get('p')).toMatch(/값 없음/);
+    const done = new Promise<void>((resolve) => store.onChange(() => void constraints.reapplyParameters().then(() => resolve())));
+    await done;
+    expect(doc.parameters.get('p')).toMatchObject({ value: 44 });
+    expect(doc.parameters.get('q')).toMatchObject({ value: 45 });
   });
 });

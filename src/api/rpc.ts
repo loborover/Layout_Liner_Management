@@ -397,7 +397,7 @@ export const METHODS: Record<string, MethodSpec> = {
   setParameter: {
     description:
       '파라미터를 추가하거나 바꿉니다(같은 이름이 있으면 그 값을 바꿈, id를 주면 이름 변경). expression은 숫자나 수식(+ - * / ^ %, 괄호, 다른 파라미터 이름, ' +
-      'min·max·abs·sqrt·round·floor·ceil·sin·cos·tan(도)). 그 파라미터를 쓰는 치수와 형상은 편집기에서 다시 풀립니다.',
+      'min·max·abs·sqrt·round·floor·ceil·sin·cos·tan(도), 편집기에서는 원본 데이터 DB("데이터셋", "키", "필드")). 그 파라미터를 쓰는 치수와 형상은 편집기에서 다시 풀립니다.',
     params: obj(
       {
         name: str('이름: 글자(한글 가능)나 _로 시작, 글자·숫자·_'),

@@ -28,7 +28,7 @@ import {
   UpdateEntities,
   captureLayerTree,
 } from '../model/commands';
-import { evaluate, evaluateParameters, nameProblem, parseExpression, references } from '../model/params';
+import { type ExpressionFunction, evaluate, evaluateParameters, nameProblem, parseExpression, references } from '../model/params';
 import { type DocumentModel, cloneEntity, midpointId } from '../model/document';
 import { cloneStroke } from '../model/borders';
 import { arrayOffsets, copyItems, layerTreeCommand, makeShapes, nextTag, type ReorderMove, reorderItems, rotateItems } from '../model/edit';
@@ -59,6 +59,11 @@ export interface EditorApiOptions {
    * dimensions follow the next time the drawing is opened in the editor.
    */
   onParametersChanged?: (revert: () => void) => void;
+  /**
+   * Extra expression functions, e.g. DB(...) for source data in the editor (src/data/recordValues.ts). Without
+   * them (headless file editing) a parameter using DB() keeps its cached value and reports it can't be computed.
+   */
+  functions?: () => Record<string, ExpressionFunction>;
 }
 
 const COLOR = /^#[0-9a-f]{6}$/i;
@@ -706,7 +711,7 @@ export class EditorApi {
   /** Parameters with their current value (or why it can't be computed) and how many dimensions use each. */
   listParameters() {
     const params = [...this.doc.parameters.values()];
-    const { values, errors } = evaluateParameters(params);
+    const { values, errors } = evaluateParameters(params, this.options.functions?.());
     const uses = new Map<string, number>();
     const targets = [...this.doc.constraints.values(), ...[...this.doc.entities.values()].filter((e) => e.kind === 'dimension')];
     for (const t of targets) {
@@ -752,14 +757,15 @@ export class EditorApi {
     const draft: Parameter = { id, name, expression, ...(note ? { note } : {}) };
     const next = existing ? current.map((q) => (q.id === id ? { ...draft, ...(q.value !== undefined ? { value: q.value } : {}) } : q)) : [...current, draft];
     // Cache the values now, so a headless file already holds them.
-    const { values, errors } = evaluateParameters(next);
+    const functions = this.options.functions?.();
+    const { values, errors } = evaluateParameters(next, functions);
     // Values no dimension can take are refused here; whether the geometry can reach them is the solver's call.
     const targets = [...this.doc.constraints.values(), ...[...this.doc.entities.values()].filter((e) => e.kind === 'dimension')];
     for (const t of targets) {
       if (!t.expression) continue;
       let v: number;
       try {
-        v = evaluate(t.expression, { params: (n) => values.get(n) });
+        v = evaluate(t.expression, { params: (n) => values.get(n), functions });
       } catch {
         continue; // keeps its last value
       }

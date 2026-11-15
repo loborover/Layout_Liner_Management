@@ -43,7 +43,7 @@
 | [`presetSchema`](#presetschema) |  | 구조 프리셋 범주별 특성 정의(키, 단위, 선택지, 기본값). |
 | [`scene3d`](#scene3d) |  | 3D 장면(벽·설비·계단 등을 높이 있는 입체와 3D 선으로 바꾼 것, mm, Z 위쪽)을 반환합니다. 호스트 서버에서 렌더링하거나 glTF 등으로 변환할 때 씁니다. |
 | [`listParameters`](#listparameters) |  | 파라미터 목록: 이름, 수식, 현재 값(계산할 수 없으면 error), 쓰는 치수 수(usedBy). 파라미터는 치수 값에 "폭 / 2"처럼 쓰는 이름 붙은 값입니다. |
-| [`setParameter`](#setparameter) | 예 | 파라미터를 추가하거나 바꿉니다(같은 이름이 있으면 그 값을 바꿈, id를 주면 이름 변경). expression은 숫자나 수식(+ - * / ^ %, 괄호, 다른 파라미터 이름, min·max·abs·sqrt·round·floor·ceil·sin·cos·tan(도)). 그 파라미터를 쓰는 치수와 형상은 편집기에서 다시 풀립니다. |
+| [`setParameter`](#setparameter) | 예 | 파라미터를 추가하거나 바꿉니다(같은 이름이 있으면 그 값을 바꿈, id를 주면 이름 변경). expression은 숫자나 수식(+ - * / ^ %, 괄호, 다른 파라미터 이름, min·max·abs·sqrt·round·floor·ceil·sin·cos·tan(도), 편집기에서는 원본 데이터 DB("데이터셋", "키", "필드")). 그 파라미터를 쓰는 치수와 형상은 편집기에서 다시 풀립니다. |
 | [`removeParameter`](#removeparameter) | 예 | 파라미터를 지웁니다. 그 파라미터를 쓰던 치수는 지금 값으로 남습니다. |
 | [`undo`](#undo) | 예 | 실행 취소. |
 | [`redo`](#redo) | 예 | 다시 실행. |
@@ -442,7 +442,7 @@
 
 ## setParameter
 
-파라미터를 추가하거나 바꿉니다(같은 이름이 있으면 그 값을 바꿈, id를 주면 이름 변경). expression은 숫자나 수식(+ - * / ^ %, 괄호, 다른 파라미터 이름, min·max·abs·sqrt·round·floor·ceil·sin·cos·tan(도)). 그 파라미터를 쓰는 치수와 형상은 편집기에서 다시 풀립니다.
+파라미터를 추가하거나 바꿉니다(같은 이름이 있으면 그 값을 바꿈, id를 주면 이름 변경). expression은 숫자나 수식(+ - * / ^ %, 괄호, 다른 파라미터 이름, min·max·abs·sqrt·round·floor·ceil·sin·cos·tan(도), 편집기에서는 원본 데이터 DB("데이터셋", "키", "필드")). 그 파라미터를 쓰는 치수와 형상은 편집기에서 다시 풀립니다.
 
 | 매개변수 | 형식 | 필수 | 설명 |
 | --- | --- | --- | --- |
