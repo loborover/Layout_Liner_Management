@@ -9,7 +9,8 @@
  * Border bands are filled with their colour or stripe pattern (src/model/borders.ts) at their opacity; shape faces
  * with a colour or picture at the face opacity. Shape labels and label objects are placed by src/model/labels.ts
  * (shape labels in screen-size text, label objects in world-millimetre text). A selected underlay gets a frame,
- * and a scale bar with the approximate screen scale sits in the lower left.
+ * and a scale bar with the approximate screen scale sits in the lower left. Optional rulers along the top and left
+ * edge label the major grid lines with their distance from the origin (0,0) in mm, cm or m (`showRulers`).
  */
 import { dimensionGeometry } from '../geom/dimension';
 import type { Vec2 } from '../geom/vec';
@@ -24,7 +25,7 @@ import { planSymbol } from '../model/symbols';
 import { LINE_SPACING, blockLayout, labelOpacity, labelRows, labelSize, labelVisible, shapeLabelPlacement, shapeLabelRows } from '../model/labels';
 import type { ConstraintKind, Entity, EquipmentEntity, FillImage, Id, LabelEntity, ShapeEntity, StrokeStyle } from '../model/types';
 import { type DisplayUnit, formatArea, formatLength } from './format';
-import { type Viewport, formatScaleLength, gridSpacing, scaleBarLength, screenScaleRatio } from './viewport';
+import { type Viewport, formatScaleLength, gridSpacing, rulerTicks, scaleBarLength, screenScaleRatio } from './viewport';
 import { CANVAS } from '../theme';
 
 /** Canvas colours: the Ink wash tokens from src/theme.ts. */
@@ -35,6 +36,8 @@ const EXT_OVERSHOOT_PX = 5;
 const TICK_PX = 5;
 /** Half size of a point object's cross on screen, px. */
 const POINT_MARK_PX = 6;
+/** Thickness of the ruler bands, px. */
+export const RULER_PX = 20;
 
 /** Adds an aligned dimension's extension lines, dimension line and ticks to the current path. */
 function traceDimension(ctx: CanvasRenderingContext2D, view: Viewport, a: Vec2, b: Vec2, offset: number): void {
@@ -308,6 +311,8 @@ export interface RenderState {
   status?: ReadonlyMap<Id, EntityStatus>;
   /** Hide constraint badges and point markers (viewer mode). */
   clean?: boolean;
+  /** Cursor position in mm, marked on the rulers. */
+  cursor?: Vec2 | null;
   overlay?: (p: Painter) => void;
 }
 
@@ -339,6 +344,8 @@ export class Renderer {
   private orderRev = -1;
   private faceRev = -1;
   private order = new Map<Id, number>();
+  /** Rulers with grid labels along the top and left edge (the editor's 눈금자 switch). */
+  showRulers = false;
 
   constructor(
     private readonly canvas: HTMLCanvasElement,
@@ -509,6 +516,7 @@ export class Renderer {
     }
     state.overlay?.(painter);
     if (state.snap) painter.snap(state.snap);
+    if (this.showRulers) this.drawRulers(state.cursor ?? undefined);
     this.drawScaleBar();
     return visible.length;
   }
@@ -521,7 +529,7 @@ export class Renderer {
     const { ctx, view } = this;
     const mm = scaleBarLength(view.scale);
     const px = mm * view.scale;
-    const x = 14;
+    const x = 14 + (this.showRulers ? RULER_PX : 0);
     const y = view.height - 18;
     const label = `${formatScaleLength(mm)} · 화면 약 1:${screenScaleRatio(view.scale).toLocaleString('ko-KR')}`;
     ctx.font = '11px system-ui, sans-serif';
@@ -540,6 +548,98 @@ export class Renderer {
     ctx.textAlign = 'left';
     ctx.textBaseline = 'alphabetic';
     ctx.fillText(label, x, y - 6);
+  }
+
+  /**
+   * Rulers along the top (X) and left (Y) edge: a tick at every grid line and, at each major line, its distance
+   * from the origin (0,0). The unit (mm, cm or m) follows the zoom and is shown in the corner square.
+   */
+  private drawRulers(cursor?: Vec2): void {
+    const { ctx, view } = this;
+    const R = RULER_PX;
+    const b = view.worldBounds();
+    const xs = rulerTicks(b.minX, b.maxX, view.scale);
+    const ys = rulerTicks(b.minY, b.maxY, view.scale);
+    ctx.fillStyle = COLORS.ruler;
+    ctx.fillRect(0, 0, view.width, R);
+    ctx.fillRect(0, 0, R, view.height);
+    ctx.beginPath();
+    ctx.strokeStyle = COLORS.rulerTick;
+    ctx.lineWidth = 1;
+    // Band edges facing the drawing.
+    ctx.moveTo(R, R - 0.5);
+    ctx.lineTo(view.width, R - 0.5);
+    ctx.moveTo(R - 0.5, R);
+    ctx.lineTo(R - 0.5, view.height);
+    for (const x of xs.minor) {
+      const sx = Math.round(view.toScreen({ x, y: 0 }).x) + 0.5;
+      if (sx < R) continue;
+      ctx.moveTo(sx, R - 5);
+      ctx.lineTo(sx, R);
+    }
+    for (const { at } of xs.major) {
+      const sx = Math.round(view.toScreen({ x: at, y: 0 }).x) + 0.5;
+      if (sx < R) continue;
+      ctx.moveTo(sx, 2);
+      ctx.lineTo(sx, R);
+    }
+    for (const y of ys.minor) {
+      const sy = Math.round(view.toScreen({ x: 0, y }).y) + 0.5;
+      if (sy < R) continue;
+      ctx.moveTo(R - 5, sy);
+      ctx.lineTo(R, sy);
+    }
+    for (const { at } of ys.major) {
+      const sy = Math.round(view.toScreen({ x: 0, y: at }).y) + 0.5;
+      if (sy < R) continue;
+      ctx.moveTo(2, sy);
+      ctx.lineTo(R, sy);
+    }
+    ctx.stroke();
+    ctx.fillStyle = COLORS.text;
+    ctx.font = '10px system-ui, sans-serif';
+    ctx.textBaseline = 'top';
+    ctx.textAlign = 'left';
+    for (const { at, label } of xs.major) {
+      const sx = Math.round(view.toScreen({ x: at, y: 0 }).x);
+      if (sx >= R) ctx.fillText(label, sx + 3, 3);
+    }
+    // Y labels read bottom to top, beside their tick.
+    for (const { at, label } of ys.major) {
+      const sy = Math.round(view.toScreen({ x: 0, y: at }).y);
+      if (sy < R) continue;
+      ctx.save();
+      ctx.translate(3, sy - 3);
+      ctx.rotate(-Math.PI / 2);
+      ctx.fillText(label, 0, 0);
+      ctx.restore();
+    }
+    // Where the cursor (snapped point) is, on both rulers.
+    if (cursor) {
+      const c = view.toScreen(cursor);
+      ctx.beginPath();
+      ctx.strokeStyle = COLORS.selected;
+      if (c.x >= R) {
+        ctx.moveTo(Math.round(c.x) + 0.5, 0);
+        ctx.lineTo(Math.round(c.x) + 0.5, R);
+      }
+      if (c.y >= R) {
+        ctx.moveTo(0, Math.round(c.y) + 0.5);
+        ctx.lineTo(R, Math.round(c.y) + 0.5);
+      }
+      ctx.stroke();
+    }
+    // Corner square: the unit of the labels.
+    ctx.fillStyle = COLORS.ruler;
+    ctx.fillRect(0, 0, R, R);
+    ctx.strokeStyle = COLORS.rulerTick;
+    ctx.strokeRect(0.5, 0.5, R - 1, R - 1);
+    ctx.fillStyle = COLORS.text;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(xs.unit, R / 2, R / 2);
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
   }
 
   private path(pts: Vec2[]): void {

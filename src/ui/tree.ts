@@ -8,13 +8,16 @@
  *
  * Clicking a floor shows it; clicking an object selects it (Shift adds), double-clicking zooms to it. In edit
  * mode floors, folders and layers can be added, renamed (double-click), deleted, hidden and locked, and a
- * layer can be dragged onto a folder or a floor. Object order and properties are edited with the ribbon's
+ * layer can be dragged onto a folder or a floor. Objects can be dragged onto a layer, a folder or a floor to move
+ * them there (the selected objects when the dragged one is selected); Alt+drag copies them instead, keeping their
+ * properties and giving named copies new unique names (src/model/edit.ts duplicateItems, transferItems). Object order and properties are edited with the ribbon's
  * 순서 group and the property panel. Tree edits are undoable commands (SetLayerTree); visibility and locks are
  * view state applied directly, as in most CAD tools.
  *
  * Large layers list their first MAX_ROWS objects only, and the tree is rebuilt at most a few times a second.
  */
 import { SetLayerTree, captureLayerTree, type LayerTree } from '../model/commands';
+import { duplicateItems, layerForDrop, transferItems, type TreeDropTarget } from '../model/edit';
 import { midpointId } from '../model/document';
 import { newId } from '../model/ids';
 import { labelRows } from '../model/labels';
@@ -33,6 +36,8 @@ export class ObjectTree {
   private open = new Map<string, boolean>();
   private timer: number | undefined;
   private dragLayer: Id | null = null;
+  /** Objects being dragged in the tree. */
+  private dragItems: Id[] | null = null;
 
   constructor(
     private readonly host: UiHost,
@@ -176,7 +181,7 @@ export class ObjectTree {
     label.addEventListener('dblclick', () => this.editFloor(floor));
     row.append(icon('floor'), label, this.meta(`EL ${formatLength(floor.elevation, this.host.unit())}`));
     row.append(this.mini('trash', '층 삭제 (객체가 없는 층만)', () => this.removeFloor(floor.id)));
-    this.dropTarget(row, (layer) => {
+    this.dropTarget(row, { kind: 'floor', id: floor.id }, (layer) => {
       layer.floor = floor.id;
       delete layer.folder;
     });
@@ -194,7 +199,7 @@ export class ObjectTree {
     row.append(icon('folder'), label);
     row.append(this.viewToggle(folder, 'visible'), this.viewToggle(folder, 'locked'));
     row.append(this.mini('trash', '폴더 삭제 (레이어는 층으로 옮겨집니다)', () => this.removeFolder(folder.id)));
-    this.dropTarget(row, (layer) => {
+    this.dropTarget(row, { kind: 'folder', id: folder.id }, (layer) => {
       layer.floor = folder.floor;
       layer.folder = folder.id;
     });
@@ -236,6 +241,7 @@ export class ObjectTree {
       });
       row.addEventListener('dragend', () => (this.dragLayer = null));
     }
+    this.dropTarget(row, { kind: 'layer', id: layer.id }, null);
     const rows: HTMLElement[] = [row];
     if (!this.isOpen(`l:${layer.id}`, items.length <= 50)) return rows;
     for (const e of items.slice(0, MAX_ROWS)) rows.push(...this.entityRows(e, depth + 1));
@@ -284,13 +290,14 @@ export class ObjectTree {
       text = [e.tag, e.name || type?.name].filter(Boolean).join(' ');
     }
     if (e.binding) meta += ` · ⚡${e.binding}`;
-    row.append(icon(iconName), this.label(text, '클릭: 선택 · Shift+클릭: 추가 · 더블클릭: 확대'), this.meta(meta));
+    row.append(icon(iconName), this.label(text, '클릭: 선택 · Shift+클릭: 추가 · 더블클릭: 확대 · 끌기: 레이어·폴더·층으로 옮기기 (Alt+끌기: 복사)'), this.meta(meta));
     row.addEventListener('click', (ev) => {
       if (!doc.isVisible(e)) this.host.setFloor(doc.floorOf(e) ?? doc.activeFloor);
       if (ev.shiftKey) selection.toggle(e.id);
       else selection.set([e.id]);
     });
     row.addEventListener('dblclick', () => this.host.zoomTo([e.id]));
+    if (this.host.mode() === 'edit') this.dragSource(row, e);
     const rows: HTMLElement[] = [row];
     if (!expandable || !this.isOpen(key, pointSelected)) return rows;
     if (e.kind === 'shape') {
@@ -334,23 +341,77 @@ export class ObjectTree {
     );
   }
 
-  private dropTarget(row: HTMLElement, apply: (layer: Layer) => void): void {
+  /**
+   * Makes an object row draggable. Dragging a selected object drags the whole selection (its objects); dragging
+   * another one selects it and drags it alone, like a file browser.
+   */
+  private dragSource(row: HTMLElement, e: Entity): void {
+    row.draggable = true;
+    row.addEventListener('dragstart', (ev) => {
+      ev.stopPropagation();
+      const { doc, selection } = this.host;
+      if (!selection.has(e.id)) selection.set([e.id]);
+      this.dragItems = selection.values().filter((id) => doc.entities.has(id));
+      if (ev.dataTransfer) {
+        ev.dataTransfer.effectAllowed = 'copyMove';
+        ev.dataTransfer.setData('text/plain', this.dragItems.join(','));
+      }
+    });
+    row.addEventListener('dragend', () => (this.dragItems = null));
+  }
+
+  /**
+   * A floor, folder or layer row that accepts dragged objects (moved, or copied with Alt) and, for floors and
+   * folders, dragged layers (`applyLayer`).
+   */
+  private dropTarget(row: HTMLElement, target: TreeDropTarget, applyLayer: ((layer: Layer) => void) | null): void {
     row.addEventListener('dragover', (e) => {
-      if (!this.dragLayer) return;
+      if (!this.dragItems && !(this.dragLayer && applyLayer)) return;
       e.preventDefault();
+      // Alt (Option) copies; the cursor shows which will happen.
+      if (e.dataTransfer) e.dataTransfer.dropEffect = this.dragItems && e.altKey ? 'copy' : 'move';
       row.classList.add('drop');
     });
     row.addEventListener('dragleave', () => row.classList.remove('drop'));
     row.addEventListener('drop', (e) => {
       e.preventDefault();
       row.classList.remove('drop');
+      const items = this.dragItems;
+      if (items) {
+        this.dragItems = null;
+        this.dropItems(items, target, e.altKey || e.dataTransfer?.dropEffect === 'copy');
+        return;
+      }
       const id = this.dragLayer;
-      if (!id) return;
+      if (!id || !applyLayer) return;
       this.change('레이어 옮기기', (t) => {
         const layer = t.layers.find((l) => l.id === id);
-        if (layer) apply(layer);
+        if (layer) applyLayer(layer);
       });
     });
+  }
+
+  /** Moves (or copies) dropped objects to the layer the drop target stands for, as one undo step. */
+  private dropItems(ids: Id[], target: TreeDropTarget, copy: boolean): void {
+    const { doc, history, selection } = this.host;
+    const layerId = layerForDrop(doc, target, this.host.currentLayer());
+    if (!layerId) return this.host.notify('이 폴더에는 레이어가 없습니다. 레이어를 먼저 추가하십시오.');
+    const layer = doc.layers.get(layerId)!;
+    if (!doc.isLayerEditable(layerId)) return this.host.notify(`레이어 ${layer.name}(이)나 그 폴더가 잠겨 있거나 숨겨져 있어 옮길 수 없습니다.`);
+    const floor = doc.floors.get(layer.floor)?.name ?? '';
+    if (copy) {
+      const dup = duplicateItems(doc, ids, [{ x: 0, y: 0 }], { layer: layerId, label: '복사' });
+      if (!dup) return;
+      history.execute(dup.command);
+      // The copies are selected when they are on the floor in view (another floor's objects can't be seen).
+      if (layer.floor === doc.activeFloor) selection.set(dup.ids);
+      this.host.notify(`${dup.ids.length}개를 ${floor} · ${layer.name} 레이어로 복사했습니다.`);
+    } else {
+      const cmd = transferItems(doc, ids, layerId);
+      if (!cmd) return this.host.notify(`이미 ${layer.name} 레이어에 있거나 잠긴 객체라 옮길 것이 없습니다.`);
+      history.execute(cmd);
+      this.host.notify(`${floor} · ${layer.name} 레이어로 옮겼습니다.`);
+    }
   }
 
   private editFloor(floor: Floor): void {

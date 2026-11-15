@@ -25,7 +25,7 @@
 | [`setStroke`](#setstroke) | 예 | 선·원과 도형의 변에 테두리(벽 두께, 바닥 표시 줄무늬 등)를 지정합니다. stroke=null이면 지웁니다. |
 | [`moveEntities`](#moveentities) | 예 | 객체를 (dx, dy)만큼 옮깁니다. 공유된 점에 연결된 형상도 따라 움직입니다. |
 | [`rotateEntities`](#rotateentities) | 예 | 90° 단위로 회전합니다. 설비만 선택하면 제자리 회전입니다. |
-| [`copyEntities`](#copyentities) | 예 | 객체를 (dx, dy)만큼 떨어뜨려 복사합니다. columns·rows를 주면 그 간격의 배열 복사입니다. |
+| [`copyEntities`](#copyentities) | 예 | 객체를 (dx, dy)만큼 떨어뜨려 복사합니다. columns·rows를 주면 그 간격의 배열 복사입니다. 복사본은 속성이 같고, 이름이 있으면 겹치지 않게 "이름 (2)"처럼 새 이름을 받습니다. |
 | [`deleteEntities`](#deleteentities) | 예 | 객체를 삭제합니다. 도형은 변 선과 함께, 선은 그 선을 쓰는 도형과 함께 지워집니다. |
 | [`editCorner`](#editcorner) | 예 | 두 선이 만나는 꼭짓점(point id)에 필렛(mode=fillet, size=반지름 mm) 또는 모따기(mode=chamfer, size=각 변을 따라 자를 거리 mm)를 적용합니다. 그 꼭짓점의 도형도 함께 바뀝니다. 필렛은 호를 따라 짧은 선들로 만듭니다. |
 | [`insertVertex`](#insertvertex) | 예 | 선(도형의 변 포함)에서 x, y에 가장 가까운 자리에 꼭짓점을 넣어 선을 둘로 나눕니다. |
@@ -262,7 +262,7 @@
 
 ## copyEntities
 
-객체를 (dx, dy)만큼 떨어뜨려 복사합니다. columns·rows를 주면 그 간격의 배열 복사입니다.
+객체를 (dx, dy)만큼 떨어뜨려 복사합니다. columns·rows를 주면 그 간격의 배열 복사입니다. 복사본은 속성이 같고, 이름이 있으면 겹치지 않게 "이름 (2)"처럼 새 이름을 받습니다.
 
 | 매개변수 | 형식 | 필수 | 설명 |
 | --- | --- | --- | --- |

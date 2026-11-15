@@ -6,12 +6,15 @@
  * lines, shapes and dimensions built on it), so a single corner can be dragged or given exact X, Y, Z.
  * The underlay image is selected and dragged the same way as objects (clicking it where no object is), unless it
  * is locked; its selection id is UNDERLAY_ID.
+ * Modifier drags work like Photoshop's move tool (the user's request, 2026-11-15): Ctrl+drag moves the selection
+ * from wherever the press is (not only on a selected object), Alt or Ctrl+Alt+drag moves a copy (same properties,
+ * new unique names, see duplicateItems) and Shift during a drag holds it horizontal or vertical (Ctrl+Shift+drag).
  */
 import { type Vec2, boxFromPoints, dist, sub } from '../geom/vec';
 import { dimensionGeometry } from '../geom/dimension';
 import { Batch, type Command, MovePoints, RemoveEntities, SetDimensionOffsets, SetUnderlay, UpdateEntities } from '../model/commands';
 import { UNDERLAY_ID } from '../model/selection';
-import { deletionTargets } from '../model/edit';
+import { deletionTargets, duplicateItems } from '../model/edit';
 import type { Id, Underlay } from '../model/types';
 import type { ConstrainedDrag } from '../constraints/service';
 import type { SnapQuery } from '../snap/snap';
@@ -21,7 +24,7 @@ import type { Tool, ToolContext, ToolPointer } from './tool';
 
 type State =
   | { kind: 'idle' }
-  | { kind: 'press'; start: Vec2; startRaw: Vec2; startScreen: Vec2; onEntity: boolean }
+  | { kind: 'press'; start: Vec2; startRaw: Vec2; startScreen: Vec2; onEntity: boolean; copy: boolean }
   | {
       kind: 'move';
       start: Vec2;
@@ -32,6 +35,8 @@ type State =
       drag: ConstrainedDrag | null;
       /** The underlay before the drag, when it is selected and moves along. */
       underlay: Underlay | null;
+      /** Alt-drag: the copies being moved (already in the document) and the selection before the copy. */
+      copy: { command: Command; selection: Id[] } | null;
     }
   | { kind: 'box'; start: Vec2; end: Vec2; additive: boolean };
 
@@ -40,7 +45,7 @@ const DRAG_THRESHOLD_PX = 4;
 export class SelectTool implements Tool {
   readonly id = 'select';
   readonly hint =
-    '클릭: 선택(꼭짓점·선의 중간점 위: 점 선택) · Shift+클릭: 추가/해제 · 드래그: 이동 또는 영역 선택(→ 포함, ← 걸침) · 더블클릭: 치수 값·반지름·설비 번호 입력 · Delete: 삭제';
+    '클릭: 선택(꼭짓점·선의 중간점 위: 점 선택) · Shift+클릭: 추가/해제 · 드래그: 이동 또는 영역 선택(→ 포함, ← 걸침) · Ctrl+드래그: 어디서든 선택 이동 · Ctrl+Alt+드래그: 복사 이동 · Ctrl+Shift+드래그: 수평·수직 이동 · 더블클릭: 값 입력 · Delete: 삭제';
   readonly cursor = 'default';
   private state: State = { kind: 'idle' };
 
@@ -71,12 +76,15 @@ export class SelectTool implements Tool {
     const { selection } = this.ctx;
     const hit = this.hitAt(p.raw);
     if (hit) {
-      if (p.shift) selection.toggle(hit);
+      // With Ctrl, Shift locks the drag's direction instead of adding to the selection.
+      if (p.shift && !p.ctrl) selection.toggle(hit);
       else if (!selection.has(hit)) selection.set([hit]);
     }
     // A press on a vertex starts the drag from the vertex itself, so it lands exactly on the snap target.
     const start = hit && this.ctx.doc.isVertex(hit) ? { ...this.ctx.doc.vertex(hit) } : p.world;
-    this.state = { kind: 'press', start, startRaw: p.raw, startScreen: p.screen, onEntity: !!hit && selection.has(hit) };
+    // Ctrl grabs the selection wherever the press is, like Photoshop's Ctrl+drag (the move tool).
+    const onEntity = (!!hit && selection.has(hit)) || (p.ctrl && selection.size > 0);
+    this.state = { kind: 'press', start, startRaw: p.raw, startScreen: p.screen, onEntity, copy: !!p.alt };
   }
 
   move(p: ToolPointer): void {
@@ -89,6 +97,7 @@ export class SelectTool implements Tool {
     if (s.kind === 'press') {
       if (dist(p.screen, s.startScreen) < DRAG_THRESHOLD_PX) return;
       if (s.onEntity) {
+        const copy = s.copy ? this.copySelection() : null;
         const pointIds = this.selectedPointIds();
         const u = ctx.doc.underlay;
         this.state = {
@@ -98,7 +107,8 @@ export class SelectTool implements Tool {
           pointIds,
           dims: this.attachedDimensions(pointIds),
           drag: ctx.constraints.beginDrag(pointIds),
-          underlay: u && ctx.selection.has(UNDERLAY_ID) && !u.locked ? { ...u } : null,
+          underlay: !copy && u && ctx.selection.has(UNDERLAY_ID) && !u.locked ? { ...u } : null,
+          copy,
         };
       } else {
         this.state = { kind: 'box', start: s.startRaw, end: p.raw, additive: p.shift };
@@ -108,6 +118,11 @@ export class SelectTool implements Tool {
     const t = this.state;
     if (t.kind === 'move') {
       const total = sub(p.world, t.start);
+      // Shift (Ctrl+Shift+drag): horizontal or vertical only, whichever the cursor is further along.
+      if (p.shift) {
+        if (Math.abs(total.x) >= Math.abs(total.y)) total.y = 0;
+        else total.x = 0;
+      }
       if (t.drag) t.drag.update(total);
       else ctx.doc.translatePoints(t.pointIds, sub(total, t.applied));
       t.applied = total;
@@ -130,12 +145,14 @@ export class SelectTool implements Tool {
     if (s.kind === 'press' && !s.onEntity && !p.shift) {
       ctx.selection.clear();
     } else if (s.kind === 'move') {
+      const steps: Command[] = s.copy ? [s.copy.command] : [];
       if (s.applied.x !== 0 || s.applied.y !== 0) {
-        const steps: Command[] = [s.drag ? s.drag.finish() : new MovePoints(s.pointIds, s.applied)];
+        steps.push(s.drag ? s.drag.finish() : new MovePoints(s.pointIds, s.applied));
         if (s.underlay && ctx.doc.underlay) steps.push(new SetUnderlay('밑그림 이동', s.underlay, { ...ctx.doc.underlay }));
         if (s.dims.length > 0) steps.push(new SetDimensionOffsets(s.dims.map((d) => ({ ...d, after: this.offsetOf(d.id) }))));
-        ctx.history.record(new Batch('이동', steps));
-      }
+      } else s.drag?.cancel();
+      // A copy dragged back to where it started is still a copy (in place), as in Photoshop.
+      if (steps.length > 0) ctx.history.record(new Batch(s.copy ? '복사 이동' : '이동', steps));
     } else if (s.kind === 'box') {
       const crossing = s.end.x < s.start.x;
       const ids = ctx.index.select(boxFromPoints(s.start, s.end), crossing).map((e) => e.id);
@@ -200,6 +217,10 @@ export class SelectTool implements Tool {
       else this.ctx.doc.translatePoints(s.pointIds, { x: -s.applied.x, y: -s.applied.y });
       if (s.underlay && this.ctx.doc.underlay) Object.assign(this.ctx.doc.underlay, { x: s.underlay.x, y: s.underlay.y });
       for (const d of s.dims) this.setOffset(d.id, d.before);
+      if (s.copy) {
+        s.copy.command.revert(this.ctx.doc);
+        this.ctx.selection.set(s.copy.selection);
+      }
       this.ctx.doc.changed();
     } else if (s.kind === 'box') {
       this.ctx.requestRender();
@@ -244,6 +265,26 @@ export class SelectTool implements Tool {
     const u = doc.underlay;
     if (u?.visible && !u.locked && p.x >= u.x && p.x <= u.x + u.width && p.y >= u.y && p.y <= u.y + u.height) return UNDERLAY_ID;
     return null;
+  }
+
+  /**
+   * Alt-drag: adds copies of the selected objects in place (same properties, unique names) and selects them, so the
+   * drag moves the copies and the originals stay. Selected points (vertices) and the underlay aren't copied. Null
+   * when nothing selected can be copied; the drag then moves the selection as usual.
+   */
+  private copySelection(): { command: Command; selection: Id[] } | null {
+    const { doc, selection } = this.ctx;
+    const before = selection.values();
+    const ids = before.filter((id) => {
+      const e = doc.entities.get(id);
+      return !!e && doc.isEditable(e);
+    });
+    const dup = duplicateItems(doc, ids, [{ x: 0, y: 0 }], { label: '복사 이동' });
+    if (!dup) return null;
+    dup.command.apply(doc);
+    doc.changed();
+    selection.set(dup.ids);
+    return { command: dup.command, selection: before };
   }
 
   /** Selected dimensions that stay attached to unmoved points; dragging them moves their dimension line. */

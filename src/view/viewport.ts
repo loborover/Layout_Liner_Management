@@ -130,3 +130,40 @@ export function screenScaleRatio(scale: number): number {
 export function formatScaleLength(mm: number): string {
   return mm >= 1000 ? `${mm / 1000} m` : `${mm} mm`;
 }
+
+/** Unit of the ruler labels: the largest of mm, cm and m in which the labelled grid steps are whole numbers. */
+export type RulerUnit = 'mm' | 'cm' | 'm';
+
+const RULER_UNIT_MM: Record<RulerUnit, number> = { mm: 1, cm: 10, m: 1000 };
+
+/**
+ * Unit the rulers label a grid step of `step` mm in (the major grid step): metres from 1 m up, centimetres from
+ * 1 cm, else millimetres, so a label reads "3" (m) rather than "3000" (mm) and is never a fraction of the unit.
+ */
+export function rulerUnit(step: number): RulerUnit {
+  if (step >= 1000 && Number.isInteger(step / 1000)) return 'm';
+  if (step >= 10 && Number.isInteger(step / 10)) return 'cm';
+  return 'mm';
+}
+
+/** Ruler label of the grid line at `mm` from the origin (0,0) in `unit`, e.g. 1500 mm in cm → "150". */
+export function rulerLabel(mm: number, unit: RulerUnit): string {
+  const v = mm / RULER_UNIT_MM[unit];
+  // Grid lines are whole multiples of the step; rounding only removes floating point noise (and "-0").
+  const r = Math.round(v * 1000) / 1000;
+  return String(r === 0 ? 0 : r);
+}
+
+/**
+ * Labelled ticks of a ruler between world coordinates `min` and `max`: every major grid line, with its distance
+ * from the origin as a label in `unit`. Minor ticks are the minor grid lines in between.
+ */
+export function rulerTicks(min: number, max: number, scale: number): { unit: RulerUnit; major: { at: number; label: string }[]; minor: number[] } {
+  const { minor, major } = gridSpacing(scale);
+  const unit = rulerUnit(major);
+  const majors: { at: number; label: string }[] = [];
+  for (let i = Math.ceil(min / major); i * major <= max; i++) majors.push({ at: i * major, label: rulerLabel(i * major, unit) });
+  const minors: number[] = [];
+  for (let i = Math.ceil(min / minor); i * minor <= max; i++) if (i % 5 !== 0) minors.push(i * minor);
+  return { unit, major: majors, minor: minors };
+}
