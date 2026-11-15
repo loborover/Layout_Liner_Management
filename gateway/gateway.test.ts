@@ -141,5 +141,7 @@ describe('data gateway HTTP', () => {
     const many = new URLSearchParams(Array.from({ length: 101 }, (_, i) => ['key', `K${i}`]));
     expect((await fetch(`${base}/datasets/equipment/records?${many}`)).status).toBe(400);
     expect((await fetch(`${base}/health`)).status).toBe(200);
+    expect((await fetch(`${base}/datasets/%`)).status).toBe(400);
+    expect((await fetch(`${base}/health`)).status).toBe(200);
   });
 });

@@ -42,7 +42,12 @@ export function createHandler(config: GatewayConfig, datasets: Map<string, Datas
     }
     if (req.method !== 'GET' && req.method !== 'HEAD') return send(405, { error: '읽기 전용 게이트웨이입니다(GET만 허용).' });
     const url = new URL(req.url ?? '/', 'http://gateway');
-    const parts = url.pathname.split('/').filter(Boolean).map(decodeURIComponent);
+    let parts: string[];
+    try {
+      parts = url.pathname.split('/').filter(Boolean).map(decodeURIComponent);
+    } catch {
+      return send(400, { error: '주소의 % 인코딩이 잘못되었습니다.' });
+    }
     try {
       if (parts.length === 1 && parts[0] === 'health') return send(200, { ok: true, datasets: datasets.size });
       if (parts.length === 1 && parts[0] === 'datasets') {
@@ -88,7 +93,14 @@ export async function start(configPath: string, overrides: { host?: string; port
   if (overrides.port) config.port = overrides.port;
   const datasets = createDatasets(config, configPath);
   const handler = createHandler(config, datasets);
-  const server = createServer((req, res) => void handler(req, res));
+  // The handler answers its own errors; this only keeps an unexpected one from stopping the process.
+  const server = createServer((req, res) =>
+    handler(req, res).catch((err: unknown) => {
+      console.error(err);
+      if (!res.headersSent) res.statusCode = 500;
+      res.end();
+    }),
+  );
   await new Promise<void>((resolve) => server.listen(config.port, config.host, resolve));
   // Fill every cache once at start so the first browser request is answered from memory.
   for (const d of datasets.values()) void d.ready().then(() => {
