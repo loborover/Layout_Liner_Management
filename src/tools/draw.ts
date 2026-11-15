@@ -427,9 +427,12 @@ export class DimensionTool implements Tool {
     this.ctx.history.execute(new AddItems(fresh, [{ id, kind: 'dimension', p1: this.p1.id, p2: this.p2.id, offset, layer: this.ctx.layer() }]));
     if (fresh.length === 0) {
       const length = dist(this.p1, this.p2);
-      void this.ctx.constraints.setDimensionValue(id, length).then((r) => {
-        if (!r.ok) this.ctx.notify(`${r.message} 이 치수는 참조 치수(측정값 표시)로 남깁니다.`);
-      });
+      this.ctx.constraints
+        .setDimensionValue(id, length)
+        .then((r) => {
+          if (!r.ok) this.ctx.notify(`${r.message} 이 치수는 참조 치수(측정값 표시)로 남깁니다.`);
+        })
+        .catch((err) => this.ctx.notify(`구속 솔버를 불러오지 못해 참조 치수로 남깁니다: ${String(err)}`));
     }
     this.p1 = this.p2 = null;
   }
