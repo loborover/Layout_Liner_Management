@@ -11,7 +11,6 @@ import {
 } from '../src/constraints/dimensions';
 import { ConstraintService } from '../src/constraints/service';
 import { ConstraintSolver } from '../src/constraints/solver';
-import { deserialize, serialize } from '../src/io/serialize';
 import { AddItems, History, RemoveEntities } from '../src/model/commands';
 import { DocumentModel } from '../src/model/document';
 import type { Constraint, LineEntity } from '../src/model/types';
@@ -125,6 +124,16 @@ describe('solving dimension constraints', () => {
     expect([...doc.constraints.values()].filter((c) => c.kind === 'parallel')).toHaveLength(2);
   });
 
+  it('keeps the distance out rather than dropping parallelism when the lines are held at an angle', async () => {
+    const { doc, service } = setup();
+    // ab and cd are about 0.7° apart: close enough to pick, but an angle constraint keeps them that way.
+    const held = angleArms(doc, line(doc, 'ab'), line(doc, 'cd')).degrees;
+    expect(await service.add('angle', [['ab', 'cd']], held)).toEqual({ ok: true });
+    const r = await service.addDimension('distance', ['ab', 'cd'], 3000);
+    expect(r.ok).toBe(false);
+    expect([...doc.constraints.values()].map((c) => c.kind)).toEqual(['angle']);
+  });
+
   it('sets an angle at a corner, keeping the turn direction, and edits it', async () => {
     const { doc, service } = setup();
     const before = angleArms(doc, line(doc, 'ab'), line(doc, 'bc'));
@@ -181,30 +190,5 @@ describe('drawing and picking dimension constraints', () => {
     const shape = dimensionShape(doc, c, dimensionScale(10));
     expect(shape?.kind).toBe('arc');
     if (shape?.kind === 'arc') expect(shape.center).toEqual(doc.point('b'));
-  });
-});
-
-describe('saving dimension constraints', () => {
-  it('round-trips and validates their references', () => {
-    const { doc } = setup();
-    doc.addConstraints([
-      { id: 'k1', kind: 'distance', refs: ['p', 'ab'], value: 2000 },
-      { id: 'k2', kind: 'angle', refs: ['ab', 'bc'], value: 90 },
-    ]);
-    const data = deserialize(serialize(doc.toData()));
-    expect(data.version).toBe(6);
-    expect(data.constraints).toEqual([
-      { id: 'k1', kind: 'distance', refs: ['p', 'ab'], value: 2000 },
-      { id: 'k2', kind: 'angle', refs: ['ab', 'bc'], value: 90 },
-    ]);
-    const broken = (c: object) => {
-      const raw = JSON.parse(serialize(doc.toData()));
-      raw.constraints = [c];
-      return () => deserialize(JSON.stringify(raw));
-    };
-    expect(broken({ id: 'x', kind: 'angle', refs: ['ab', 'p'], value: 30 })).toThrow();
-    expect(broken({ id: 'x', kind: 'angle', refs: ['ab', 'bc'], value: 200 })).toThrow();
-    expect(broken({ id: 'x', kind: 'distance', refs: ['ab', 'p'], value: 30 })).toThrow();
-    expect(broken({ id: 'x', kind: 'distance', refs: ['a', 'b'] })).toThrow();
   });
 });

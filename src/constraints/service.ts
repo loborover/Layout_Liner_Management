@@ -26,10 +26,12 @@ import type { Constraint, ConstraintKind, Id } from '../model/types';
 import { type ConstraintCluster, constrainedClusters, hasConstraints, mergeClusters } from './components';
 import { type ConstraintSolver, type SolveResult, loadSolver } from './solver';
 
-export type Outcome = { ok: true } | { ok: false; message: string };
+/** `redundant` marks a failure only because the new constraint is already implied by others. */
+export type Outcome = { ok: true } | { ok: false; message: string; redundant?: boolean };
 
 const failure = (r: SolveResult): Outcome => ({
   ok: false,
+  ...(!r.degenerate && r.conflicting.length === 0 && r.redundant.length > 0 ? { redundant: true } : {}),
   message:
     r.degenerate
       ? '이 구속을 만족하려면 선이나 원이 한 점으로 줄어들어야 합니다.'
@@ -147,7 +149,9 @@ export class ConstraintService {
         { kind: 'parallel', refs },
         { kind, refs, value },
       ]);
-      if (both.ok) return both;
+      // Only a parallel constraint that other constraints already imply may be dropped; any other failure
+      // (e.g. the lines are held at an angle) would leave the "parallel" distance between lines that aren't.
+      if (both.ok || !both.redundant) return both;
     }
     return this.add(kind, [refs], value);
   }

@@ -75,4 +75,35 @@ describe('serialize', () => {
     expect(() => deserialize(JSON.stringify({ ...data, constraints: [{ id: 'j', kind: 'coincident', refs: ['l1', 'c'] }] }))).toThrow(/점만/);
     expect(() => deserialize(JSON.stringify({ ...data, constraints: [{ id: 'j', kind: 'coincident', refs: ['b'] }] }))).toThrow(/두 개 이상/);
   });
+
+  it('reads version 6 distance and angle constraints and checks what they reference', () => {
+    const doc = new DocumentModel();
+    doc.addPoints([
+      { id: 'a', x: 0, y: 0 },
+      { id: 'b', x: 4000, y: 0 },
+      { id: 'c', x: 4000, y: 3000 },
+      { id: 'p', x: 2000, y: 6000 },
+    ]);
+    doc.addEntities([
+      { id: 'ab', kind: 'line', p1: 'a', p2: 'b', layer: 'layer-0' },
+      { id: 'bc', kind: 'line', p1: 'b', p2: 'c', layer: 'layer-0' },
+      { id: 'pp', kind: 'point', at: 'p', layer: 'layer-0' },
+    ]);
+    doc.addConstraints([
+      { id: 'k1', kind: 'distance', refs: ['p', 'ab'], value: 2000 },
+      { id: 'k2', kind: 'angle', refs: ['ab', 'bc'], value: 90 },
+      { id: 'k3', kind: 'distance', refs: ['a', 'c'], value: 5000 },
+    ]);
+    const data = deserialize(serialize(doc.toData()));
+    expect(data.version).toBe(6);
+    expect(data.constraints).toEqual(doc.toData().constraints);
+    const raw = JSON.parse(serialize(doc.toData()));
+    const withConstraint = (c: object) => () => deserialize(JSON.stringify({ ...raw, constraints: [c] }));
+    expect(withConstraint({ id: 'x', kind: 'angle', refs: ['ab', 'p'], value: 30 })).toThrow(FormatError);
+    expect(withConstraint({ id: 'x', kind: 'angle', refs: ['ab', 'bc'], value: 200 })).toThrow(/180/);
+    expect(withConstraint({ id: 'x', kind: 'distance', refs: ['ab', 'p'], value: 30 })).toThrow(FormatError);
+    expect(withConstraint({ id: 'x', kind: 'distance', refs: ['a', 'b'] })).toThrow(/값이 없습니다/);
+    // A version 5 file (no dimension constraints) still opens and saves as version 6.
+    expect(deserialize(JSON.stringify({ ...raw, version: 5, constraints: [] })).version).toBe(6);
+  });
 });
