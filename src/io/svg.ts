@@ -227,7 +227,8 @@ function visibleExtents(doc: DocumentModel): Box | null {
       ? { minX: Math.min(box.minX, b.minX), minY: Math.min(box.minY, b.minY), maxX: Math.max(box.maxX, b.maxX), maxY: Math.max(box.maxY, b.maxY) }
       : b;
   };
-  for (const e of doc.entities.values()) if (doc.isVisible(e)) grow(doc.bboxOf(e));
+  // Hidden labels are not drawn, so they must not stretch the sheet either.
+  for (const e of doc.entities.values()) if (doc.isVisible(e) && !(e.kind === 'label' && !labelVisible(e))) grow(doc.bboxOf(e));
   const u = doc.underlay;
   if (u?.visible) grow({ minX: u.x, minY: u.y, maxX: u.x + u.width, maxY: u.y + u.height });
   return box;

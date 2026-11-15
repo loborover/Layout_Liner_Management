@@ -25,6 +25,16 @@ export interface PlanSymbol {
   note?: string;
 }
 
+/**
+ * Footprint outline used for picking, window selection and snapping: the H of an H-beam column (so its open recesses
+ * neither select it nor offer snap points), otherwise the rotated rectangle.
+ */
+export function footprintOf(doc: DocumentModel, e: EquipmentEntity): Vec2[] {
+  const type = doc.equipmentTypes.get(e.type);
+  if (categoryOf(type) === 'column' && propValue(doc, e, 'shape') === 'hbeam') return planSymbol(doc, e).polygon;
+  return doc.cornersOf(e);
+}
+
 /** Most tread lines drawn for one stair; more would only darken the symbol. */
 const MAX_TREADS = 60;
 

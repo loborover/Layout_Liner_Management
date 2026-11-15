@@ -274,7 +274,7 @@ export class EditorApi {
    * same section and size is reused, otherwise one is added; then a column is placed centred at x, y.
    */
   placeColumn(p: { section: string; width: number; depth?: number; webThickness?: number; flangeThickness?: number; material?: string; x: number; y: number; rotation?: number; tag?: string; layer?: Id }) {
-    if (!(p.section in COLUMN_SECTIONS)) throw new ApiError('section은 rect, round, hbeam 중 하나입니다.');
+    if (!Object.hasOwn(COLUMN_SECTIONS, p.section)) throw new ApiError('section은 rect, round, hbeam 중 하나입니다.');
     const section = p.section as ColumnSection;
     const width = this.num(p.width, 'width');
     const depth = section === 'round' ? width : this.num(p.depth ?? width, 'depth');

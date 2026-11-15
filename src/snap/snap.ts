@@ -9,6 +9,7 @@ import type { DocumentModel } from '../model/document';
 import type { SpatialIndex } from '../model/spatial';
 import type { Entity, Id } from '../model/types';
 import { edgesOf } from '../geom/equipment';
+import { footprintOf } from '../model/symbols';
 import { circleCircle, segmentCircle, segmentSegment } from '../geom/intersect';
 
 export type ObjectSnapKind = 'endpoint' | 'intersection' | 'center' | 'midpoint' | 'quadrant' | 'perpendicular';
@@ -172,7 +173,7 @@ export class SnapEngine {
     } else if (e.kind === 'equipment') {
       // Footprint corners and edge midpoints snap, but never hand out the equipment's own point:
       // a line drawn from its centre shouldn't drag along when the equipment moves.
-      const cs = doc.cornersOf(e);
+      const cs = footprintOf(doc, e);
       out.push({ point: { ...doc.point(e.at) }, kind: 'center' });
       for (const [a, b] of edgesOf(cs)) {
         out.push({ point: a, kind: 'endpoint' });
@@ -204,7 +205,7 @@ export class SnapEngine {
   /** Straight edges of an entity, for intersections. */
   private segments(e: Entity): [Vec2, Vec2][] {
     if (e.kind === 'line') return [[this.doc.point(e.p1), this.doc.point(e.p2)]];
-    if (e.kind === 'equipment') return edgesOf(this.doc.cornersOf(e));
+    if (e.kind === 'equipment') return edgesOf(footprintOf(this.doc, e));
     return [];
   }
 

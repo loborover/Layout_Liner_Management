@@ -16,9 +16,10 @@ import {
   segmentIntersectsBox,
 } from '../geom/vec';
 import { dimensionGeometry } from '../geom/dimension';
-import { edgesOf, insideConvex } from '../geom/equipment';
+import { edgesOf } from '../geom/equipment';
 import { insidePolygon } from '../geom/polygon';
 import { type DocumentModel, midpointId } from './document';
+import { footprintOf } from './symbols';
 import type { Entity, Id } from './types';
 
 interface Item extends Box {
@@ -59,8 +60,8 @@ export class SpatialIndex {
       return Math.hypot(Math.max(b.minX - p.x, 0, p.x - b.maxX), Math.max(b.minY - p.y, 0, p.y - b.maxY));
     }
     if (e.kind === 'equipment') {
-      const corners = this.doc.cornersOf(e);
-      if (insideConvex(p, corners)) return 0;
+      const corners = footprintOf(this.doc, e);
+      if (insidePolygon(p, corners)) return 0;
       return Math.min(...edgesOf(corners).map(([a, b]) => distToSegment(p, a, b)));
     }
     if (e.kind === 'shape') {
@@ -141,7 +142,7 @@ export class SpatialIndex {
         return segmentIntersectsBox(d1, d2, box);
       }
       if (e.kind === 'equipment' || e.kind === 'shape') {
-        const corners = e.kind === 'equipment' ? this.doc.cornersOf(e) : this.doc.shapePolygon(e);
+        const corners = e.kind === 'equipment' ? footprintOf(this.doc, e) : this.doc.shapePolygon(e);
         const centre = { x: (box.minX + box.maxX) / 2, y: (box.minY + box.maxY) / 2 };
         return edgesOf(corners).some(([a, b]) => segmentIntersectsBox(a, b, box)) || insidePolygon(centre, corners);
       }

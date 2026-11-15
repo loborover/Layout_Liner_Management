@@ -275,6 +275,11 @@ describe('labels', () => {
     (doc.entities.get('lab') as LabelEntity).visible = false;
     doc.changed();
     expect(drawingSvg(doc)!).not.toContain('ABCDEFGHIJ');
+    // A hidden label far away does not stretch the sheet.
+    const width = (svg: string) => Number(/viewBox="[^ ]+ [^ ]+ ([^ ]+)/.exec(svg)![1]);
+    doc.point('t').x = 1e6;
+    doc.changed();
+    expect(width(drawingSvg(doc)!)).toBeLessThan(10000);
   });
 });
 
@@ -300,6 +305,10 @@ describe('column generator and H-beam', () => {
     // Area: two flanges 15 × 300 and the web 10 × 270.
     expect(Math.abs(polygonArea(sym.polygon))).toBeCloseTo(2 * 15 * 300 + 10 * 270, 6);
     expect(presetInfo(doc, e)[0].value).toMatch(/^H-300×300×10×15/);
+    // Picking and snapping follow the H, not its enclosing rectangle: the recess beside the web is empty.
+    const index = new SpatialIndex(doc);
+    expect(index.pick({ x: 0, y: 0 }, 1)?.id).toBe('h');
+    expect(index.pick({ x: 0, y: 100 }, 1)).toBeNull();
   });
 
   it('gives older files the H-beam preset', () => {
@@ -327,6 +336,7 @@ describe('API', () => {
     expect((doc.entities.get(shape) as ShapeEntity).points).toHaveLength(5);
     const col = dispatch(api, 'placeColumn', { section: 'hbeam', width: 400, depth: 400, webThickness: 13, flangeThickness: 21, x: 5000, y: 0 }) as { newType: boolean; typeName: string };
     expect(col).toMatchObject({ newType: true, typeName: 'H형강 기둥 H-400×400×13×21' });
+    expect(() => dispatch(api, 'placeColumn', { section: 'toString', width: 400, x: 0, y: 0 })).toThrow(/section/);
     history.undo();
     expect(doc.equipmentTypes.has('st-column-h')).toBe(true);
     expect([...doc.equipmentTypes.values()].some((t) => t.name === 'H형강 기둥 H-400×400×13×21')).toBe(false);
