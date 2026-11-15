@@ -67,12 +67,13 @@ export function copyItems(doc: DocumentModel, entityIds: Id[], offsets: Vec2[]):
       let copy: Entity;
       if (e.kind === 'circle') copy = { ...e, id, center: m(e.center) };
       else if (e.kind === 'point') copy = { ...e, id, at: m(e.at) };
+      else if (e.kind === 'label') copy = { ...cloneEntity(e), id, at: m(e.at) };
       else if (e.kind === 'equipment') {
         const type = doc.equipmentTypes.get(e.type);
         const tag = type ? nextTag(doc, type, tags) : e.tag;
         tags.add(tag);
         copy = { ...e, id, at: m(e.at), tag, ...(e.props ? { props: { ...e.props } } : {}) };
-      } else if (e.kind === 'shape') copy = { ...e, id, points: e.points.map(m), edges: e.edges.map(m) };
+      } else if (e.kind === 'shape') copy = { ...cloneEntity(e), id, points: e.points.map(m), edges: e.edges.map(m) };
       else copy = { ...e, id, p1: m(e.p1), p2: m(e.p2) };
       copies.push(copy);
     }
@@ -303,7 +304,7 @@ function remapPoints<T extends Entity>(e: T, map: ReadonlyMap<Id, Id>): T {
     c.p1 = m(c.p1);
     c.p2 = m(c.p2);
   } else if (c.kind === 'circle') c.center = m(c.center);
-  else if (c.kind === 'equipment' || c.kind === 'point') c.at = m(c.at);
+  else if (c.kind === 'equipment' || c.kind === 'point' || c.kind === 'label') c.at = m(c.at);
   else if (c.kind === 'shape') c.points = c.points.map(m);
   return c;
 }

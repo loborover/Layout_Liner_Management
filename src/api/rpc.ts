@@ -34,13 +34,14 @@ const stroke: Schema = {
   type: ['object', 'null'],
   description:
     '테두리(Border, 선 양식). width(mm, Weight, 0=가는 선), align(center|inside|outside: 그린 선 기준 띠 위치), color(#rrggbb), ' +
-    'opacity(0~1, 불투명도), pattern(줄무늬: stripes[{color, size(상대 크기)}], unit(크기 1의 폭 mm), angle(선 방향 기준 °)). null이면 지움. ' +
+    'opacity(0~1, 불투명도), join(miter|round|bevel: 다른 띠와 만나는 모서리의 바깥쪽 처리), pattern(줄무늬: stripes[{color, size(상대 크기)}], unit(크기 1의 폭 mm), angle(선 방향 기준 °)). null이면 지움. ' +
     '템플릿: 구역색 color #FFCC00; 설비구역색 pattern stripes [#FFCC00×1, #1A1A1A×1], unit 50, angle 45; 안전구역색 [#FFFFFF×1, #D32F2F×1], unit 50, angle 45',
   properties: {
     width: { type: 'number', minimum: 0 },
     align: { enum: ['center', 'inside', 'outside'] },
     color: { type: 'string' },
     opacity: { type: 'number', minimum: 0, maximum: 1 },
+    join: { enum: ['miter', 'round', 'bevel'], description: '모서리(끝단) 처리: miter 뾰족(기본), round 라운드, bevel 모따기(Chamfer)' },
     pattern: {
       type: ['object', 'null'],
       properties: {
@@ -50,6 +51,12 @@ const stroke: Schema = {
       },
     },
   },
+};
+const anchor: Schema = { enum: ['center', 'top', 'bottom', 'left', 'right'], description: '배치 기준: center(중심), top(상단), bottom(하단), left(좌측), right(우측)' };
+const labelItems: Schema = {
+  type: 'array',
+  description: '"제목: 내용" 행 목록. 제목이 비면 내용만 표시',
+  items: { type: 'object', properties: { title: { type: 'string' }, value: { type: 'string' } } },
 };
 const obj = (properties: Record<string, Schema>, required: string[] = []): Schema => ({ type: 'object', properties, required, additionalProperties: false });
 
@@ -121,6 +128,49 @@ export const METHODS: Record<string, MethodSpec> = {
     mutates: true,
     run: (api, p) => api.addPoint(p as never),
   },
+  addLabel: {
+    description: '독립 라벨 객체(제목: 내용 행 목록 또는 text)를 x, y에 놓습니다. 글자 높이 size(mm, 기본 300)는 도면 크기라 확대해도 실제 크기를 유지합니다. anchor는 글 상자의 어느 쪽이 점에 오는지(top이면 점 아래로 매달림).',
+    params: obj(
+      {
+        x: num('mm'),
+        y: num('mm'),
+        items: labelItems,
+        text: str('items 대신 쓸 글(줄바꿈으로 여러 행)'),
+        size: num('글자 높이 mm'),
+        anchor,
+        color: str('#rrggbb (기본: 레이어 색)'),
+        opacity: { type: 'number', minimum: 0, maximum: 1, description: '불투명도 0~1' },
+        visible: { type: 'boolean', description: 'false면 숨김' },
+        layer: str('레이어 id'),
+        name: str('이름'),
+      },
+      ['x', 'y'],
+    ),
+    mutates: true,
+    run: (api, p) => api.addLabel(p as never),
+  },
+  placeColumn: {
+    description:
+      '기둥 생성기: 단면(section: rect 사각, round 원형, hbeam H형강)과 크기로 기둥을 x, y에 놓습니다. 같은 단면·크기·재료의 라이브러리 종류가 있으면 그것을, 없으면 새 종류를 추가해 씁니다. H형강은 width=춤 H(웨브 방향, 로컬 X), depth=플랜지 폭 B, webThickness=tw, flangeThickness=tf. 회전 0에서 H자 모양.',
+    params: obj(
+      {
+        section: { enum: ['rect', 'round', 'hbeam'] },
+        width: num('mm (원형은 지름, H형강은 춤 H)'),
+        depth: num('mm (H형강은 플랜지 폭 B, 원형은 무시)'),
+        webThickness: num('H형강 웨브 두께 tw mm (기본 10)'),
+        flangeThickness: num('H형강 플랜지 두께 tf mm (기본 15)'),
+        material: { enum: ['RC', 'S', 'SRC'] },
+        x: num('중심 mm'),
+        y: num('중심 mm'),
+        rotation: num('°, 반시계'),
+        tag: str('번호 (생략 시 자동)'),
+        layer: str('레이어 id'),
+      },
+      ['section', 'width', 'x', 'y'],
+    ),
+    mutates: true,
+    run: (api, p) => api.placeColumn(p as never),
+  },
   addCircle: {
     description: '원을 그립니다.',
     params: obj({ x: num('중심 mm'), y: num('중심 mm'), radius: num('mm'), layer: str('레이어 id'), name: str('이름') }, ['x', 'y', 'radius']),
@@ -154,7 +204,7 @@ export const METHODS: Record<string, MethodSpec> = {
   },
   updateEntity: {
     description:
-      '객체 속성 변경: name, layer, binding(모니터링 키), stroke(선·원의 테두리), fill/fillOpacity(도형 면 색·면 불투명도 0~1), tag/rotation/props(설비·구조), radius(원), height(3D 높이 mm). null은 지움.',
+      '객체 속성 변경: name, layer, binding(모니터링 키), stroke(선·원의 테두리), fill/fillOpacity(도형 면 색·면 불투명도 0~1), tag/rotation/props(설비·구조), radius(원), height(3D 높이 mm), label(도형 라벨·라벨 객체 설정). null은 지움.',
     params: obj(
       {
         id: str('객체 id'),
@@ -169,6 +219,12 @@ export const METHODS: Record<string, MethodSpec> = {
         radius: { type: 'number' },
         props: { type: ['object', 'null'] },
         height: { type: ['number', 'null'], minimum: 0, description: '3D 높이(mm). null이면 기본값(벽·구조물은 층고, 설비 1000)' },
+        label: {
+          type: ['object', 'null'],
+          description:
+            '라벨. 도형: items(추가 행), showName, showArea, anchor, dx/dy(mm 이동), opacity(0~1), visible을 기존 값에 덮어씀(null이면 기본: 이름·면적을 면적 중심에). 라벨 객체: items, size(mm), anchor, color, opacity, visible.',
+          properties: { items: labelItems, showName: { type: 'boolean' }, showArea: { type: 'boolean' }, anchor, dx: { type: 'number' }, dy: { type: 'number' }, opacity: { type: 'number' }, visible: { type: 'boolean' }, size: { type: 'number' }, color: { type: 'string' } },
+        },
       },
       ['id'],
     ),
@@ -210,6 +266,24 @@ export const METHODS: Record<string, MethodSpec> = {
     params: obj({ ids }, ['ids']),
     mutates: true,
     run: (api, p) => api.deleteEntities(p as never),
+  },
+  editCorner: {
+    description: '두 선이 만나는 꼭짓점(point id)에 필렛(mode=fillet, size=반지름 mm) 또는 모따기(mode=chamfer, size=각 변을 따라 자를 거리 mm)를 적용합니다. 그 꼭짓점의 도형도 함께 바뀝니다. 필렛은 호를 따라 짧은 선들로 만듭니다.',
+    params: obj({ point: str('꼭짓점 id (getEntity의 polygon/start/end)'), mode: { enum: ['fillet', 'chamfer'] }, size: num('mm') }, ['point', 'mode', 'size']),
+    mutates: true,
+    run: (api, p) => api.editCorner(p as never),
+  },
+  insertVertex: {
+    description: '선(도형의 변 포함)에서 x, y에 가장 가까운 자리에 꼭짓점을 넣어 선을 둘로 나눕니다.',
+    params: obj({ line: str('선 id'), x: num('mm'), y: num('mm') }, ['line', 'x', 'y']),
+    mutates: true,
+    run: (api, p) => api.insertVertex(p as never),
+  },
+  removeVertex: {
+    description: '두 선이 만나는 꼭짓점을 지우고 두 선을 하나로 잇습니다(도형은 꼭짓점 3개 이상 유지).',
+    params: obj({ point: str('꼭짓점 id') }, ['point']),
+    mutates: true,
+    run: (api, p) => api.removeVertex(p as never),
   },
   makeShapes: {
     description: '선들 중 닫힌 고리를 도형(면)으로 만듭니다.',

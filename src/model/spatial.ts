@@ -9,6 +9,7 @@ import {
   type Box,
   type Vec2,
   boxContainsBox,
+  boxesOverlap,
   circleIntersectsBox,
   dist,
   distToSegment,
@@ -52,6 +53,11 @@ export class SpatialIndex {
   /** Distance from p to an entity's outline; 0 anywhere inside a piece of equipment, so it can be grabbed by its body. */
   distanceTo(e: Entity, p: Vec2): number {
     if (e.kind === 'point') return dist(p, this.doc.point(e.at));
+    if (e.kind === 'label') {
+      // Grabbed anywhere on its text block.
+      const b = this.doc.bboxOf(e);
+      return Math.hypot(Math.max(b.minX - p.x, 0, p.x - b.maxX), Math.max(b.minY - p.y, 0, p.y - b.maxY));
+    }
     if (e.kind === 'equipment') {
       const corners = this.doc.cornersOf(e);
       if (insideConvex(p, corners)) return 0;
@@ -128,6 +134,7 @@ export class SpatialIndex {
       if (!this.doc.isEditable(e)) return false;
       if (!crossing) return boxContainsBox(box, this.doc.bboxOf(e));
       if (e.kind === 'point') return boxContainsBox(box, this.doc.bboxOf(e));
+      if (e.kind === 'label') return boxesOverlap(box, this.doc.bboxOf(e));
       if (e.kind === 'line') return segmentIntersectsBox(this.doc.point(e.p1), this.doc.point(e.p2), box);
       if (e.kind === 'dimension') {
         const { d1, d2 } = dimensionGeometry(this.doc.point(e.p1), this.doc.point(e.p2), e.offset);

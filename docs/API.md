@@ -18,6 +18,10 @@ AI와 스크립트가 편집기를 조작하는 방법입니다. 메서드는 �
 - 오류는 한국어 메시지로 돌아옵니다(`ApiError`). 뷰어 모드인 편집기에서는 변경 메서드가 거부됩니다.
 - 점 좌표 `z`는 층 바닥에서의 높이(mm, 위쪽)입니다. `setPoint`로 X·Y·Z를(선의 중간점 `middle.id`를 주면 선 전체가 이동), `updateEntity`의 `height`로 객체 높이를 고칩니다(`null`이면 기본값). 구속이 걸린 점의 X·Y는 API에서 바꿀 수 없습니다.
 - `addPoint`는 독립 점 객체를 놓습니다. 높이(`height`)의 기본값은 모두 0입니다.
+- `addLabel`은 "제목: 내용" 행의 독립 라벨을, `updateEntity`의 `label`은 도형 라벨(배치 기준·이동·추가 행·투명도·표시)이나 라벨 객체 설정을 바꿉니다. 도형 라벨은 기본으로 이름·면적을 면적 중심에 표시합니다.
+- `editCorner`(필렛·모따기), `insertVertex`, `removeVertex`는 두 선이 만나는 꼭짓점과 선을 2D CAD처럼 편집합니다. 필렛은 호를 따라 짧은 선들로 만듭니다.
+- `placeColumn`은 기둥 생성기입니다(사각·원형·H형강). 같은 크기의 라이브러리 종류를 재사용하고 없으면 추가합니다.
+- 테두리 `stroke.join`(`miter`, `round`, `bevel`)은 다른 띠와 만나는 모서리 바깥쪽 처리입니다. 안쪽은 늘 정확히 만나므로 `inside` 테두리는 기준선 밖으로 나가지 않습니다.
 - `scene3d`는 3D 장면(입체와 3D 선, mm, Z 위쪽)을 돌려줍니다. 호스트 서버에서 렌더링·변환할 때 씁니다([VIEW3D.md](VIEW3D.md)).
 - 작업 전에 `summary`를 먼저 불러 층·레이어·라이브러리 id를 확인하는 것을 권합니다.
 
@@ -32,6 +36,10 @@ call('setStroke', { ids: ['…도형 id…'], stroke: { width: 100, align: 'insi
   pattern: { stripes: [{ color: '#FFCC00', size: 1 }, { color: '#1A1A1A', size: 1 }], unit: 50, angle: 45 } } });
 call('updateEntity', { id: '…도형 id…', fill: '#6D8196', fillOpacity: 0.5 }); // 면 색과 면만의 불투명도
 call('placeEquipment', { type: 'st-stair', x: 2000, y: 3000 });               // 계단 프리셋
+call('updateEntity', { id: '…도형 id…', label: { anchor: 'top', items: [{ title: '담당', value: '생산1팀' }] } }); // 도형 라벨
+call('addLabel', { x: 0, y: -2000, text: '구역: A동\n관리: 시설팀', size: 300 });  // 독립 라벨
+call('editCorner', { point: '…꼭짓점 id…', mode: 'fillet', size: 500 });      // 필렛 R500
+call('placeColumn', { section: 'hbeam', width: 300, depth: 300, webThickness: 10, flangeThickness: 15, x: 6000, y: 0 }); // H형강 기둥
 Object.keys(methods);                                                          // 메서드 목록
 ```
 

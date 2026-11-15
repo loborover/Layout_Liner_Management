@@ -8,12 +8,16 @@ import type { Vec2 } from '../geom/vec';
 import type { DocumentModel } from '../model/document';
 import { StrokeGeometry } from '../model/strokes';
 import { planSymbol } from '../model/symbols';
+import { LINE_SPACING, blockLayout, labelRows, labelSize, labelVisible, shapeLabelPlacement, shapeLabelRows } from '../model/labels';
+import type { LabelAnchor } from '../model/types';
+import { formatArea } from '../view/format';
 
 /**
  * Writes the drawing as ASCII DXF R12 (AC1009), which every CAD program reads, in millimetres.
  * Lines and circles map directly; a styled line adds its band as a closed polyline in its colour; equipment and
  * structural presets become their plan symbol (src/model/symbols.ts) with the tag as text; dimensions become their
- * lines and a text, since R12 dimension entities need block geometry of their own.
+ * lines and a text, since R12 dimension entities need block geometry of their own. Shape labels (200 mm text) and
+ * label objects become TEXT rows placed as on the canvas.
  */
 export function writeDxf(doc: DocumentModel): string {
   const out: (string | number)[] = [];
@@ -83,7 +87,7 @@ export function writeDxf(doc: DocumentModel): string {
     pair(11, b.x);
     pair(21, b.y);
   };
-  const text = (p: Vec2, height: number, value: string, layer: string, rotation = 0) => {
+  const text = (p: Vec2, height: number, value: string, layer: string, rotation = 0, align: 'left' | 'center' | 'right' = 'center') => {
     pair(0, 'TEXT');
     pair(8, layer);
     pair(10, p.x);
@@ -91,16 +95,28 @@ export function writeDxf(doc: DocumentModel): string {
     pair(40, height);
     pair(1, encode(value));
     if (rotation) pair(50, rotation);
-    // Centred horizontally and vertically on the point (72 = 1 centre, 73 = 2 middle; 11/21 is the anchor).
-    pair(72, 1);
+    // Vertically centred on the point (73 = 2 middle; 11/21 is the anchor); 72: 0 left, 1 centre, 2 right.
+    pair(72, align === 'left' ? 0 : align === 'right' ? 2 : 1);
     pair(73, 2);
     pair(11, p.x);
     pair(21, p.y);
   };
+  /** Rows of a label whose `anchor` side sits on `at` (world, Y up), laid out as on the canvas. */
+  const textRows = (rows: string[], anchor: LabelAnchor, at: Vec2, height: number, layer: string) => {
+    if (rows.length === 0) return;
+    const layout = blockLayout(anchor, { x: at.x, y: -at.y }, rows.length, height * LINE_SPACING);
+    rows.forEach((r, i) => text({ x: layout.x, y: -layout.ys[i] }, height, r, layer, 0, layout.align));
+  };
   for (const e of doc.entities.values()) {
     const layer = layerName.get(e.layer) ?? '0';
-    // A shape's outline is its lines, which are written themselves; R12 has no filled face to add.
-    if (e.kind === 'shape') continue;
+    // A shape's outline is its lines, which are written themselves; R12 has no filled face to add, only the label.
+    if (e.kind === 'shape') {
+      if (labelVisible(e.label)) {
+        const { at, anchor } = shapeLabelPlacement(doc, e);
+        textRows(shapeLabelRows(e, formatArea(doc.shapeArea(e))), anchor, at, 200, layer);
+      }
+      continue;
+    }
     if (e.kind === 'line') {
       line(doc.point(e.p1), doc.point(e.p2), layer, e.stroke?.color);
       const band = strokes.band(e.id);
@@ -122,11 +138,18 @@ export function writeDxf(doc: DocumentModel): string {
         pair(10, c.x);
         pair(20, c.y);
         pair(40, (type?.width ?? 0) / 2);
-      } else polyline(doc.cornersOf(e), layer);
+      } else polyline(sym.polygon, layer);
       for (const [p, q] of sym.segments) line(p, q, layer);
       const size = Math.min(type?.width ?? 0, type?.depth ?? 0);
       const label = [e.tag, type?.name].filter(Boolean).join(' ');
       if (label && size > 0) text(doc.point(e.at), Math.min(size / 6, 250), label, layer);
+    } else if (e.kind === 'label') {
+      if (labelVisible(e)) {
+        const before = out.length;
+        textRows(labelRows(e.items), e.anchor ?? 'center', doc.point(e.at), labelSize(e), layer);
+        // Each TEXT gets the label's own colour, written right after its layer.
+        if (e.color && out.length > before) insertColor(out, before, nearestAci(e.color));
+      }
     } else if (e.kind === 'point') {
       const p = doc.point(e.at);
       pair(0, 'POINT');
@@ -153,6 +176,11 @@ export function writeDxf(doc: DocumentModel): string {
   const lines: string[] = [];
   for (let i = 0; i < out.length; i += 2) lines.push(String(out[i]).padStart(3, ' '), String(out[i + 1]));
   return `${lines.join('\r\n')}\r\n`;
+}
+
+/** Adds a colour (62) after the layer (8) of every entity written from `from` on. */
+function insertColor(out: (string | number)[], from: number, aci: number): void {
+  for (let i = out.length - 2; i >= from; i -= 2) if (out[i] === 8) out.splice(i + 2, 0, 62, aci);
 }
 
 const fmt = (v: number) => (Number.isInteger(v) ? String(v) : String(Math.round(v * 1e6) / 1e6));

@@ -23,7 +23,13 @@ export interface PropDef {
   default: PropValue;
   /** Smallest allowed number. */
   min?: number;
+  /** Shown only when another property has this value (e.g. flange thickness only for an H-beam section). */
+  when?: { key: string; value: PropValue };
 }
+
+/** Column sections ("기둥 단면"): square/rectangular, round and H-beam (the H-beam was asked for on 2026-11-15). */
+export type ColumnSection = 'rect' | 'round' | 'hbeam';
+export const COLUMN_SECTIONS: Record<ColumnSection, string> = { rect: '사각형', round: '원형', hbeam: 'H형강' };
 
 export const CATEGORY_LABELS: Record<StructureCategory, string> = {
   equipment: '설비',
@@ -37,7 +43,9 @@ export const CATEGORY_LABELS: Record<StructureCategory, string> = {
 export const PROP_DEFS: Record<StructureCategory, PropDef[]> = {
   equipment: [],
   column: [
-    { key: 'shape', label: '단면', kind: 'select', options: { rect: '사각형', round: '원형' }, default: 'rect' },
+    { key: 'shape', label: '단면', kind: 'select', options: COLUMN_SECTIONS, default: 'rect' },
+    { key: 'webThickness', label: '웨브 두께 tw', kind: 'number', unit: 'mm', default: 10, min: 1, when: { key: 'shape', value: 'hbeam' } },
+    { key: 'flangeThickness', label: '플랜지 두께 tf', kind: 'number', unit: 'mm', default: 15, min: 1, when: { key: 'shape', value: 'hbeam' } },
     { key: 'material', label: '재료', kind: 'select', options: { RC: '철근콘크리트', S: '철골', SRC: '철골철근콘크리트' }, default: 'RC' },
     { key: 'bearing', label: '내력 기둥', kind: 'boolean', default: true },
     { key: 'fireHours', label: '내화 시간', kind: 'number', unit: '시간', default: 3, min: 0 },
@@ -68,6 +76,8 @@ export const PROP_DEFS: Record<StructureCategory, PropDef[]> = {
 export const DEFAULT_STRUCTURE_TYPES: EquipmentType[] = [
   { id: 'st-column', name: '기둥', width: 600, depth: 600, prefix: 'C', category: 'column', props: { shape: 'rect' } },
   { id: 'st-column-round', name: '원형 기둥', width: 600, depth: 600, prefix: 'C', category: 'column', props: { shape: 'round' } },
+  // H-300×300×10×15, a common wide-flange size, as an editable starting point.
+  { id: 'st-column-h', name: 'H형강 기둥', width: 300, depth: 300, prefix: 'C', category: 'column', props: { shape: 'hbeam', material: 'S', webThickness: 10, flangeThickness: 15 } },
   { id: 'st-stair', name: '계단', width: 1200, depth: 4200, prefix: 'ST', category: 'stair' },
   { id: 'st-ramp', name: '경사로', width: 1500, depth: 9000, prefix: 'RP', category: 'ramp' },
   { id: 'st-lift', name: '리프트', width: 2000, depth: 2400, prefix: 'LF', category: 'lift' },
@@ -182,9 +192,71 @@ export function presetInfo(doc: DocumentModel, e: EquipmentEntity): InfoRow[] {
         { label: '운행 층', value: floors.length > 0 ? floors.join(', ') : '지정 안 됨' },
       ];
     }
-    case 'column':
-      return [{ label: '단면', value: propValue(doc, e, 'shape') === 'round' ? `Ø${type.width} mm` : `${type.width}×${type.depth} mm` }];
+    case 'column': {
+      const shape = propValue(doc, e, 'shape');
+      if (shape === 'round') return [{ label: '단면', value: `Ø${type.width} mm` }];
+      if (shape !== 'hbeam') return [{ label: '단면', value: `${type.width}×${type.depth} mm` }];
+      const { tw, tf } = hbeamThickness(type.width, type.depth, Number(propValue(doc, e, 'webThickness')), Number(propValue(doc, e, 'flangeThickness')));
+      const rows: InfoRow[] = [{ label: '단면', value: `H-${type.width}×${type.depth}×${tw}×${tf} (춤×폭×tw×tf)` }];
+      if (2 * tf >= type.width || tw >= type.depth) rows[0].warning = '플랜지·웨브 두께가 단면보다 큽니다. 두께를 줄이십시오.';
+      return rows;
+    }
     default:
       return [];
   }
+}
+
+/**
+ * Web and flange thickness of an H-beam whose section is `depth` along its web (the type's width, local X) and
+ * `flange` wide (the type's depth, local Y), kept small enough to leave a drawable H.
+ */
+export function hbeamThickness(depth: number, flange: number, tw: number, tf: number): { tw: number; tf: number } {
+  return {
+    tw: Math.min(Math.max(tw || 10, 0.1), flange * 0.9),
+    tf: Math.min(Math.max(tf || 15, 0.1), depth * 0.45),
+  };
+}
+
+/** What the column generator ("기둥 생성기") makes: a section, its size and material. */
+export interface ColumnSpec {
+  section: ColumnSection;
+  /** mm along local X: the side, the diameter (round) or the section depth H (H-beam, web direction). */
+  width: number;
+  /** mm along local Y: the other side, or the flange width B of an H-beam; ignored for round columns. */
+  depth: number;
+  webThickness?: number;
+  flangeThickness?: number;
+  material?: string;
+}
+
+/** Library name of a column type, e.g. "기둥 600×600", "원형 기둥 Ø600", "H형강 기둥 H-300×300×10×15". */
+export function columnName(s: ColumnSpec): string {
+  if (s.section === 'round') return `원형 기둥 Ø${s.width}`;
+  if (s.section === 'hbeam') return `H형강 기둥 H-${s.width}×${s.depth}×${s.webThickness ?? 10}×${s.flangeThickness ?? 15}`;
+  return `기둥 ${s.width}×${s.depth}`;
+}
+
+/**
+ * The library type the column generator places: an existing column type with exactly this section, size and
+ * material, or a new one to add (`isNew`). Columns of one size thus share one type, like CAD blocks.
+ */
+export function columnTypeFor(doc: DocumentModel, spec: ColumnSpec, newId: () => Id): { type: EquipmentType; isNew: boolean } {
+  const depth = spec.section === 'round' ? spec.width : spec.depth;
+  const props: Record<string, PropValue> = { shape: spec.section };
+  if (spec.material) props.material = spec.material;
+  if (spec.section === 'hbeam') {
+    props.webThickness = spec.webThickness ?? 10;
+    props.flangeThickness = spec.flangeThickness ?? 15;
+  }
+  const defs = PROP_DEFS.column;
+  const value = (t: EquipmentType, key: string) => t.props?.[key] ?? defs.find((d) => d.key === key)?.default;
+  const same = [...doc.equipmentTypes.values()].find(
+    (t) =>
+      categoryOf(t) === 'column' &&
+      t.width === spec.width &&
+      t.depth === depth &&
+      Object.entries({ ...props, material: props.material ?? value(t, 'material') }).every(([k, v]) => value(t, k) === v),
+  );
+  if (same) return { type: same, isNew: false };
+  return { type: { id: newId(), name: columnName({ ...spec, depth }), width: spec.width, depth, prefix: 'C', category: 'column', props }, isNew: true };
 }

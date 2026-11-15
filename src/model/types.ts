@@ -31,6 +31,12 @@ interface EntityBase {
 /** Where a styled line's band sits relative to the drawn reference line. */
 export type StrokeAlign = 'center' | 'inside' | 'outside';
 
+/**
+ * How a border band closes on the outer side of a corner where two bands meet: a sharp mitre (the default), a
+ * round arc ("Round") or a chamfer ("Chamfer", bevel). The inner side always meets exactly.
+ */
+export type StrokeJoin = 'miter' | 'round' | 'bevel';
+
 /** One stripe of a border pattern. */
 export interface Stripe {
   /** CSS hex colour. */
@@ -68,6 +74,8 @@ export interface StrokeStyle {
   opacity?: number;
   /** Stripes filling the band instead of the plain colour. Needs a width above 0 to show. */
   pattern?: StripePattern;
+  /** Outer corner treatment where this band meets another; 'miter' when absent. */
+  join?: StrokeJoin;
 }
 
 /**
@@ -153,7 +161,64 @@ export interface ShapeEntity extends EntityBase {
   fillImage?: FillImage;
   /** Extruded height in 3D (a slab, a platform, a zone volume), mm; a flat face when absent. */
   height?: number;
+  /** Label placement, extra rows, opacity and visibility; name and area in the middle when absent. */
+  label?: ShapeLabel;
 }
+
+/** Where a label sits: in the middle of its shape (or on its point) or against the top, bottom, left or right. */
+export type LabelAnchor = 'center' | 'top' | 'bottom' | 'left' | 'right';
+
+/** One row of a label, shown as "제목: 내용" (just the content when the title is empty). */
+export interface LabelItem {
+  title: string;
+  value: string;
+}
+
+/**
+ * Label of a shape (the user's request, 2026-11-15): by default the shape's name and area in the middle of its face
+ * (the area centroid). Extra "제목: 내용" rows can be added, and the label can be placed against an edge, offset,
+ * faded or hidden. Absent fields keep the defaults.
+ */
+export interface ShapeLabel {
+  /** Extra rows after the name and area. */
+  items?: LabelItem[];
+  /** Show the shape's name; true when absent. */
+  showName?: boolean;
+  /** Show the shape's area; true when absent. */
+  showArea?: boolean;
+  /** Placement in the face; 'center' (the area centroid) when absent. */
+  anchor?: LabelAnchor;
+  /** Shift from the anchor in mm (world X right, Y up). */
+  dx?: number;
+  dy?: number;
+  /** Opacity 0–1 of the text; 1 when absent. */
+  opacity?: number;
+  /** False hides the label. */
+  visible?: boolean;
+}
+
+/**
+ * Standalone label ("라벨" object, the user's request 2026-11-15): "제목: 내용" rows of text at a point, sized in
+ * world millimetres like CAD text so it scales with the drawing and prints at its real size.
+ */
+export interface LabelEntity extends EntityBase {
+  kind: 'label';
+  at: Id;
+  items: LabelItem[];
+  /** Text height in mm; LABEL_TEXT_SIZE when absent. */
+  size?: number;
+  /** Which part of the text block sits on the point; 'center' when absent ('top': the block hangs below it). */
+  anchor?: LabelAnchor;
+  /** Text colour; the layer colour when absent. */
+  color?: string;
+  /** Opacity 0–1; 1 when absent. */
+  opacity?: number;
+  /** False hides the text (it stays selectable in the editor as a faint frame). */
+  visible?: boolean;
+}
+
+/** Default text height of a label object, mm. */
+export const LABEL_TEXT_SIZE = 300;
 
 /** Picture on a shape's face (a floor finish, a photo, a logo). */
 export interface FillImage {
@@ -165,7 +230,7 @@ export interface FillImage {
   size?: number;
 }
 
-export type Entity = PointEntity | LineEntity | CircleEntity | DimensionEntity | EquipmentEntity | ShapeEntity;
+export type Entity = PointEntity | LineEntity | CircleEntity | DimensionEntity | EquipmentEntity | ShapeEntity | LabelEntity;
 export type EntityKind = Entity['kind'];
 
 /** Category of a library item: plain equipment or a structural preset with its own drawing and properties. */
@@ -257,9 +322,10 @@ export interface DocumentData {
   /**
    * 2 added floors, folders, shapes, line styles, presets and bindings; 3 added point Z, object heights (3D) and point objects;
    * 4 added border opacity and patterns, circle borders, face opacity and images, coincident constraints and the
-   * underlay lock. Older versions are upgraded on load.
+   * underlay lock; 5 added border corner joins, shape labels, label objects and the H-beam column section. Older
+   * versions are upgraded on load.
    */
-  version: 4;
+  version: 5;
   units: 'mm';
   points: Point[];
   entities: Entity[];

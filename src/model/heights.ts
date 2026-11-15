@@ -8,16 +8,24 @@
  * Related: src/model/types.ts (z, height fields), src/view3d/ (3D scene).
  */
 import type { DocumentModel } from './document';
-import type { Entity, Id } from './types';
+import type { CircleEntity, Entity, EquipmentEntity, Id, LineEntity, ShapeEntity } from './types';
+
+/** Objects that rise in 3D and have a `height`. */
+export type Extruded = LineEntity | CircleEntity | EquipmentEntity | ShapeEntity;
+
+/** Whether an entity has a 3D height (dimensions, point objects and labels don't). */
+export function hasHeight(e: Entity): e is Extruded {
+  return e.kind !== 'dimension' && e.kind !== 'point' && e.kind !== 'label';
+}
 
 /** Height used when an entity has none of its own (shown as the placeholder in the property panel). */
 export function defaultHeight(doc: DocumentModel, e: Entity): number {
   return e.kind === 'equipment' ? (doc.equipmentTypes.get(e.type)?.height ?? 0) : 0;
 }
 
-/** Effective height of an entity, mm (dimensions and point objects have none). */
+/** Effective height of an entity, mm (dimensions, point objects and labels have none). */
 export function heightOf(doc: DocumentModel, e: Entity): number {
-  if (e.kind === 'dimension' || e.kind === 'point') return 0;
+  if (!hasHeight(e)) return 0;
   return e.height ?? defaultHeight(doc, e);
 }
 

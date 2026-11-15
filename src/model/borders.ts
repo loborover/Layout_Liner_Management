@@ -56,7 +56,7 @@ const clonePattern = (p: StripePattern): StripePattern => ({ ...p, stripes: p.st
 /** The border after applying a template: colour and pattern from the template, opaque like paint. */
 export function applyTemplate(style: StrokeStyle | undefined, t: BorderTemplate): StrokeStyle {
   const width = style && style.width > 0 ? style.width : TEMPLATE_WIDTH;
-  const out: StrokeStyle = { width, align: style?.align ?? 'center', color: t.color, opacity: 1 };
+  const out: StrokeStyle = { width, align: style?.align ?? 'center', color: t.color, opacity: 1, ...(style?.join ? { join: style.join } : {}) };
   if (t.pattern) out.pattern = clonePattern(t.pattern);
   return out;
 }
