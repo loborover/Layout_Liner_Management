@@ -7,7 +7,7 @@
 
 | 메서드 | 변경 | 설명 |
 | --- | --- | --- |
-| [`summary`](#summary) |  | 도면 개요: 층·폴더·레이어(객체 수), 객체 종류별 수, 라이브러리(설비·구조 종류), 범위. 작업 전에 먼저 호출하십시오. |
+| [`summary`](#summary) |  | 도면 개요: 층·폴더·레이어(id, 위치 path, 객체 수), 객체 종류별 수, 라이브러리(설비·구조 종류), 범위. 폴더는 parent로 중첩됩니다. 이름은 겹칠 수 있으니 id로 지정하십시오. 작업 전에 먼저 호출하십시오. |
 | [`getDocument`](#getdocument) |  | 도면 전체를 파일 형식(JSON, docs/DATA_MODEL.md)으로 반환합니다. |
 | [`loadDocument`](#loaddocument) | 예 | 도면 전체를 교체합니다(파일 열기와 같은 검증). 실행 취소 기록이 지워집니다. |
 | [`listEntities`](#listentities) |  | 객체 목록(좌표·길이·면적·검토 결과 포함). floor, layer, kind로 거를 수 있습니다. |
@@ -35,7 +35,8 @@
 | [`reorder`](#reorder) | 예 | 그리기 순서(트리 순서) 변경: front(맨 앞), back(맨 뒤), forward, backward. |
 | [`addFloor`](#addfloor) | 예 | 층을 추가합니다(레이어 "0" 포함). elevation 생략 시 가장 높은 층 위. |
 | [`setActiveFloor`](#setactivefloor) |  | 표시·편집할 층을 바꿉니다. 이후 새 객체는 이 층에 그려집니다. |
-| [`addFolder`](#addfolder) | 예 | 층 안에 레이어를 묶는 폴더를 추가합니다. |
+| [`addFolder`](#addfolder) | 예 | 층 안에, 또는 다른 폴더 안(parent)에 폴더를 추가합니다. 폴더·레이어 이름은 겹쳐도 되며 id로 구분합니다. 돌려주는 path는 "층 / 폴더 / …" 위치입니다. |
+| [`updateFolder`](#updatefolder) | 예 | 폴더 이름·표시·잠금 변경, 또는 안의 폴더·레이어와 함께 옮기기. parent=폴더 id면 그 안으로, parent=null이면 층 바로 아래로(floor를 주면 그 층으로). 자기 하위 폴더 안으로는 옮길 수 없습니다. |
 | [`addLayer`](#addlayer) | 예 | 레이어를 추가합니다. folder를 주면 그 폴더(와 층)에 들어갑니다. |
 | [`updateLayer`](#updatelayer) | 예 | 레이어 이름·색·표시·잠금·폴더 변경. folder=null이면 폴더에서 뺍니다. |
 | [`addEquipmentType`](#addequipmenttype) | 예 | 라이브러리에 설비 종류나 구조 프리셋(category: column\|stair\|ramp\|lift)을 추가합니다. |
@@ -50,7 +51,7 @@
 
 ## summary
 
-도면 개요: 층·폴더·레이어(객체 수), 객체 종류별 수, 라이브러리(설비·구조 종류), 범위. 작업 전에 먼저 호출하십시오.
+도면 개요: 층·폴더·레이어(id, 위치 path, 객체 수), 객체 종류별 수, 라이브러리(설비·구조 종류), 범위. 폴더는 parent로 중첩됩니다. 이름은 겹칠 수 있으니 id로 지정하십시오. 작업 전에 먼저 호출하십시오.
 
 매개변수 없음.
 
@@ -358,12 +359,26 @@
 
 ## addFolder
 
-층 안에 레이어를 묶는 폴더를 추가합니다.
+층 안에, 또는 다른 폴더 안(parent)에 폴더를 추가합니다. 폴더·레이어 이름은 겹쳐도 되며 id로 구분합니다. 돌려주는 path는 "층 / 폴더 / …" 위치입니다.
 
 | 매개변수 | 형식 | 필수 | 설명 |
 | --- | --- | --- | --- |
 | `name` | string | 예 | 폴더 이름 |
 | `floor` | string |  | 층 id (생략 시 현재 층) |
+| `parent` | string |  | 상위 폴더 id (생략 시 층 바로 아래) |
+
+## updateFolder
+
+폴더 이름·표시·잠금 변경, 또는 안의 폴더·레이어와 함께 옮기기. parent=폴더 id면 그 안으로, parent=null이면 층 바로 아래로(floor를 주면 그 층으로). 자기 하위 폴더 안으로는 옮길 수 없습니다.
+
+| 매개변수 | 형식 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `id` | string | 예 | 폴더 id |
+| `name` | string |  |  |
+| `visible` | boolean |  |  |
+| `locked` | boolean |  |  |
+| `parent` | string \| null |  |  |
+| `floor` | string |  | 층 id |
 
 ## addLayer
 

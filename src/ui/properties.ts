@@ -12,7 +12,7 @@
 import { RemoveConstraints, SetUnderlay, UpdateEntities } from '../model/commands';
 import { dimensionText, isDimensionConstraint } from '../constraints/dimensions';
 import { editEntities } from '../model/edit';
-import { cloneEntity, midpointId } from '../model/document';
+import { type DocumentModel, cloneEntity, midpointId } from '../model/document';
 import { BORDER_TEMPLATES, TEMPLATE_WIDTH, applyTemplate, borderOpacity, cloneStroke, matchTemplate, patternPeriod, stripePieces } from '../model/borders';
 import { UNDERLAY_ID } from '../model/selection';
 import { defaultHeight } from '../model/heights';
@@ -28,6 +28,14 @@ import { CANVAS, LAYER_DEFAULT, MARKING, SHAPE_FILL } from '../theme';
 
 const ALIGN_LABELS = { inside: '내측', center: '중심', outside: '외측' } as const;
 const JOIN_LABELS = { miter: '뾰족 (Miter)', round: '라운드 (Round)', bevel: '모따기 (Chamfer)' } as const;
+
+/**
+ * A layer as a choice in a list: its folder path within the floor ("작업구역 / 협력사 / A사"), so layers with the same
+ * name in different folders can be told apart (names may repeat; the option's value is the layer id).
+ */
+function layerOption(doc: DocumentModel, id: Id): string {
+  return doc.treePath(id).split(' / ').slice(1).join(' / ');
+}
 
 export class PropertyPanel {
   private timer: number | undefined;
@@ -300,7 +308,7 @@ export class PropertyPanel {
     const f = this.fieldset(this.kindLabel(e));
     this.row(f, '이름', this.input('text', e.name ?? '', (v) => this.update('이름 변경', [e], (c) => (v.trim() ? (c.name = v.trim()) : delete c.name))));
     const layers: Record<string, string> = {};
-    for (const l of doc.layers.values()) if (l.floor === doc.floorOf(e)) layers[l.id] = l.name;
+    for (const l of doc.layers.values()) if (l.floor === doc.floorOf(e)) layers[l.id] = layerOption(doc, l.id);
     this.row(f, '레이어', this.select(layers, e.layer, (v) => this.update('레이어 변경', [e], (c) => (c.layer = v))));
     const binding = this.input('text', e.binding ?? '', (v) => this.update('모니터링 키 변경', [e], (c) => (v.trim() ? (c.binding = v.trim()) : delete c.binding)));
     binding.placeholder = '예: line1.temp';
@@ -856,7 +864,7 @@ export class PropertyPanel {
     const floors = new Set(items.map((e) => doc.floorOf(e)));
     if (floors.size === 1) {
       const layers: Record<string, string> = { '': '(여러 레이어)' };
-      for (const l of doc.layers.values()) if (floors.has(l.floor)) layers[l.id] = l.name;
+      for (const l of doc.layers.values()) if (floors.has(l.floor)) layers[l.id] = layerOption(doc, l.id);
       const shared = items.every((e) => e.layer === items[0].layer) ? items[0].layer : '';
       this.row(f, '레이어', this.select(layers, shared, (v) => v && this.update('레이어 변경', items, (c) => (c.layer = v))));
     }

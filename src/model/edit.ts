@@ -10,14 +10,17 @@ import {
   AddItems,
   Batch,
   type Command,
+  type LayerTree,
   RemoveConstraints,
   ReorderEntities,
+  SetLayerTree,
   SetGeometry,
   UpdateEntities,
   captureGeometry,
 } from './commands';
 import { type DocumentModel, cloneEntity } from './document';
 import { newId } from './ids';
+import { folderSubtree } from './layerTree';
 import type { Constraint, Entity, EquipmentType, Id, LineEntity, Point, ShapeEntity } from './types';
 
 /** Next free tag for a type, e.g. "MC-4" after "MC-1".."MC-3". `taken` holds tags handed out but not yet in the document. */
@@ -219,30 +222,58 @@ export function transferItems(doc: DocumentModel, entityIds: Id[], layer: Id): C
   const moving = [...doc.entities.values()].filter((e) => ids.has(e.id) && e.layer !== layer);
   if (moving.length === 0) return null;
   const leaving = moving.filter((e) => doc.floorOf(e) !== target.floor);
-  // Points the leaving objects share with geometry that stays (dimensions measure, they don't hold points).
-  const split = new Map<Id, Id>();
-  const newPoints: Point[] = [];
-  if (leaving.length > 0) {
-    for (const pid of new Set(leaving.flatMap((e) => doc.pointIdsOf(e)))) {
-      if (!doc.pointUsers(pid).some((u) => !ids.has(u.id) && u.kind !== 'dimension')) continue;
-      const copy: Point = { ...doc.point(pid), id: newId('p') };
-      newPoints.push(copy);
-      split.set(pid, copy.id);
-    }
-  }
+  const sep = separateFromFloor(doc, leaving, ids);
   const leavingIds = new Set(leaving.map((e) => e.id));
-  const after = moving.map((e) => ({ ...(leavingIds.has(e.id) && split.size > 0 ? remapPoints(e, split) : cloneEntity(e)), layer }));
+  const after = moving.map((e) => ({ ...(leavingIds.has(e.id) && sep.split.size > 0 ? remapPoints(e, sep.split) : cloneEntity(e)), layer }));
   const steps: Command[] = [];
-  if (newPoints.length > 0) steps.push(new AddItems(newPoints, []));
+  if (sep.points.length > 0) steps.push(new AddItems(sep.points, []));
   steps.push(new UpdateEntities('레이어 변경', moving, after));
-  // A coincident constraint can't hold points on two floors together: one between a point that leaves and one
-  // that stays comes off.
-  if (leaving.length > 0) {
-    const gone = new Set(leaving.flatMap((e) => doc.pointIdsOf(e)).filter((pid) => !split.has(pid)));
-    const mixed = [...doc.constraints.values()].filter((c) => c.kind === 'coincident' && c.refs.some((r) => gone.has(r)) && c.refs.some((r) => !gone.has(r)));
-    if (mixed.length > 0) steps.push(new RemoveConstraints(mixed.map((c) => c.id)));
-  }
+  if (sep.constraints.length > 0) steps.push(new RemoveConstraints(sep.constraints));
   return steps.length === 1 ? steps[0] : new Batch('레이어 변경', steps);
+}
+
+/**
+ * What it takes for objects leaving their floor to stop sharing geometry with objects that stay (`moving` holds
+ * the ids of everything that goes): a copy of each point they share with staying geometry (dimensions measure,
+ * they don't hold points), and the coincident constraints that would tie a leaving point to a staying one.
+ */
+function separateFromFloor(doc: DocumentModel, leaving: Entity[], moving: ReadonlySet<Id>): { split: Map<Id, Id>; points: Point[]; constraints: Id[] } {
+  const split = new Map<Id, Id>();
+  const points: Point[] = [];
+  if (leaving.length === 0) return { split, points, constraints: [] };
+  const own = new Set(leaving.flatMap((e) => doc.pointIdsOf(e)));
+  for (const pid of own) {
+    if (!doc.pointUsers(pid).some((u) => !moving.has(u.id) && u.kind !== 'dimension')) continue;
+    const copy: Point = { ...doc.point(pid), id: newId('p') };
+    points.push(copy);
+    split.set(pid, copy.id);
+  }
+  const gone = new Set([...own].filter((pid) => !split.has(pid)));
+  const constraints = [...doc.constraints.values()]
+    .filter((c) => c.kind === 'coincident' && c.refs.some((r) => gone.has(r)) && c.refs.some((r) => !gone.has(r)))
+    .map((c) => c.id);
+  return { split, points, constraints };
+}
+
+/**
+ * Command for an edit of the floor/folder/layer tree (before → after). When layers change floor (a layer or a
+ * folder moved to another floor), their objects stop sharing points and coincident constraints with objects
+ * left on the old floor, as when objects themselves are moved there (transferItems): otherwise editing one floor
+ * could move geometry on another.
+ */
+export function layerTreeCommand(doc: DocumentModel, label: string, before: LayerTree, after: LayerTree): Command {
+  const tree = new SetLayerTree(label, before, after);
+  const floorBefore = new Map(before.layers.map((l) => [l.id, l.floor]));
+  const moved = new Set(after.layers.filter((l) => floorBefore.has(l.id) && floorBefore.get(l.id) !== l.floor).map((l) => l.id));
+  if (moved.size === 0) return tree;
+  const leaving = [...doc.entities.values()].filter((e) => moved.has(e.layer));
+  const sep = separateFromFloor(doc, leaving, new Set(leaving.map((e) => e.id)));
+  if (sep.split.size === 0 && sep.constraints.length === 0) return tree;
+  const remapped = leaving.filter((e) => doc.pointIdsOf(e).some((pid) => sep.split.has(pid)));
+  const steps: Command[] = [tree];
+  if (sep.points.length > 0) steps.push(new AddItems(sep.points, []), new UpdateEntities(label, remapped, remapped.map((e) => remapPoints(e, sep.split))));
+  if (sep.constraints.length > 0) steps.push(new RemoveConstraints(sep.constraints));
+  return new Batch(label, steps);
 }
 
 /**
@@ -511,16 +542,22 @@ export interface TreeDropTarget {
 
 /**
  * Layer that objects dropped on a tree node go to: the layer itself; for a folder or a floor, the current layer
- * when it is in there, else its first layer (for a floor, preferring layers outside folders). Null when the
- * folder has no layer.
+ * when it is in there, else its first layer (for a floor, preferring layers outside folders; for a folder, its own
+ * layers before those of its sub-folders). Null when the folder holds no layer at all.
  */
 export function layerForDrop(doc: DocumentModel, target: TreeDropTarget, current: Id): Id | null {
   if (target.kind === 'layer') return doc.layers.has(target.id) ? target.id : null;
   const layers = [...doc.layers.values()];
-  const inside = target.kind === 'folder' ? layers.filter((l) => l.folder === target.id) : layers.filter((l) => l.floor === target.id);
+  if (target.kind === 'floor') {
+    const inside = layers.filter((l) => l.floor === target.id);
+    if (inside.some((l) => l.id === current)) return current;
+    return (inside.find((l) => !l.folder) ?? inside[0])?.id ?? null;
+  }
+  // A folder: its own layers first, then those of its sub-folders (folders nest).
+  const sub = folderSubtree([...doc.folders.values()], target.id);
+  const inside = layers.filter((l) => l.folder && sub.has(l.folder));
   if (inside.some((l) => l.id === current)) return current;
-  if (target.kind === 'floor') return (inside.find((l) => !l.folder) ?? inside[0])?.id ?? null;
-  return inside[0]?.id ?? null;
+  return (inside.find((l) => l.folder === target.id) ?? inside[0])?.id ?? null;
 }
 
 /**

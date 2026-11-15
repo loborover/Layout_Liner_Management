@@ -63,7 +63,7 @@ const obj = (properties: Record<string, Schema>, required: string[] = []): Schem
 /** Every API method. Keep descriptions in Korean+English terms an AI can map to the UI. */
 export const METHODS: Record<string, MethodSpec> = {
   summary: {
-    description: '도면 개요: 층·폴더·레이어(객체 수), 객체 종류별 수, 라이브러리(설비·구조 종류), 범위. 작업 전에 먼저 호출하십시오.',
+    description: '도면 개요: 층·폴더·레이어(id, 위치 path, 객체 수), 객체 종류별 수, 라이브러리(설비·구조 종류), 범위. 폴더는 parent로 중첩됩니다. 이름은 겹칠 수 있으니 id로 지정하십시오. 작업 전에 먼저 호출하십시오.',
     params: obj({}),
     mutates: false,
     run: (api) => api.summary(),
@@ -330,10 +330,19 @@ export const METHODS: Record<string, MethodSpec> = {
     run: (api, p) => api.setActiveFloor(p as never),
   },
   addFolder: {
-    description: '층 안에 레이어를 묶는 폴더를 추가합니다.',
-    params: obj({ name: str('폴더 이름'), floor: str('층 id (생략 시 현재 층)') }, ['name']),
+    description: '층 안에, 또는 다른 폴더 안(parent)에 폴더를 추가합니다. 폴더·레이어 이름은 겹쳐도 되며 id로 구분합니다. 돌려주는 path는 "층 / 폴더 / …" 위치입니다.',
+    params: obj({ name: str('폴더 이름'), floor: str('층 id (생략 시 현재 층)'), parent: str('상위 폴더 id (생략 시 층 바로 아래)') }, ['name']),
     mutates: true,
     run: (api, p) => api.addFolder(p as never),
+  },
+  updateFolder: {
+    description: '폴더 이름·표시·잠금 변경, 또는 안의 폴더·레이어와 함께 옮기기. parent=폴더 id면 그 안으로, parent=null이면 층 바로 아래로(floor를 주면 그 층으로). 자기 하위 폴더 안으로는 옮길 수 없습니다.',
+    params: obj(
+      { id: str('폴더 id'), name: { type: 'string' }, visible: { type: 'boolean' }, locked: { type: 'boolean' }, parent: { type: ['string', 'null'] }, floor: str('층 id') },
+      ['id'],
+    ),
+    mutates: true,
+    run: (api, p) => api.updateFolder(p as never),
   },
   addLayer: {
     description: '레이어를 추가합니다. folder를 주면 그 폴더(와 층)에 들어갑니다.',

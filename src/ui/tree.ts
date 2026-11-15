@@ -3,12 +3,16 @@
  *
  * Object tree in the side bar, modelled on the browser of Autodesk Fusion 360:
  *
- *   층 (floor) > 폴더 (folder) > 레이어 (layer) > 객체 (entity)
+ *   층 (floor) > 폴더 (folder) > 폴더 … > 레이어 (layer) > 객체 (entity)
  *   도형 (shape) > 선 (its edge lines) > 점 (start, middle, end)
+ *
+ * Every object appears once, under the parent it belongs to: a shape's edge lines are listed under the shape, not
+ * again under its layer (unless an edge sits on another layer than its shape). Folders nest; a folder starts closed
+ * unless it holds the current layer, so a tree with many folders stays short (the user's request, 2026-11-15).
  *
  * Clicking a floor shows it; clicking an object selects it (Shift adds), double-clicking zooms to it. In edit
  * mode floors, folders and layers can be added, renamed (double-click), deleted, hidden and locked, and a
- * layer can be dragged onto a folder or a floor. Objects can be dragged onto a layer, a folder or a floor to move
+ * layer or a folder can be dragged onto a folder or a floor (src/model/layerTree.ts). Objects can be dragged onto a layer, a folder or a floor to move
  * them there (the selected objects when the dragged one is selected; an edge line takes its shape along, and objects on floors not in view can be moved too); Alt+drag copies them instead, keeping their
  * properties and giving named copies new unique names (src/model/edit.ts duplicateItems, transferItems). Object order and properties are edited with the ribbon's
  * 순서 group and the property panel. Tree edits are undoable commands (SetLayerTree); visibility and locks are
@@ -16,8 +20,9 @@
  *
  * Large layers list their first MAX_ROWS objects only, and the tree is rebuilt at most a few times a second.
  */
-import { SetLayerTree, captureLayerTree, type LayerTree } from '../model/commands';
-import { duplicateItems, layerForDrop, transferItems, type TreeDropTarget } from '../model/edit';
+import { captureLayerTree, type LayerTree } from '../model/commands';
+import { duplicateItems, layerForDrop, layerTreeCommand, transferItems, type TreeDropTarget } from '../model/edit';
+import { folderSubtree, moveFolder, moveLayer, removeFolder } from '../model/layerTree';
 import { midpointId } from '../model/document';
 import { newId } from '../model/ids';
 import { labelRows } from '../model/labels';
@@ -36,6 +41,7 @@ export class ObjectTree {
   private open = new Map<string, boolean>();
   private timer: number | undefined;
   private dragLayer: Id | null = null;
+  private dragFolder: Id | null = null;
   /** Objects being dragged in the tree. */
   private dragItems: Id[] | null = null;
 
@@ -56,20 +62,52 @@ export class ObjectTree {
   render(): void {
     const scroll = this.root.parentElement?.scrollTop ?? 0;
     const { doc } = this.host;
+    this.counts = this.objectCounts();
     const rows: HTMLElement[] = [];
     for (const floor of doc.floors.values()) {
       rows.push(this.floorNode(floor));
       if (!this.isOpen(`f:${floor.id}`, floor.id === doc.activeFloor)) continue;
-      for (const folder of doc.folders.values()) {
-        if (folder.floor !== floor.id) continue;
-        rows.push(this.folderNode(folder));
-        if (!this.isOpen(`g:${folder.id}`, true)) continue;
-        for (const layer of doc.layers.values()) if (layer.folder === folder.id) rows.push(...this.layerRows(layer, 2));
-      }
-      for (const layer of doc.layers.values()) if (layer.floor === floor.id && !layer.folder) rows.push(...this.layerRows(layer, 1));
+      rows.push(...this.folderContents(floor.id, undefined, 1));
     }
     this.root.replaceChildren(...rows);
     if (this.root.parentElement) this.root.parentElement.scrollTop = scroll;
+  }
+
+  /** Objects per layer, counted once per render (folder rows show the total of everything inside them). */
+  private counts = new Map<Id, number>();
+
+  private objectCounts(): Map<Id, number> {
+    const counts = new Map<Id, number>();
+    for (const e of this.host.doc.entities.values()) counts.set(e.layer, (counts.get(e.layer) ?? 0) + 1);
+    return counts;
+  }
+
+  /** Parent folder of a folder as the tree shows it: none when the stored parent is missing (bad data). */
+  private parentOf(f: Folder): Id | undefined {
+    const p = f.parent ? this.host.doc.folders.get(f.parent) : undefined;
+    return p && p.floor === f.floor ? p.id : undefined;
+  }
+
+  /** Rows of what sits directly in a folder (or, with no folder, under the floor): sub-folders first, then layers. */
+  private folderContents(floor: Id, folder: Id | undefined, depth: number): HTMLElement[] {
+    const { doc } = this.host;
+    const rows: HTMLElement[] = [];
+    for (const f of doc.folders.values()) {
+      if (f.floor !== floor || this.parentOf(f) !== folder) continue;
+      rows.push(this.folderNode(f, depth));
+      if (this.isOpen(`g:${f.id}`, this.holdsCurrentLayer(f.id))) rows.push(...this.folderContents(floor, f.id, depth + 1));
+    }
+    for (const layer of doc.layers.values()) {
+      if (layer.floor !== floor) continue;
+      const inFolder = layer.folder && doc.folders.get(layer.folder)?.floor === floor ? layer.folder : undefined;
+      if (inFolder === folder) rows.push(...this.layerRows(layer, depth));
+    }
+    return rows;
+  }
+
+  private holdsCurrentLayer(folder: Id): boolean {
+    const current = this.host.doc.layers.get(this.host.currentLayer());
+    return !!current?.folder && folderSubtree([...this.host.doc.folders.values()], folder).has(current.folder);
   }
 
   // ---- actions (also used by the side bar header buttons) ----
@@ -91,12 +129,21 @@ export class ObjectTree {
     this.host.setCurrentLayer(layer.id);
   }
 
-  addFolder(): void {
+  /** Adds a folder under the active floor, or inside `parent`. */
+  addFolder(parent?: Folder): void {
     const { doc } = this.host;
-    const name = this.host.ask('새 폴더 이름', `폴더 ${doc.folders.size + 1}`);
+    const name = this.host.ask(parent ? `'${parent.name}' 안에 만들 폴더 이름` : '새 폴더 이름', `폴더 ${doc.folders.size + 1}`);
     if (name === null || !name.trim()) return;
-    const folder: Folder = { id: newId('folder'), name: name.trim(), floor: doc.activeFloor, visible: true, locked: false };
+    const folder: Folder = {
+      id: newId('folder'),
+      name: name.trim(),
+      floor: parent?.floor ?? doc.activeFloor,
+      ...(parent ? { parent: parent.id } : {}),
+      visible: true,
+      locked: false,
+    };
     this.change('폴더 추가', (t) => t.folders.push(folder));
+    if (parent) this.open.set(`g:${parent.id}`, true);
   }
 
   addLayer(): void {
@@ -127,7 +174,7 @@ export class ObjectTree {
     const row = document.createElement('div');
     row.className = 'node';
     row.setAttribute('role', 'treeitem');
-    row.style.paddingLeft = `${depth * 14}px`;
+    row.style.paddingLeft = `${depth * 12}px`;
     const twisty = document.createElement('span');
     twisty.className = 'twisty';
     if (expandable && key) {
@@ -181,34 +228,43 @@ export class ObjectTree {
     label.addEventListener('dblclick', () => this.editFloor(floor));
     row.append(icon('floor'), label, this.meta(`EL ${formatLength(floor.elevation, this.host.unit())}`));
     row.append(this.mini('trash', '층 삭제 (객체가 없는 층만)', () => this.removeFloor(floor.id)));
-    this.dropTarget(row, { kind: 'floor', id: floor.id }, (layer) => {
-      layer.floor = floor.id;
-      delete layer.folder;
-    });
+    this.dropTarget(row, { kind: 'floor', id: floor.id });
     return row;
   }
 
-  private folderNode(folder: Folder): HTMLElement {
-    const row = this.node(1, `g:${folder.id}`, true, true);
+  private folderNode(folder: Folder, depth: number): HTMLElement {
+    const { doc } = this.host;
+    const row = this.node(depth, `g:${folder.id}`, true, this.holdsCurrentLayer(folder.id));
     row.classList.toggle('dim', !folder.visible);
-    const label = this.label(folder.name, '더블클릭: 이름 바꾸기');
+    const label = this.label(folder.name, `${doc.treePath(folder.id)}\nID: ${folder.id}\n더블클릭: 이름 바꾸기 · 끌어서 다른 폴더나 층으로 옮기기`);
     label.addEventListener('dblclick', () => {
       const name = this.host.ask('폴더 이름', folder.name);
       if (name?.trim()) this.change('폴더 이름 변경', (t) => (t.folders.find((f) => f.id === folder.id)!.name = name.trim()));
     });
-    row.append(icon('folder'), label);
+    // Objects in the folder and all its sub-folders.
+    const inside = folderSubtree([...doc.folders.values()], folder.id);
+    let objects = 0;
+    for (const l of doc.layers.values()) if (l.folder && inside.has(l.folder)) objects += this.counts.get(l.id) ?? 0;
+    row.append(icon('folder'), label, this.meta(String(objects)));
+    row.append(this.mini('plus', '이 폴더 안에 폴더 추가', () => this.addFolder(folder)));
     row.append(this.viewToggle(folder, 'visible'), this.viewToggle(folder, 'locked'));
-    row.append(this.mini('trash', '폴더 삭제 (레이어는 층으로 옮겨집니다)', () => this.removeFolder(folder.id)));
-    this.dropTarget(row, { kind: 'folder', id: folder.id }, (layer) => {
-      layer.floor = folder.floor;
-      layer.folder = folder.id;
-    });
+    row.append(this.mini('trash', '폴더 삭제 (안의 폴더와 레이어는 한 단계 위로 옮겨집니다)', () => this.removeFolder(folder.id)));
+    if (this.host.mode() === 'edit') {
+      row.draggable = true;
+      row.addEventListener('dragstart', (e) => {
+        this.dragFolder = folder.id;
+        e.dataTransfer?.setData('text/plain', folder.id);
+      });
+      row.addEventListener('dragend', () => (this.dragFolder = null));
+    }
+    this.dropTarget(row, { kind: 'folder', id: folder.id });
     return row;
   }
 
   private layerRows(layer: Layer, depth: number): HTMLElement[] {
     const { doc } = this.host;
-    const items = [...doc.entities.values()].filter((e) => e.layer === layer.id);
+    // Each object is listed once, under its direct parent: a shape's edge on the shape's layer shows under the shape.
+    const items = [...doc.entities.values()].filter((e) => e.layer === layer.id && !(e.kind === 'line' && doc.shapesUsing([e.id]).some((s) => s.layer === layer.id)));
     const row = this.node(depth, `l:${layer.id}`, items.length > 0, items.length <= 50);
     row.classList.toggle('dim', !layer.visible);
     const current = this.host.currentLayer() === layer.id;
@@ -225,12 +281,12 @@ export class ObjectTree {
     color.title = '레이어 색';
     color.disabled = this.host.mode() === 'view';
     color.addEventListener('change', () => this.change('레이어 색 변경', (t) => (t.layers.find((l) => l.id === layer.id)!.color = color.value)));
-    const label = this.label(layer.name, '더블클릭: 이름 바꾸기 · 끌어서 폴더나 층으로 옮기기');
+    const label = this.label(layer.name, `${doc.treePath(layer.id)}\nID: ${layer.id}\n더블클릭: 이름 바꾸기 · 끌어서 폴더나 층으로 옮기기`);
     label.addEventListener('dblclick', () => {
       const name = this.host.ask('레이어 이름', layer.name);
       if (name?.trim()) this.change('레이어 이름 변경', (t) => (t.layers.find((l) => l.id === layer.id)!.name = name.trim()));
     });
-    row.append(pick, color, icon('layer'), label, this.meta(String(items.length)));
+    row.append(pick, color, icon('layer'), label, this.meta(String(this.counts.get(layer.id) ?? 0)));
     row.append(this.viewToggle(layer, 'visible'), this.viewToggle(layer, 'locked'));
     row.append(this.mini('trash', '레이어 삭제 (빈 레이어만)', () => this.removeLayer(layer.id)));
     if (this.host.mode() === 'edit') {
@@ -241,7 +297,7 @@ export class ObjectTree {
       });
       row.addEventListener('dragend', () => (this.dragLayer = null));
     }
-    this.dropTarget(row, { kind: 'layer', id: layer.id }, null);
+    this.dropTarget(row, { kind: 'layer', id: layer.id });
     const rows: HTMLElement[] = [row];
     if (!this.isOpen(`l:${layer.id}`, items.length <= 50)) return rows;
     for (const e of items.slice(0, MAX_ROWS)) rows.push(...this.entityRows(e, depth + 1));
@@ -362,13 +418,15 @@ export class ObjectTree {
 
   /**
    * A floor, folder or layer row that accepts dragged objects (moved, or copied with Alt) and, for floors and
-   * folders, dragged layers (`applyLayer`).
+   * folders, dragged layers and folders.
    */
-  private dropTarget(row: HTMLElement, target: TreeDropTarget, applyLayer: ((layer: Layer) => void) | null): void {
+  private dropTarget(row: HTMLElement, target: TreeDropTarget): void {
+    const takesNodes = target.kind !== 'layer';
     row.addEventListener('dragover', (e) => {
-      if (!this.dragItems && !(this.dragLayer && applyLayer)) return;
+      if (!this.dragItems && !(takesNodes && (this.dragLayer || this.dragFolder))) return;
       e.preventDefault();
-      // Alt (Option) copies; the cursor shows which will happen.
+      e.stopPropagation();
+      // Alt (Option) copies objects; the cursor shows which will happen.
       if (e.dataTransfer) e.dataTransfer.dropEffect = this.dragItems && e.altKey ? 'copy' : 'move';
       row.classList.add('drop');
     });
@@ -382,12 +440,19 @@ export class ObjectTree {
         this.dropItems(items, target, e.altKey || e.dataTransfer?.dropEffect === 'copy');
         return;
       }
-      const id = this.dragLayer;
-      if (!id || !applyLayer) return;
-      this.change('레이어 옮기기', (t) => {
-        const layer = t.layers.find((l) => l.id === id);
-        if (layer) applyLayer(layer);
-      });
+      if (!takesNodes) return;
+      const to = target as { kind: 'floor' | 'folder'; id: Id };
+      if (this.dragFolder) {
+        const id = this.dragFolder;
+        this.dragFolder = null;
+        if (id === to.id) return;
+        this.changeChecked('폴더 옮기기', (t) => moveFolder(t, id, to));
+        if (to.kind === 'folder') this.open.set(`g:${to.id}`, true);
+      } else if (this.dragLayer) {
+        const id = this.dragLayer;
+        this.dragLayer = null;
+        this.changeChecked('레이어 옮기기', (t) => moveLayer(t, id, to));
+      }
     });
   }
 
@@ -439,10 +504,7 @@ export class ObjectTree {
   }
 
   private removeFolder(id: Id): void {
-    this.change('폴더 삭제', (t) => {
-      t.folders = t.folders.filter((f) => f.id !== id);
-      for (const l of t.layers) if (l.folder === id) delete l.folder;
-    });
+    this.change('폴더 삭제', (t) => removeFolder(t, id));
   }
 
   private removeLayer(id: Id): void {
@@ -456,12 +518,22 @@ export class ObjectTree {
     this.change('레이어 삭제', (t) => (t.layers = t.layers.filter((l) => l.id !== id)));
   }
 
+  /** Like change(), for edits that can be refused: shows the reason and records nothing then. */
+  private changeChecked(label: string, edit: (t: LayerTree) => string | null): void {
+    const { doc, history } = this.host;
+    const before = captureLayerTree(doc);
+    const after = captureLayerTree(doc);
+    const error = edit(after);
+    if (error) return this.host.notify(error);
+    history.execute(layerTreeCommand(doc, label, before, after));
+  }
+
   /** Applies an edit to a copy of the layer tree as one undoable step. */
   private change(label: string, edit: (t: LayerTree) => void): void {
     const { doc, history } = this.host;
     const before = captureLayerTree(doc);
     const after = captureLayerTree(doc);
     edit(after);
-    history.execute(new SetLayerTree(label, before, after));
+    history.execute(layerTreeCommand(doc, label, before, after));
   }
 }
