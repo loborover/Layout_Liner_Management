@@ -311,6 +311,8 @@ export class CircleTool implements Tool {
   readonly hint = '클릭: 중심 → 클릭: 반지름 · Esc: 취소';
   readonly cursor = 'crosshair';
   private centre: Vec2 | null = null;
+  private centreLink: Id | null = null;
+  private centreShared: Id | null = null;
   private cursorPos: Vec2 | null = null;
 
   constructor(private readonly ctx: ToolContext) {}
@@ -327,15 +329,27 @@ export class CircleTool implements Tool {
     if (p.button !== 0) return;
     if (!this.centre) {
       this.centre = p.world;
+      // Like lines: a centre snapped to another object's point gets its own point held there (Ctrl shares it).
+      const snapped = existingPoint(this.ctx, p);
+      this.centreShared = snapped && p.ctrl ? snapped.id : null;
+      this.centreLink = snapped && !p.ctrl ? snapped.id : null;
       return;
     }
     const r = dist(this.centre, p.world);
     if (r < 1e-9) return;
-    const c = point(this.centre);
-    this.ctx.history.execute(
-      new AddItems([c], [{ id: newId('e'), kind: 'circle', center: c.id, radius: r, layer: this.ctx.layer() }]),
-    );
+    const { doc } = this.ctx;
+    const shared = this.centreShared && doc.points.has(this.centreShared) ? this.centreShared : null;
+    const link = this.centreLink && doc.points.has(this.centreLink) ? this.centreLink : null;
+    const c = shared ? null : point(this.centre);
+    const circle: Entity = { id: newId('e'), kind: 'circle', center: shared ?? c!.id, radius: r, layer: this.ctx.layer() };
+    this.ctx.history.execute(addWithLinks(c ? [c] : [], [circle], c && link ? [coincident(c.id, link)] : []));
+    this.reset();
+  }
+
+  private reset(): void {
     this.centre = null;
+    this.centreLink = null;
+    this.centreShared = null;
   }
 
   move(p: ToolPointer): void {
@@ -347,13 +361,13 @@ export class CircleTool implements Tool {
 
   cancel(): boolean {
     const active = this.centre !== null;
-    this.centre = null;
+    this.reset();
     this.ctx.requestRender();
     return active;
   }
 
   deactivate(): void {
-    this.centre = null;
+    this.reset();
   }
 
   overlay(p: Painter): void {

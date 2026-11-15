@@ -4,7 +4,7 @@ import { DocumentModel, midpointId } from '../src/model/document';
 import { Selection } from '../src/model/selection';
 import { SpatialIndex } from '../src/model/spatial';
 import { SnapEngine } from '../src/snap/snap';
-import { DimensionTool, LineTool, PointTool } from '../src/tools/draw';
+import { CircleTool, DimensionTool, LineTool, PointTool } from '../src/tools/draw';
 import { SelectTool } from '../src/tools/select';
 import type { Tool, ToolContext, ToolPointer } from '../src/tools/tool';
 import { ConstraintService } from '../src/constraints/service';
@@ -49,6 +49,28 @@ function setup() {
   };
   return { doc, history, selection, ctx, at, click };
 }
+
+describe('circle tool', () => {
+  it('ties a centre snapped to a line end with a coincident constraint, or shares it with Ctrl', () => {
+    const { doc, ctx, click } = setup();
+    const line = new LineTool(ctx);
+    click(line, 0, 0);
+    click(line, 1000, 0);
+    line.cancel();
+    const circle = new CircleTool(ctx);
+    click(circle, 1000, 0);
+    click(circle, 1500, 0);
+    const c1 = [...doc.entities.values()].find((e) => e.kind === 'circle')!;
+    const k = [...doc.constraints.values()].find((c) => c.kind === 'coincident')!;
+    expect(c1.kind === 'circle' && k.refs).toContain(c1.kind === 'circle' ? c1.center : '');
+    const shared = doc.pointUsers(k.refs.find((r) => r !== (c1.kind === 'circle' ? c1.center : ''))!).map((e) => e.kind);
+    expect(shared).toEqual(['line']);
+    click(circle, 0, 0, true);
+    click(circle, 300, 0);
+    const c2 = [...doc.entities.values()].filter((e) => e.kind === 'circle')[1];
+    expect(c2.kind === 'circle' && doc.pointUsers(c2.center).map((e) => e.kind).sort()).toEqual(['circle', 'line']);
+  });
+});
 
 describe('line tool', () => {
   it('closes a room outline on its first point with shared corners', () => {

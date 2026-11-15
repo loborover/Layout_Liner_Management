@@ -11,6 +11,7 @@ import type { Box } from '../geom/vec';
 import type { DocumentModel } from '../model/document';
 import { borderOpacity, circleBandRadii, patternPeriod } from '../model/borders';
 import type { StripePattern, StrokeStyle } from '../model/types';
+import { dataImageSize } from './imageSize';
 import { formatScaleLength, scaleBarLength } from '../view/viewport';
 import { CANVAS } from '../theme';
 import { StrokeGeometry } from '../model/strokes';
@@ -92,9 +93,12 @@ export function drawingSvg(doc: DocumentModel, opts: SvgOptions = {}): string | 
           const ys = poly.map((q) => q.y);
           const [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
           if (e.fillImage.fit === 'tile') {
+            // Tiles are `size` mm wide with the picture's own aspect ratio, as on the canvas.
             const t = e.fillImage.size ?? 1000;
+            const px = dataImageSize(e.fillImage.src);
+            const th = px ? (t * px.height) / px.width : t;
             const pid = `pat${defs.length}`;
-            defs.push(`<pattern id="${pid}" patternUnits="userSpaceOnUse" width="${n(t)}" height="${n(t)}"><image href="${esc(e.fillImage.src)}" width="${n(t)}" height="${n(t)}" preserveAspectRatio="xMidYMid slice"/></pattern>`);
+            defs.push(`<pattern id="${pid}" patternUnits="userSpaceOnUse" width="${n(t)}" height="${n(th)}"><image href="${esc(e.fillImage.src)}" width="${n(t)}" height="${n(th)}" preserveAspectRatio="none"/></pattern>`);
             shapes.push(`<polygon points="${pts(poly)}" fill="url(#${pid})" fill-opacity="${n(opacity)}" stroke="none"/>`);
           } else {
             shapes.push(

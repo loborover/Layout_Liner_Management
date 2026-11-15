@@ -714,6 +714,13 @@ export class App implements UiHost {
       opacityBefore = null;
       this.doc.changed();
     });
+    // Locking hides the image from canvas picking, so the unlock switch lives here, not only in the selected image's panel.
+    $<HTMLInputElement>('#underlay-locked').addEventListener('change', (e) => {
+      const u = this.doc.underlay;
+      if (!u) return;
+      const locked = (e.target as HTMLInputElement).checked;
+      this.history.execute(new SetUnderlay(locked ? '밑그림 잠금' : '밑그림 잠금 해제', u, { ...u, locked }));
+    });
     $<HTMLInputElement>('#underlay-visible').addEventListener('change', (e) => {
       const u = this.doc.underlay;
       if (!u) return;
@@ -1036,6 +1043,7 @@ export class App implements UiHost {
     const opacity = $<HTMLInputElement>('#underlay-opacity');
     if (document.activeElement !== opacity) opacity.value = String(Math.round(u.opacity * 100));
     $<HTMLInputElement>('#underlay-visible').checked = u.visible;
+    $<HTMLInputElement>('#underlay-locked').checked = !!u.locked;
     $<HTMLSpanElement>('#underlay-controls .name').textContent = `${formatLength(u.width, this.displayUnit)} × ${formatLength(u.height, this.displayUnit)}`;
   }
 

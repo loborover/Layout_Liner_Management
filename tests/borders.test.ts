@@ -3,6 +3,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { constrainedClusters, mergeClusters } from '../src/constraints/components';
 import { ConstraintSolver } from '../src/constraints/solver';
 import { FormatError, deserialize, serialize } from '../src/io/serialize';
+import { dataImageSize } from '../src/io/imageSize';
 import { drawingSvg } from '../src/io/svg';
 import { BORDER_TEMPLATES, applyTemplate, borderOpacity, circleBandRadii, matchTemplate, patternPeriod, stripePieces } from '../src/model/borders';
 import { AddConstraints, AddItems, History } from '../src/model/commands';
@@ -213,5 +214,26 @@ describe('scale display', () => {
     expect(at100).toContain('축척 1:100');
     const width = (svg: string) => Number(/width="([\d.]+)mm"/.exec(svg)![1]);
     expect(width(at100)).toBeCloseTo(width(fit) / 100);
+  });
+});
+
+describe('embedded image size', () => {
+  const b64 = (bytes: number[]) => 'data:image/x;base64,' + btoa(String.fromCharCode(...bytes));
+  it('reads PNG, GIF and JPEG headers', () => {
+    const png = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52, 0, 0, 1, 0x2c, 0, 0, 0, 0x64];
+    expect(dataImageSize(b64(png))).toEqual({ width: 300, height: 100 });
+    expect(dataImageSize(b64([0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 40, 0, 20, 0]))).toEqual({ width: 40, height: 20 });
+    const jpeg = [0xff, 0xd8, 0xff, 0xe0, 0, 4, 0, 0, 0xff, 0xc0, 0, 11, 8, 0, 50, 0, 200, 3, 0, 0];
+    expect(dataImageSize(b64(jpeg))).toEqual({ width: 200, height: 50 });
+    expect(dataImageSize('data:image/png;base64,AAAA')).toBeNull();
+  });
+
+  it('keeps the aspect ratio of a tiled face picture in SVG', () => {
+    const { doc } = roomAndLine(true);
+    const s = doc.entities.get('s')!;
+    const png = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52, 0, 0, 0, 200, 0, 0, 0, 100];
+    if (s.kind === 'shape') s.fillImage = { src: b64(png), fit: 'tile', size: 400 };
+    doc.changed();
+    expect(drawingSvg(doc)).toMatch(/<pattern [^>]*width="400" height="200"/);
   });
 });
