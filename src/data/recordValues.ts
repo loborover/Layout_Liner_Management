@@ -3,13 +3,17 @@
  *
  * Source data as values ("DB 값을 개체값으로", the user's request 2026-11-15): the `DB(dataset, key, field)`
  * function that parameters and formulas (src/model/params.ts, owned by the dimension constraint work) use to read
- * a field of a record served by the data gateway, e.g. `DB("equipment", "MC-1", "정격전력(kW)") * 2`.
+ * a field of a record served by the data gateway, e.g. `DB("equipment", "MC-1", "정격전력(kW)") * 2`. The app
+ * puts `recordFunctions` into ConstraintService.functions and re-applies parameters when records arrive
+ * (App.bindDataSources).
  *
  * Formulas are evaluated synchronously, so the function answers from RecordStore's cache: a value not fetched
  * yet is `undefined` (the evaluator reports "값 없음" and the parameter keeps its last good value) and the fetch
  * starts in the background; when it lands, RecordStore.onChange fires and the caller re-evaluates. Read-only:
  * nothing here writes to the source. No DOM, so the MCP server and tests can use it.
  */
+import { parseExpression, references } from '../model/params';
+import type { DocumentModel } from '../model/document';
 import { type FieldValue, type RecordStore, DATASET_NAME, MAX_RECORD_KEY } from './records';
 
 /** Name of the formula function. */
@@ -87,4 +91,27 @@ export function recordFunctions(store: RecordStore): Record<string, (...args: (n
       return ref ? readField(store, ref) : undefined;
     },
   };
+}
+
+/** DB references in expressions (texts that fail to parse are skipped; the parameter panel reports them). */
+export function recordRefsIn(expressions: Iterable<string>): FieldRef[] {
+  const out: FieldRef[] = [];
+  for (const text of expressions) {
+    if (!text.includes(DB_FUNCTION)) continue;
+    try {
+      out.push(...refsFromCalls(references(parseExpression(text)).calls));
+    } catch {
+      // Not a valid expression.
+    }
+  }
+  return out;
+}
+
+/** Every DB reference of a drawing: parameters, driving constraints and dimension lines. */
+export function drawingRecordRefs(doc: DocumentModel): FieldRef[] {
+  const texts: string[] = [];
+  for (const p of doc.parameters.values()) texts.push(p.expression);
+  for (const c of doc.constraints.values()) if (c.expression) texts.push(c.expression);
+  for (const e of doc.entities.values()) if (e.kind === 'dimension' && e.expression) texts.push(e.expression);
+  return recordRefsIn(texts);
 }

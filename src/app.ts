@@ -36,6 +36,7 @@ import { ParameterPanel } from './ui/parameters';
 import { fillInspector } from './ui/inspector';
 import { DataBrowser, appendRecordInfo } from './ui/recordPanel';
 import { DEFAULT_GATEWAY, RecordStore, gatewayAddress } from './data/records';
+import { drawingRecordRefs, prefetch, recordFunctions } from './data/recordValues';
 import { hydrateIcons } from './ui/icons';
 import type { LiveValue, Mode, UiHost } from './ui/host';
 import { buildScene } from './model/scene3d';
@@ -174,6 +175,7 @@ export class App implements UiHost {
     this.renderer.onImageLoad = () => this.requestRender();
     this.api = new EditorApi(this.doc, this.history, {
       currentLayer: () => this.currentLayer(),
+      functions: () => this.constraints.functions,
       onParametersChanged: (revert) =>
         void this.constraints.reapplyParameters().then((r) => {
           if (r.ok) return;
@@ -1181,6 +1183,19 @@ export class App implements UiHost {
     input.addEventListener('change', () => this.setGateway(input.value));
     input.addEventListener('keydown', (ev) => ev.key === 'Enter' && void this.connectData());
     $<HTMLButtonElement>('[data-rail="data"]').addEventListener('click', () => void this.refreshData());
+    // DB("dataset", "key", "field") in parameters and driving dimensions reads the gateway's records. Values
+    // arrive asynchronously: missing ones keep their last result until the record lands, then everything
+    // that uses them is recomputed (one undo step, only when something changed).
+    this.constraints.functions = recordFunctions(this.records);
+    this.records.onChange(() => {
+      if (drawingRecordRefs(this.doc).length === 0) return;
+      void this.constraints.reapplyParameters().then((r) => !r.ok && this.notify(`원본 데이터 반영 실패: ${r.message}`));
+    });
+    // Fetch a drawing's references as soon as it is loaded or edited, so values are ready when evaluated.
+    this.doc.onChange(() => {
+      const refs = drawingRecordRefs(this.doc);
+      if (refs.length) void prefetch(this.records, refs);
+    });
   }
 
   /** Uses another gateway address (remembered in this browser). Same-origin paths and http(s) only. */
