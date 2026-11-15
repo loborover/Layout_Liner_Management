@@ -5,6 +5,7 @@
  * constraint service, tools and the editing API, and wires them to the DOM: canvas events, quick bar and ribbon
  * buttons (data-tool / data-action / data-constraint / data-preset attributes in index.html), keyboard shortcuts,
  * side bar (object tree, properties, library, underlay), status bar, autosave and the MCP live bridge.
+ * Canvas input covers mouse, pen and touch (tap, drag, two-finger pinch/pan for phones).
  * Start here to find where a user action enters the system.
  *
  * Modes: 'edit' (all tools) and 'view' (InspectTool only: look, pan, click for information; nothing can change).
@@ -18,7 +19,8 @@ import { hasConstraints } from './constraints/components';
 import { type ClusterStatus, ConstraintService } from './constraints/service';
 import { Batch, type Command, History, RemoveConstraints, RemoveEntities, SetDimensionValue, SetUnderlay, UpdateEntities } from './model/commands';
 import { DocumentModel, cloneEntity } from './model/document';
-import { arrayOffsets, copyItems, makeShapes, moveToLayer, type ReorderMove, reorderItems, rotateItems, deletionTargets } from './model/edit';
+import { BORDER_TEMPLATES, applyTemplate, cloneStroke } from './model/borders';
+import { arrayOffsets, copyItems, detachPoints, makeShapes, moveToLayer, type ReorderMove, reorderItems, rotateItems, deletionTargets } from './model/edit';
 import { EditorApi } from './api/editorApi';
 import { METHODS, dispatch } from './api/rpc';
 import { BridgeClient } from './api/bridge';
@@ -40,7 +42,7 @@ import { drawingSvg } from './io/svg';
 import { UnderlayTool } from './tools/underlay';
 import { EquipmentTool } from './tools/equipment';
 import { Library } from './ui/library';
-import { Selection } from './model/selection';
+import { Selection, UNDERLAY_ID } from './model/selection';
 import { SpatialIndex } from './model/spatial';
 import { SnapEngine, type SnapResult, type SnapSettings } from './snap/snap';
 import { type ConstraintKind, DEFAULT_LAYER_ID, type Id, type StrokeStyle, type Underlay } from './model/types';
@@ -57,6 +59,8 @@ const AUTOSAVE_KEY = 'layout-liner:autosave';
 const PICK_TOLERANCE_PX = 6;
 const SNAP_REACH_PX = 10;
 const WHEEL_ZOOM_STEP = 1.0015;
+/** A finger must move this far (px) before a touch press counts as a drag rather than a tap. */
+const TOUCH_SLOP_PX = 8;
 /** Tools that create geometry on the current layer. */
 const DRAWING_TOOLS = new Set(['point', 'line', 'rect', 'circle', 'dimension', 'equipment']);
 /** Monitoring status → fill colour (docs/VIEWER.md). */
@@ -109,6 +113,8 @@ export class App implements UiHost {
   private frameRequested = false;
   private autosaveTimer: number | undefined;
   private underlayAutosaveWarned = false;
+  /** Ribbon and panel commands by data-action name (filled in bindToolbar). */
+  private actions: Record<string, () => void> = {};
 
   private canvas = $<HTMLCanvasElement>('#canvas');
   private hintEl = $<HTMLSpanElement>('#status-hint');
@@ -173,6 +179,7 @@ export class App implements UiHost {
       // Hidden or locked geometry can't stay selected: it could otherwise still be moved or deleted.
       this.selection.prune((id) => {
         const view = this.currentMode === 'view';
+        if (id === UNDERLAY_ID) return !view && !!this.doc.underlay?.visible && !this.doc.underlay.locked;
         if (this.doc.isVertex(id)) return view ? this.doc.isPointVisible(id) : this.doc.isPointEditable(id);
         const e = this.doc.entities.get(id);
         return !!e && (view ? this.doc.isVisible(e) : this.doc.isEditable(e));
@@ -285,6 +292,10 @@ export class App implements UiHost {
 
   confirm(question: string): boolean {
     return window.confirm(question);
+  }
+
+  runAction(name: string): void {
+    this.actions[name]?.();
   }
 
   /** Runs an API method by name (same as the MCP tools); throws ApiError on invalid input. */
@@ -461,11 +472,41 @@ export class App implements UiHost {
     return { screen, raw, world: snap?.point ?? raw, snap, button: e.button, shift: e.shiftKey, ctrl };
   }
 
+  /**
+   * Canvas input. Mouse and pen go straight to the tool. Touch is handled so phones work (2026-11-15): a finger
+   * press is held back until it moves (then it drags like a mouse) or lifts (a tap = click), so that a second finger
+   * arriving turns the gesture into a two-finger pinch/pan of the view instead of drawing or selecting.
+   */
   private bindCanvas(): void {
     const c = this.canvas;
+    const touches = new Map<number, Vec2>();
+    let pending: { id: number; p: ToolPointer; at: Vec2 } | null = null;
+    let pinch: { dist: number; centre: Vec2 } | null = null;
+    /** After a pinch, the remaining finger is ignored until every finger has lifted. */
+    let gestureEnded = false;
+    const stagePos = (e: PointerEvent): Vec2 => {
+      const r = c.getBoundingClientRect();
+      return { x: e.clientX - r.left, y: e.clientY - r.top };
+    };
+    const twoFingers = () => {
+      const [a, b] = [...touches.values()];
+      return { dist: Math.hypot(a.x - b.x, a.y - b.y), centre: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 } };
+    };
     c.addEventListener('contextmenu', (e) => e.preventDefault());
     c.addEventListener('pointerdown', (e) => {
       c.setPointerCapture(e.pointerId);
+      if (e.pointerType === 'touch') {
+        touches.set(e.pointerId, stagePos(e));
+        if (touches.size === 2) {
+          // A held-back press is dropped; a drag already under way is undone.
+          if (pending) pending = null;
+          else if (!gestureEnded) this.tool.interrupt?.();
+          pinch = twoFingers();
+          gestureEnded = true;
+          return;
+        }
+        if (touches.size > 2 || gestureEnded) return;
+      }
       if (e.button === 1 || (e.button === 0 && this.spaceHeld)) {
         e.preventDefault();
         this.pan = { last: { x: e.clientX, y: e.clientY } };
@@ -478,6 +519,10 @@ export class App implements UiHost {
         this.notify(`현재 레이어(${layer?.name ?? ''})나 그 폴더가 잠겨 있거나 숨겨져 있어 그릴 수 없습니다.`);
         return;
       }
+      if (e.pointerType === 'touch') {
+        pending = { id: e.pointerId, p: this.pointer(e), at: stagePos(e) };
+        return;
+      }
       this.tool.down(this.pointer(e));
     });
     c.addEventListener('pointerleave', () => {
@@ -485,6 +530,24 @@ export class App implements UiHost {
       this.requestRender();
     });
     c.addEventListener('pointermove', (e) => {
+      if (e.pointerType === 'touch' && touches.has(e.pointerId)) {
+        touches.set(e.pointerId, stagePos(e));
+        if (pinch && touches.size >= 2) {
+          const now = twoFingers();
+          this.view.panBy(now.centre.x - pinch.centre.x, now.centre.y - pinch.centre.y);
+          if (pinch.dist > 0 && now.dist > 0) this.view.zoomAt(now.centre, now.dist / pinch.dist);
+          pinch = now;
+          this.requestRender();
+          return;
+        }
+        if (gestureEnded) return;
+        if (pending) {
+          const here = stagePos(e);
+          if (Math.hypot(here.x - pending.at.x, here.y - pending.at.y) < TOUCH_SLOP_PX) return;
+          this.tool.down(pending.p);
+          pending = null;
+        }
+      }
       if (this.pan) {
         this.view.panBy(e.clientX - this.pan.last.x, e.clientY - this.pan.last.y);
         this.pan.last = { x: e.clientX, y: e.clientY };
@@ -497,14 +560,34 @@ export class App implements UiHost {
       this.tool.move(p);
     });
     c.addEventListener('dblclick', (e) => this.tool.doubleClick?.(this.pointer(e)));
-    c.addEventListener('pointerup', (e) => {
+    const lift = (e: PointerEvent) => {
+      if (e.pointerType === 'touch') {
+        touches.delete(e.pointerId);
+        if (touches.size < 2) pinch = null;
+        if (gestureEnded) {
+          if (touches.size === 0) gestureEnded = false;
+          return;
+        }
+        if (pending?.id === e.pointerId) {
+          // A tap: the press and release at the same spot.
+          const p = pending.p;
+          pending = null;
+          if (e.type === 'pointercancel') return;
+          this.tool.down(p);
+          this.tool.up(p);
+          return;
+        }
+      }
       if (this.pan) {
         this.pan = null;
         c.style.cursor = this.spaceHeld ? 'grab' : this.tool.cursor;
         return;
       }
-      this.tool.up(this.pointer(e));
-    });
+      if (e.type === 'pointercancel') this.tool.interrupt?.();
+      else this.tool.up(this.pointer(e));
+    };
+    c.addEventListener('pointerup', lift);
+    c.addEventListener('pointercancel', lift);
     c.addEventListener(
       'wheel',
       (e) => {
@@ -548,7 +631,7 @@ export class App implements UiHost {
       );
     });
     const e = (fn: () => void) => this.edit(fn);
-    const actions: Record<string, () => void> = {
+    const actions: Record<string, () => void> = (this.actions = {
       undo: e(() => this.undo()),
       redo: e(() => this.redo()),
       fit: () => (this.currentView === 'plan' ? this.fitAll() : this.view3d?.fitAll()),
@@ -558,6 +641,7 @@ export class App implements UiHost {
       save: () => this.save(),
       delete: e(() => this.deleteSelection()),
       unconstrain: e(() => this.unconstrain()),
+      detach: e(() => this.detachSelection()),
       rotate: e(() => this.rotateSelection()),
       array: e(() => this.arraySelection()),
       'to-layer': e(() => this.selectionToLayer()),
@@ -591,7 +675,9 @@ export class App implements UiHost {
         if (this.bridge.state === 'closed') this.bridge.connect($<HTMLInputElement>('#bridge-url').value.trim());
         else this.bridge.disconnect();
       }),
-    };
+      'underlay-calibrate': e(() => this.setTool('underlay')),
+      coincide: e(() => void this.applyConstraint('coincident')),
+    });
     document.querySelectorAll<HTMLButtonElement>('[data-constraint]').forEach((b) => {
       b.addEventListener('click', e(() => void this.applyConstraint(b.dataset.constraint as ConstraintKind)));
     });
@@ -627,6 +713,13 @@ export class App implements UiHost {
       if (u && opacityBefore) this.history.record(new SetUnderlay('밑그림 투명도', opacityBefore, { ...u }));
       opacityBefore = null;
       this.doc.changed();
+    });
+    // Locking hides the image from canvas picking, so the unlock switch lives here, not only in the selected image's panel.
+    $<HTMLInputElement>('#underlay-locked').addEventListener('change', (e) => {
+      const u = this.doc.underlay;
+      if (!u) return;
+      const locked = (e.target as HTMLInputElement).checked;
+      this.history.execute(new SetUnderlay(locked ? '밑그림 잠금' : '밑그림 잠금 해제', u, { ...u, locked }));
     });
     $<HTMLInputElement>('#underlay-visible').addEventListener('change', (e) => {
       const u = this.doc.underlay;
@@ -750,37 +843,51 @@ export class App implements UiHost {
 
   private ribbonStyle(): StrokeStyle {
     const width = Number($<HTMLInputElement>('#style-width').value);
-    return {
+    const opacity = Number($<HTMLInputElement>('#style-opacity').value);
+    const style: StrokeStyle = {
       width: width >= 0 ? width : 0,
       align: $<HTMLSelectElement>('#style-align').value as StrokeStyle['align'],
       color: $<HTMLInputElement>('#style-color').value,
+      ...(opacity >= 0 && opacity <= 100 ? { opacity: 1 - opacity / 100 } : {}),
     };
+    const template = BORDER_TEMPLATES.find((t) => t.id === $<HTMLSelectElement>('#style-template').value);
+    return template ? applyTemplate(style, template) : style;
   }
 
   private newLineStyle(): StrokeStyle | undefined {
     return $<HTMLInputElement>('#style-new').checked ? this.ribbonStyle() : undefined;
   }
 
-  /** Applies (or clears) a line style on selected lines and on the edges of selected shapes. */
+  /** Applies (or clears) a border on selected lines and circles and on the edges of selected shapes. */
   private applyStyle(style: StrokeStyle | undefined): void {
     const ids = new Set<Id>();
     for (const id of this.selection.values()) {
       const e = this.doc.entities.get(id);
-      if (e?.kind === 'line') ids.add(id);
+      if (e?.kind === 'line' || e?.kind === 'circle') ids.add(id);
       if (e?.kind === 'shape') for (const edge of e.edges) ids.add(edge);
     }
     const before = [...ids].flatMap((id) => {
       const e = this.doc.entities.get(id);
-      return e?.kind === 'line' ? [e] : [];
+      return e?.kind === 'line' || e?.kind === 'circle' ? [e] : [];
     });
-    if (before.length === 0) return this.notify('선 양식을 적용할 선이나 도형을 선택하십시오.');
+    if (before.length === 0) return this.notify('테두리를 적용할 선·원·도형을 선택하십시오.');
     const after = before.map((l) => {
       const c = cloneEntity(l);
-      if (style) c.stroke = { ...style };
+      if (style) c.stroke = cloneStroke(style);
       else delete c.stroke;
       return c;
     });
-    this.history.execute(new UpdateEntities(style ? '선 양식' : '선 양식 지우기', before, after));
+    this.history.execute(new UpdateEntities(style ? '테두리' : '테두리 지우기', before, after));
+  }
+
+  /** "분리": separates the selected objects or the objects at the selected points (see detachPoints). */
+  private detachSelection(): void {
+    if (this.selection.size === 0) return this.notify('분리할 점이나 객체를 선택하십시오.');
+    this.tool.interrupt?.();
+    const cmd = detachPoints(this.doc, this.selection.values());
+    if (!cmd) return this.notify('선택한 점이나 객체는 다른 객체와 공유하거나 일치 구속된 점이 없습니다.');
+    this.history.execute(cmd);
+    this.notify('점을 분리했습니다. 이제 각 객체를 따로 움직일 수 있습니다.');
   }
 
   private makeShapeFromSelection(): void {
@@ -822,10 +929,14 @@ export class App implements UiHost {
 
   private deleteSelection(): void {
     const ids = deletionTargets(this.doc, this.selection.values());
-    if (ids.length === 0) return this.notify('삭제할 객체를 선택하십시오.');
+    const underlay = this.selection.has(UNDERLAY_ID) ? this.doc.underlay : null;
+    if (ids.length === 0 && !underlay) return this.notify('삭제할 객체를 선택하십시오.');
     this.tool.interrupt?.();
     this.selection.clear();
-    this.history.execute(new RemoveEntities(ids));
+    const steps: Command[] = [];
+    if (ids.length > 0) steps.push(new RemoveEntities(ids));
+    if (underlay) steps.push(new SetUnderlay('밑그림 삭제', underlay, null));
+    this.history.execute(steps.length === 1 ? steps[0] : new Batch('삭제', steps));
   }
 
   // ---------- viewer inspector and AI bridge ----------
@@ -932,6 +1043,7 @@ export class App implements UiHost {
     const opacity = $<HTMLInputElement>('#underlay-opacity');
     if (document.activeElement !== opacity) opacity.value = String(Math.round(u.opacity * 100));
     $<HTMLInputElement>('#underlay-visible').checked = u.visible;
+    $<HTMLInputElement>('#underlay-locked').checked = !!u.locked;
     $<HTMLSpanElement>('#underlay-controls .name').textContent = `${formatLength(u.width, this.displayUnit)} × ${formatLength(u.height, this.displayUnit)}`;
   }
 
@@ -993,15 +1105,26 @@ export class App implements UiHost {
     this.download(new Blob([writeDxf(this.doc)], { type: 'application/dxf' }), `layout-${new Date().toISOString().slice(0, 10)}.dxf`);
   }
 
+  /** Print/SVG scale N of 1:N from the File tab, or undefined for "fit to page". */
+  private printScale(): number | undefined {
+    const n = Number($<HTMLSelectElement>('#print-scale').value);
+    return n > 0 ? n : undefined;
+  }
+
   private exportSvg(): void {
-    const svg = drawingSvg(this.doc);
+    const svg = drawingSvg(this.doc, { scale: this.printScale() });
     if (!svg) return this.notify('내보낼 객체가 없습니다.');
     this.download(new Blob([svg], { type: 'image/svg+xml' }), `layout-${new Date().toISOString().slice(0, 10)}.svg`);
   }
 
-  /** Prints the whole drawing fitted to the page, through a hidden frame; the browser's dialog can save it as PDF. */
+  /**
+   * Prints the whole drawing through a hidden frame (the browser's dialog can save it as PDF): fitted to the page,
+   * or at the scale chosen in the File tab (1:100 …), in which case a large drawing runs over several pages.
+   * Either way the print carries a graphic scale bar.
+   */
   private async print(): Promise<void> {
-    const svg = drawingSvg(this.doc);
+    const scale = this.printScale();
+    const svg = drawingSvg(this.doc, { scale });
     if (!svg) return this.notify('인쇄할 객체가 없습니다.');
     const frame = document.createElement('iframe');
     frame.style.cssText = 'position:fixed;width:0;height:0;border:0;visibility:hidden';
@@ -1009,7 +1132,7 @@ export class App implements UiHost {
     const page = frame.contentDocument!;
     page.open();
     page.write(
-      `<!doctype html><html><head><meta charset="utf-8"><title>Layout</title><style>@page{size:landscape;margin:10mm}html,body{margin:0;height:100%}svg{width:100%;height:100%}</style></head><body>${svg}</body></html>`,
+      `<!doctype html><html><head><meta charset="utf-8"><title>Layout</title><style>@page{size:landscape;margin:10mm}html,body{margin:0;height:100%}${scale ? '' : 'svg{width:100%;height:100%}'}</style></head><body>${svg}</body></html>`,
     );
     page.close();
     // Print only once the frame has loaded and an underlay image has decoded, or it may be left out.
@@ -1071,6 +1194,15 @@ export class App implements UiHost {
           return this.notify('같은 종류(선끼리 또는 원끼리)를 두 개 이상 선택하십시오.');
         }
         refs = group.slice(1).map((id) => [group[0], id]);
+        break;
+      }
+      case 'coincident': {
+        // Stored points only: a line's midpoint is derived from its ends. A point object stands for its point.
+        const picked = this.selection.values().flatMap((id) => (this.doc.points.has(id) ? [id] : []));
+        const objects = selected.filter((e) => e.kind === 'point').map((e) => (e.kind === 'point' ? e.at : ''));
+        const points = [...new Set([...picked, ...objects])];
+        if (points.length < 2) return this.notify('일치시킬 점을 두 개 이상 선택하십시오(Shift+클릭). 선의 중간점은 쓸 수 없습니다.');
+        refs = [points];
         break;
       }
       case 'fixed': {

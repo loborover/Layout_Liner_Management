@@ -9,6 +9,7 @@ import { dimensionGeometry } from '../geom/dimension';
 import { equipmentCorners } from '../geom/equipment';
 import type { Box, Vec2 } from '../geom/vec';
 import { polygonArea } from '../geom/polygon';
+import { cloneStroke } from './borders';
 import { DEFAULT_STRUCTURE_TYPES } from './presets';
 import {
   type Constraint,
@@ -158,6 +159,20 @@ export class DocumentModel {
     for (const [id, e] of next) this.entities.set(id, e);
   }
 
+  /**
+   * Paint order of entities (higher on top): the drawing order, except that a shape's face goes just under its own
+   * edge lines, so an opaque face never hides its border bands. Used by the canvas and SVG export.
+   */
+  paintOrder(): Map<Id, number> {
+    const order = new Map([...this.entities.keys()].map((id, i) => [id, i]));
+    for (const e of this.entities.values()) {
+      if (e.kind !== 'shape') continue;
+      const first = Math.min(order.get(e.id) ?? 0, ...e.edges.map((id) => order.get(id) ?? Infinity));
+      order.set(e.id, first - 0.5);
+    }
+    return order;
+  }
+
   /** Shapes that use a line as one of their edges. */
   shapesUsing(lineIds: Iterable<Id>): ShapeEntity[] {
     const set = new Set(lineIds);
@@ -201,6 +216,25 @@ export class DocumentModel {
   constraintsOn(ids: Iterable<Id>): Constraint[] {
     const set = new Set(ids);
     return [...this.constraints.values()].filter((c) => c.refs.some((r) => set.has(r)));
+  }
+
+  /**
+   * Points held at the same place as `id` by coincident constraints, directly or through other coincident points
+   * (not including `id` itself).
+   */
+  coincidentWith(id: Id): Id[] {
+    const seen = new Set<Id>([id]);
+    const queue = [id];
+    const links = [...this.constraints.values()].filter((c) => c.kind === 'coincident');
+    while (queue.length > 0) {
+      const cur = queue.pop()!;
+      for (const c of links) {
+        if (!c.refs.includes(cur)) continue;
+        for (const r of c.refs) if (!seen.has(r)) (seen.add(r), queue.push(r));
+      }
+    }
+    seen.delete(id);
+    return [...seen];
   }
 
   translatePoints(ids: Iterable<Id>, d: Vec2): void {
@@ -347,7 +381,7 @@ export class DocumentModel {
   toData(): DocumentData {
     return {
       format: 'layout-liner',
-      version: 3,
+      version: 4,
       units: 'mm',
       points: [...this.points.values()].map((p) => ({ ...p })),
       entities: [...this.entities.values()].map(cloneEntity),
@@ -388,7 +422,8 @@ export function cloneEntity<T extends Entity>(e: T): T {
   if (c.kind === 'shape') {
     c.points = [...c.points];
     c.edges = [...c.edges];
-  } else if (c.kind === 'line' && c.stroke) c.stroke = { ...c.stroke };
+    if (c.fillImage) c.fillImage = { ...c.fillImage };
+  } else if ((c.kind === 'line' || c.kind === 'circle') && c.stroke) c.stroke = cloneStroke(c.stroke);
   else if (c.kind === 'equipment' && c.props) c.props = { ...c.props };
   return c;
 }

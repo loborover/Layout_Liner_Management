@@ -5,10 +5,10 @@
  */
 import { offsetThrough } from '../geom/dimension';
 import { type Vec2, angleDeg, dist } from '../geom/vec';
-import { AddItems, Batch } from '../model/commands';
+import { AddConstraints, AddItems, Batch, type Command } from '../model/commands';
 import { linePath } from '../model/edit';
 import { newId } from '../model/ids';
-import { type Entity, type Id, type LineEntity, type Point, type ShapeEntity } from '../model/types';
+import { type Constraint, type Entity, type Id, type LineEntity, type Point, type ShapeEntity } from '../model/types';
 import { formatAngle, formatLength } from '../view/format';
 import { COLORS, type Painter } from '../view/renderer';
 import type { SnapQuery } from '../snap/snap';
@@ -23,6 +23,17 @@ export function existingPoint(ctx: ToolContext, p: ToolPointer): Point | null {
   const id = p.snap?.pointId;
   return id && ctx.doc.points.has(id) ? ctx.doc.point(id) : null;
 }
+/** Coincident constraint holding a new object's point on another object's point, so the two stay separate objects. */
+function coincident(a: Id, b: Id): Constraint {
+  return { id: newId('k'), kind: 'coincident', refs: [a, b] };
+}
+
+/** AddItems plus the coincident constraints that tie the new points to existing ones, as one step. */
+function addWithLinks(points: Point[], entities: Entity[], links: Constraint[]): Command {
+  const add = new AddItems(points, entities);
+  return links.length > 0 ? new Batch('추가', [add, new AddConstraints(links)]) : add;
+}
+
 function line(ctx: ToolContext, p1: Id, p2: Id): LineEntity {
   const stroke = ctx.lineStyle?.();
   return { id: newId('e'), kind: 'line', p1, p2, layer: ctx.layer(), ...(stroke ? { stroke: { ...stroke } } : {}) };
@@ -36,18 +47,23 @@ function shapeOf(ctx: ToolContext, points: Id[], lines: Id[]): ShapeEntity {
 
 /**
  * Chained line tool: each click adds a segment joined to the previous one. Closing the chain on its first point
- * also creates a shape (face) over the loop, in the same undo step. With Ctrl held, the cursor snaps only to
- * existing points of visible objects, and a segment that ends on an existing point which closes a loop with
- * existing lines (not only the chain's own start) also makes that loop a shape.
+ * also creates a shape (face) over the loop, in the same undo step. Segments of one chain share their points.
+ * Starting or ending on another object's point gives the chain its own point there, held by a coincident
+ * constraint, so the objects stay separate and can be pulled apart later (구속 해제 or 점 분리).
+ * With Ctrl held, the cursor snaps only to existing points of visible objects and joins them by sharing the point,
+ * and a segment that ends on an existing point which closes a loop with existing lines (not only the chain's own
+ * start) also makes that loop a shape.
  */
 export class LineTool implements Tool {
   readonly id = 'line';
   readonly hint =
-    '클릭: 점 추가(연속 선) · 기존 끝점 클릭: 연결 · 시작점 클릭: 닫기 · Ctrl: 기존 점에만 스냅, 닫히면 도형 · Shift: 수평/수직 · 우클릭/Esc: 종료';
+    '클릭: 점 추가(연속 선) · 다른 객체의 점 클릭: 일치 구속으로 연결(분리 가능) · 시작점 클릭: 닫기 · Ctrl: 기존 점을 공유해 잇고, 닫히면 도형 · Shift: 수평/수직 · 우클릭/Esc: 종료';
   readonly cursor = 'crosshair';
   /** Start of the current segment. Not yet in the document when `pending` is true. */
   private start: Point | null = null;
   private pending = false;
+  /** Existing point the pending start sits on (coincident constraint added with the first segment). */
+  private startLink: Id | null = null;
   private first: Point | null = null;
   /** Points and lines of the current chain, in drawing order, for the shape made when it closes. */
   private chainPoints: Id[] = [];
@@ -65,24 +81,34 @@ export class LineTool implements Tool {
     const { doc } = this.ctx;
     // The chain's last point can disappear through undo; start a fresh chain then.
     if (this.start && !this.pending && !doc.points.has(this.start.id)) this.reset();
-    // Snapping onto an existing point connects to it instead of creating a coincident one.
-    const existing = existingPoint(this.ctx, p);
+    const snapped = existingPoint(this.ctx, p);
     if (!this.start) {
-      this.start = existing ?? point(p.world);
+      // Ctrl joins by sharing the point; otherwise the chain gets its own point, held there by a constraint.
+      const share = snapped && p.ctrl;
+      this.start = share ? snapped : point(snapped ?? p.world);
+      this.startLink = snapped && !share ? snapped.id : null;
       this.first = this.start;
-      this.pending = !existing;
+      this.pending = !share;
       this.chainPoints = [this.start.id];
       this.chainLines = [];
       return;
     }
-    const end = existing ?? point(p.world);
+    // Back on the chain's own first point (or on the object point it started from): close the outline.
+    const closing = !!snapped && !!this.first && this.chainLines.length >= 2 && dist(snapped, this.first) < 1e-9 && doc.points.has(this.first.id);
+    const own = snapped && this.chainPoints.includes(snapped.id);
+    const existing = closing ? this.first : snapped && (own || p.ctrl) ? snapped : null;
+    const end = existing ?? point(snapped ?? p.world);
     if (end.id === this.start.id || dist(end, this.start) < 1e-9) return;
     const newPoints = [...(this.pending ? [this.start] : []), ...(existing ? [] : [end])];
+    const links = [
+      ...(this.pending && this.startLink ? [coincident(this.start.id, this.startLink)] : []),
+      ...(snapped && !existing ? [coincident(end.id, snapped.id)] : []),
+    ];
     const seg = line(this.ctx, this.start.id, end.id);
     this.chainLines.push(seg.id);
     if (existing && existing.id === this.first?.id) {
       // Outline closed on its first point: the loop becomes a shape.
-      const add = new AddItems(newPoints, [seg]);
+      const add = addWithLinks(newPoints, [seg], links);
       // An undo during the chain may have removed earlier segments; then there is no loop to fill.
       const closed = this.chainLines.length >= 3 && this.chainLines.slice(0, -1).every((id) => doc.entities.has(id));
       this.ctx.history.execute(
@@ -90,7 +116,7 @@ export class LineTool implements Tool {
       );
       this.reset();
     } else {
-      const add = new AddItems(newPoints, [seg]);
+      const add = addWithLinks(newPoints, [seg], links);
       // Ctrl onto an existing point: if that closes a loop through existing lines, fill it as a shape.
       const loop = p.ctrl && existing && !this.pending ? this.loopThrough(this.start.id, existing.id) : null;
       if (loop) {
@@ -105,6 +131,7 @@ export class LineTool implements Tool {
       this.chainPoints.push(end.id);
       this.start = doc.point(end.id);
       this.pending = false;
+      this.startLink = null;
     }
     this.ctx.requestRender();
   }
@@ -152,6 +179,7 @@ export class LineTool implements Tool {
 
   private reset(): void {
     this.start = null;
+    this.startLink = null;
     this.first = null;
     this.pending = false;
     this.chainPoints = [];
@@ -165,6 +193,8 @@ export class RectTool implements Tool {
   readonly hint = '클릭: 첫 모서리 → 클릭: 반대 모서리 · Esc: 취소';
   readonly cursor = 'crosshair';
   private corner: Vec2 | null = null;
+  /** Existing point the first corner was snapped onto (it gets a coincident constraint). */
+  private cornerLink: Id | null = null;
   private cursorPos: Vec2 | null = null;
 
   constructor(private readonly ctx: ToolContext) {}
@@ -181,6 +211,7 @@ export class RectTool implements Tool {
     if (p.button !== 0) return;
     if (!this.corner) {
       this.corner = p.world;
+      this.cornerLink = existingPoint(this.ctx, p)?.id ?? null;
       return;
     }
     const a = this.corner;
@@ -189,8 +220,15 @@ export class RectTool implements Tool {
     const pts = [point(a), point({ x: b.x, y: a.y }), point(b), point({ x: a.x, y: b.y })];
     const lines = pts.map((pt, i) => line(this.ctx, pt.id, pts[(i + 1) % 4].id));
     const shape = shapeOf(this.ctx, pts.map((pt) => pt.id), lines.map((l) => l.id));
-    this.ctx.history.execute(new AddItems(pts, [...lines, shape]));
+    // Corners snapped onto other objects' points stay on them through coincident constraints (separable).
+    const endLink = existingPoint(this.ctx, p)?.id;
+    const links = [
+      ...(this.cornerLink && this.ctx.doc.points.has(this.cornerLink) ? [coincident(pts[0].id, this.cornerLink)] : []),
+      ...(endLink ? [coincident(pts[2].id, endLink)] : []),
+    ];
+    this.ctx.history.execute(addWithLinks(pts, [...lines, shape], links));
     this.corner = null;
+    this.cornerLink = null;
   }
 
   move(p: ToolPointer): void {
@@ -226,11 +264,11 @@ export class RectTool implements Tool {
 /** Circle from centre and a point on the circumference. */
 /**
  * Point object tool: each click places a standalone point (a reference or survey point, a sensor location). Clicking
- * an existing point makes a point object on it instead of a duplicate point.
+ * an existing point puts the new point on it with a coincident constraint (Ctrl: shares that point instead).
  */
 export class PointTool implements Tool {
   readonly id = 'point';
-  readonly hint = '클릭: 점 놓기(기존 점 위면 그 점을 공유) · 속성 패널에서 X, Y, Z 입력 · Esc: 끝내기';
+  readonly hint = '클릭: 점 놓기(기존 점 위면 일치 구속, Ctrl: 그 점을 공유) · 속성 패널에서 X, Y, Z 입력 · Esc: 끝내기';
   readonly cursor = 'crosshair';
   private cursorPos: Vec2 | null = null;
 
@@ -243,11 +281,13 @@ export class PointTool implements Tool {
   down(p: ToolPointer): void {
     if (p.button !== 0) return;
     const { doc } = this.ctx;
-    const shared = existingPoint(this.ctx, p);
-    if (shared && doc.pointUsers(shared.id).some((e) => e.kind === 'point')) return this.ctx.notify('이 위치에는 이미 점 객체가 있습니다.');
-    const at = shared ?? point(p.world);
+    const snapped = existingPoint(this.ctx, p);
+    const shared = snapped && p.ctrl ? snapped : null;
+    const taken = snapped && [snapped.id, ...doc.coincidentWith(snapped.id)].some((id) => doc.pointUsers(id).some((e) => e.kind === 'point'));
+    if (taken) return this.ctx.notify('이 위치에는 이미 점 객체가 있습니다.');
+    const at = shared ?? point(snapped ?? p.world);
     const e: Entity = { id: newId('e'), kind: 'point', at: at.id, layer: this.ctx.layer() };
-    this.ctx.history.execute(new AddItems(shared ? [] : [at], [e]));
+    this.ctx.history.execute(addWithLinks(shared ? [] : [at], [e], snapped && !shared ? [coincident(at.id, snapped.id)] : []));
   }
 
   move(p: ToolPointer): void {
@@ -271,6 +311,8 @@ export class CircleTool implements Tool {
   readonly hint = '클릭: 중심 → 클릭: 반지름 · Esc: 취소';
   readonly cursor = 'crosshair';
   private centre: Vec2 | null = null;
+  private centreLink: Id | null = null;
+  private centreShared: Id | null = null;
   private cursorPos: Vec2 | null = null;
 
   constructor(private readonly ctx: ToolContext) {}
@@ -287,15 +329,27 @@ export class CircleTool implements Tool {
     if (p.button !== 0) return;
     if (!this.centre) {
       this.centre = p.world;
+      // Like lines: a centre snapped to another object's point gets its own point held there (Ctrl shares it).
+      const snapped = existingPoint(this.ctx, p);
+      this.centreShared = snapped && p.ctrl ? snapped.id : null;
+      this.centreLink = snapped && !p.ctrl ? snapped.id : null;
       return;
     }
     const r = dist(this.centre, p.world);
     if (r < 1e-9) return;
-    const c = point(this.centre);
-    this.ctx.history.execute(
-      new AddItems([c], [{ id: newId('e'), kind: 'circle', center: c.id, radius: r, layer: this.ctx.layer() }]),
-    );
+    const { doc } = this.ctx;
+    const shared = this.centreShared && doc.points.has(this.centreShared) ? this.centreShared : null;
+    const link = this.centreLink && doc.points.has(this.centreLink) ? this.centreLink : null;
+    const c = shared ? null : point(this.centre);
+    const circle: Entity = { id: newId('e'), kind: 'circle', center: shared ?? c!.id, radius: r, layer: this.ctx.layer() };
+    this.ctx.history.execute(addWithLinks(c ? [c] : [], [circle], c && link ? [coincident(c.id, link)] : []));
+    this.reset();
+  }
+
+  private reset(): void {
     this.centre = null;
+    this.centreLink = null;
+    this.centreShared = null;
   }
 
   move(p: ToolPointer): void {
@@ -307,13 +361,13 @@ export class CircleTool implements Tool {
 
   cancel(): boolean {
     const active = this.centre !== null;
-    this.centre = null;
+    this.reset();
     this.ctx.requestRender();
     return active;
   }
 
   deactivate(): void {
-    this.centre = null;
+    this.reset();
   }
 
   overlay(p: Painter): void {

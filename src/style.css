@@ -627,6 +627,23 @@ button.wide {
   font-weight: 600;
 }
 
+/* Border pattern editor: one stripe per row (colour, relative size, width in mm), and the live swatch. */
+.props .stripe input[type='number'] {
+  width: 64px;
+}
+
+.props .stripe .muted {
+  white-space: nowrap;
+}
+
+.props canvas.pattern-preview {
+  width: 100%;
+  max-width: 220px;
+  height: 36px;
+  border-radius: 4px;
+  display: block;
+}
+
 /* X, Y, Z inputs of one point on a single row. */
 .props .xyz {
   display: grid;
@@ -724,7 +741,74 @@ button.wide {
   font-weight: 600;
 }
 
+/*
+ * Responsive rules (the user's request, 2026-11-15: usable on phones and very narrow windows).
+ * - Below 1100 px the side panel narrows so the canvas keeps most of the width.
+ * - Below 720 px (phones, split screens) the quick bar and the ribbon become single rows that scroll sideways
+ *   instead of wrapping, the side panel becomes a bottom sheet under the canvas (rail on top, collapsed at
+ *   first visit, see src/ui/sidebar.ts), and the status bar keeps only the mode and messages.
+ * - Coarse pointers (touch) get larger hit targets. Two-finger pinch and drag zoom and pan the canvas (src/app.ts).
+ */
+@media (max-width: 1100px) {
+  .sidebar .sidepanel {
+    width: clamp(220px, 30vw, 300px);
+  }
+}
+
 @media (max-width: 720px) {
+  .quickbar,
+  .ribbon .tabs {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .quickbar::-webkit-scrollbar,
+  .ribbon .tabs::-webkit-scrollbar {
+    display: none;
+  }
+
+  .quickbar {
+    gap: 6px;
+    padding: 4px 6px;
+  }
+
+  .quickbar > * {
+    flex: none;
+  }
+
+  .quickbar .group + .group {
+    padding-left: 6px;
+  }
+
+  .quickbar .brand,
+  .quickbar .spacer {
+    display: none;
+  }
+
+  .ribbon .tabs [role='tab'] {
+    padding: 5px 10px;
+    flex: none;
+  }
+
+  .ribbon .tabs .ribbon-toggle {
+    position: sticky;
+    right: 0;
+    background: var(--paper);
+  }
+
+  .ribbon .panel-row {
+    padding: 4px 4px 2px;
+  }
+
+  .rgroup {
+    padding: 0 6px;
+  }
+
+  .rgroup .glabel {
+    display: none;
+  }
+
   .workspace {
     flex-direction: column;
   }
@@ -737,8 +821,12 @@ button.wide {
 
   .sidebar .sidepanel {
     width: auto !important;
-    max-height: 38vh;
+    max-height: 42vh;
     border-right: none;
+  }
+
+  .sidebar[data-state='wide'] .sidepanel {
+    max-height: 65vh;
   }
 
   .rail {
@@ -748,8 +836,45 @@ button.wide {
     padding: 2px 6px;
   }
 
-  .quickbar .brand {
+  .statusbar {
+    gap: 8px;
+  }
+
+  #status-hint,
+  #status-info,
+  #status-pos,
+  #app-version {
     display: none;
+  }
+
+  #status-msg {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .inspector {
+    max-width: calc(100% - 16px);
+  }
+}
+
+@media (pointer: coarse) {
+  button,
+  a.button {
+    min-height: 34px;
+  }
+
+  .rail button {
+    width: 40px;
+    height: 40px;
+  }
+
+  input[type='color'] {
+    width: 32px;
+    height: 30px;
+  }
+
+  .tree .node {
+    min-height: 32px;
   }
 }
 

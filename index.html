@@ -103,13 +103,23 @@
                 <option value="outside">외측</option>
               </select>
             </label>
-            <label title="띠 두께 (mm), 0이면 가는 선">두께 <input id="style-width" type="number" min="0" step="10" value="200" /></label>
-            <label title="선 색">색 <input id="style-color" type="color" value="#4a4a4a" /></label>
-            <button data-action="style-apply" title="선택한 선과 도형의 변에 양식을 적용합니다">적용</button>
-            <button data-action="style-clear" title="선택한 선의 양식을 지웁니다">지우기</button>
-            <label title="새로 그리는 선에도 이 양식을 씁니다"><input id="style-new" type="checkbox" /> 새 선에 적용</label>
+            <label title="테두리 두께 Weight (mm), 0이면 가는 선">두께 <input id="style-width" type="number" min="0" step="10" value="200" /></label>
+            <label title="테두리 색 Color">색 <input id="style-color" type="color" value="#4a4a4a" /></label>
+            <label title="테두리 투명도 (%), 0이면 불투명">투명도 <input id="style-opacity" type="number" min="0" max="100" step="5" value="15" /></label>
+            <label title="패턴 템플릿: 고르면 색과 줄무늬가 템플릿 값으로 적용됩니다 (패턴 세부 편집은 속성 패널)">
+              템플릿
+              <select id="style-template">
+                <option value="">직접 지정</option>
+                <option value="zone">구역색 (노랑)</option>
+                <option value="equipment-zone">설비구역색 (노랑·검정 45°)</option>
+                <option value="safety-zone">안전구역색 (흰색·빨강 45°)</option>
+              </select>
+            </label>
+            <button data-action="style-apply" title="선택한 선·원·도형의 변에 테두리를 적용합니다">적용</button>
+            <button data-action="style-clear" title="선택한 객체의 테두리를 지웁니다">지우기</button>
+            <label title="새로 그리는 선에도 이 테두리를 씁니다"><input id="style-new" type="checkbox" /> 새 선에 적용</label>
           </div>
-          <span class="glabel">선 양식</span>
+          <span class="glabel">테두리 (Border)</span>
         </div>
       </div>
 
@@ -150,12 +160,14 @@
             <button data-constraint="perpendicular" title="직각 구속: 선 두 개">직각</button>
             <button data-constraint="equal" title="같은 길이/반지름: 선 또는 원 두 개 이상">동일</button>
             <button data-constraint="fixed" title="위치 고정: 선택한 객체의 점">고정</button>
+            <button data-constraint="coincident" title="일치 구속: 선택한 점 두 개 이상을 한 위치에 붙입니다 (객체는 따로 유지)">일치</button>
           </div>
           <span class="glabel">구속 추가</span>
         </div>
         <div class="rgroup">
           <div class="items">
-            <button data-action="unconstrain" title="선택한 객체의 구속 해제">해제</button>
+            <button data-action="unconstrain" title="선택한 객체의 구속 해제 (일치 구속도 풀립니다)">해제</button>
+            <button data-action="detach" title="점 분리: 선택한 객체(또는 점)를 다른 객체와 공유하는 점·일치 구속에서 떼어 따로 움직이게 합니다">분리</button>
           </div>
           <span class="glabel">해제</span>
         </div>
@@ -223,6 +235,17 @@
           <div class="items">
             <button data-action="export-dxf" title="DXF(R12)로 내보내기: AutoCAD 등에서 열 수 있습니다">DXF</button>
             <button data-action="export-svg" title="SVG 이미지로 내보내기">SVG</button>
+            <label title="인쇄·SVG 축척: 맞춤은 용지에 맞게 줄이고(축척 막대로 읽음), 1:N은 그 축척으로 출력합니다">
+              축척
+              <select id="print-scale">
+                <option value="">용지에 맞춤</option>
+                <option value="50">1:50</option>
+                <option value="100">1:100</option>
+                <option value="200">1:200</option>
+                <option value="500">1:500</option>
+                <option value="1000">1:1000</option>
+              </select>
+            </label>
             <button data-action="print" title="인쇄 (PDF로 저장 가능)">인쇄</button>
             <button data-action="export-equipment" title="설비 목록 CSV">설비 CSV</button>
           </div>
@@ -293,6 +316,7 @@
               <label class="row">투명도 <input id="underlay-opacity" type="range" min="5" max="100" step="5" /></label>
               <div class="row">
                 <label class="toggle"><input id="underlay-visible" type="checkbox" /> 표시</label>
+                <label class="toggle edit-only" title="잠근 밑그림은 캔버스에서 선택·이동되지 않습니다"><input id="underlay-locked" type="checkbox" /> 잠금</label>
                 <span class="name"></span>
                 <button data-action="remove-underlay" class="edit-only" title="밑그림 삭제">삭제</button>
               </div>

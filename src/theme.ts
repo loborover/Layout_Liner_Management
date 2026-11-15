@@ -105,6 +105,18 @@ export const LIGHT = {
   sun: '#FFFFFF',
 } as const;
 
+/**
+ * Floor-marking colours of the border templates (src/model/borders.ts): yellow zone lines, yellow/black equipment
+ * zones and white/red safety zones, as the user asked on 2026-11-15. They are deliberately strong, unlike the
+ * Ink wash palette, because they stand for paint on a real floor.
+ */
+export const MARKING = {
+  yellow: '#FFCC00',
+  black: '#1A1A1A',
+  white: '#FFFFFF',
+  red: '#D32F2F',
+} as const;
+
 /** Default face fill of a shape and band colour of a styled line when the layer gives none. */
 export const SHAPE_FILL = '#A9B4BF';
 

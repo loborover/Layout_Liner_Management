@@ -9,22 +9,22 @@
 - **Z(높이)는 위쪽**이며 점의 `z`는 그 점이 속한 층의 바닥(`elevation`)에서 잰 높이입니다. 없으면 0입니다.
 - id는 문자열이며 파일 안에서 유일해야 합니다.
 
-## 최상위 구조 (version 3)
+## 최상위 구조 (version 4)
 
 ```jsonc
 {
   "format": "layout-liner",
-  "version": 3,
+  "version": 4,
   "units": "mm",
   "points": [ { "id": "p1", "x": 0, "y": 0, "z": 0 } ],
   "entities": [ /* 아래 객체들, 배열 순서 = 그리기 순서 = 트리 순서 */ ],
-  "constraints": [ { "id": "c1", "kind": "horizontal", "refs": ["l1"] } ],
+  "constraints": [ { "id": "c1", "kind": "horizontal", "refs": ["l1"] }, { "id": "c2", "kind": "coincident", "refs": ["p1", "p9"] } ],
   "floors":  [ { "id": "floor-1", "name": "1층", "elevation": 0, "height": 4000 } ],
   "folders": [ { "id": "f1", "name": "구조", "floor": "floor-1", "visible": true, "locked": false } ],
   "layers":  [ { "id": "layer-0", "name": "0", "color": "#1e293b", "visible": true, "locked": false, "floor": "floor-1", "folder": "f1" } ],
   "activeFloor": "floor-1",
   "equipmentTypes": [ { "id": "st-stair", "name": "계단", "width": 1200, "depth": 4200, "prefix": "ST", "category": "stair" } ],
-  "underlay": { "src": "data:image/png;base64,…", "x": 0, "y": 0, "width": 30000, "height": 20000, "opacity": 0.5, "visible": true }
+  "underlay": { "src": "data:image/png;base64,…", "x": 0, "y": 0, "width": 30000, "height": 20000, "opacity": 0.5, "visible": true, "locked": false }
 }
 ```
 
@@ -44,22 +44,38 @@
 
 | kind | 필드 | 설명 |
 | --- | --- | --- |
-| `point` | `at` | 독립 점 객체(기준점, 측량점, 센서 위치 등). 이 점에서 그린 선은 점을 공유합니다. |
+| `point` | `at` | 독립 점 객체(기준점, 측량점, 센서 위치 등). |
 | `line` | `p1`, `p2`, `stroke?` | 시작점·중간점·끝점과 선의 묶음. 시작점과 끝점은 저장된 점이고, 중간점은 둘의 평균으로 계산됩니다. 편집기와 API에서는 중간점도 `<선 id>~mid` id의 점으로 선택·이동할 수 있으며(선 전체가 이동), 파일에는 저장하지 않습니다. |
-| `circle` | `center`, `radius` | 원. |
+| `circle` | `center`, `radius`, `stroke?` | 원. `stroke`는 원의 테두리 띠입니다(안쪽 = 중심 쪽). |
 | `dimension` | `p1`, `p2`, `offset`, `value?` | 정렬 치수. `value`가 있으면 구동 치수(형상을 그 길이로 고정)입니다. |
 | `equipment` | `type`, `at`, `rotation`, `tag`, `props?` | 설비 또는 구조 프리셋 배치. 크기는 종류(`equipmentTypes`)에서 옵니다. 회전 0°에서 너비는 X, 앞면은 -Y. |
-| `shape` | `points`, `edges`, `fill?` | 닫힌 도형. `points[i]` → `points[i+1]`을 잇는 선이 `edges[i]`이고 마지막 점은 `points[0]`으로 돌아갑니다. |
+| `shape` | `points`, `edges`, `fill?`, `fillOpacity?`, `fillImage?` | 닫힌 도형(면). `points[i]` → `points[i+1]`을 잇는 선이 `edges[i]`이고 마지막 점은 `points[0]`으로 돌아갑니다. 도형의 테두리는 변 선들의 `stroke`입니다. |
 
-### 선 양식 `stroke`
+### 테두리(Border, 선 양식) `stroke` (version 4에서 `opacity`, `pattern` 추가)
 
 ```json
-{ "width": 200, "align": "inside", "color": "#64748b" }
+{ "width": 300, "align": "inside", "color": "#FFCC00", "opacity": 1,
+  "pattern": { "stripes": [ { "color": "#FFCC00", "size": 1 }, { "color": "#1A1A1A", "size": 1 } ], "unit": 50, "angle": 45 } }
 ```
 
-- `width`: 띠 두께 mm. 0이면 `color`로 그린 가는 선입니다.
-- `align`: `center`(기준선 중앙), `inside`(도형 안쪽, 도형이 없으면 p1→p2 진행 방향 왼쪽), `outside`(반대쪽).
-- `color`: 없으면 레이어 색입니다.
+- `width`(Weight): 띠 두께 mm. 0이면 `color`로 그린 가는 선입니다.
+- `align`: `center`(기준선 중앙), `inside`(도형 안쪽, 도형이 없으면 p1→p2 진행 방향 왼쪽, 원은 중심 쪽), `outside`(반대쪽).
+- `color`(Color): 없으면 레이어 색입니다. 패턴이 있으면 띠의 외곽선과 가는 선의 색입니다.
+- `opacity`: 0~1 불투명도(편집기에서는 투명도 % = 100 − 불투명도×100). 없으면 띠 0.85, 가는 선 1입니다.
+- `pattern`(Pattern): 띠를 채우는 줄무늬. `stripes`(1~16개, 순서대로 반복)의 각 줄무늬 폭은 `size × unit` mm(실제 바닥 치수)입니다. `angle`은 선의 진행 방향 기준 각도(원은 X축 기준)이며 0이면 선과 나란한 줄, 90이면 선을 가로지르는 줄입니다. 두께가 0이면 패턴은 보이지 않습니다.
+- 템플릿(편집기·[`src/model/borders.ts`](../src/model/borders.ts), 2026-11-15 사용자 요청): **구역색** 단색 노랑 `#FFCC00`, **설비구역색** 노랑:검정 = 1:1 × 50 mm, 45°, **안전구역색** 하양:빨강 = 1:1 × 50 mm, 45°. 템플릿을 고르면 색·패턴과 불투명도 1이 들어가고, 두께가 0이었으면 100 mm가 됩니다. 파일에는 템플릿 이름이 아니라 값이 저장됩니다.
+
+### 면 `fill`, `fillOpacity`, `fillImage` (version 4에서 `fillOpacity`, `fillImage` 추가)
+
+- `fill`: 면 색. 없으면 레이어 색을 옅게 칠합니다.
+- `fillOpacity`: 면만의 0~1 불투명도(테두리에는 영향 없음). 없으면 색·이미지가 있을 때 0.35, 없을 때 0.06입니다.
+- `fillImage`: `{ "src": "data:image/png;base64,…", "fit": "stretch" | "tile", "size"?: 1000 }`. `stretch`는 도형의 외곽 상자에 맞추고, `tile`은 `size` mm 너비로 반복합니다. 밑그림처럼 **`data:` URL만 허용**합니다(파일을 열 때 외부 주소를 불러오지 않도록).
+
+### 점 공유와 일치 구속 `coincident` (version 4)
+
+- 한 번에 그린 객체(연속 선의 선분들, 사각형의 네 변과 도형)는 점을 공유합니다.
+- 다른 객체의 점에서 선·사각형·점 객체를 시작하거나 끝내면, 새 객체는 **자기 점**을 갖고 두 점을 `coincident` 구속(`refs`: 점 id 2개 이상)으로 묶습니다. 그래서 함께 움직이지만 언제든 구속 해제나 `분리`로 떼어 낼 수 있습니다(2026-11-15 사용자 요청). Ctrl을 누르고 그리면 예전처럼 점을 공유합니다(닫힌 고리 → 도형).
+- `분리`(`detachPoints`, [`src/model/edit.ts`](../src/model/edit.ts))는 공유된 점을 객체마다 따로 나누고 그 점의 일치 구속을 지웁니다. 도형과 그 변은 하나로 취급해 계속 공유합니다. 치수는 재는 형상의 점을 그대로 공유합니다.
 
 ### 높이 `height`와 점의 `z` (version 3)
 
@@ -105,8 +121,9 @@
 | 1 | 레이어, 점, 선·원·치수·설비, 구속, 밑그림 |
 | 2 | 층, 폴더, 도형, 선 양식, 구조 프리셋과 특성, `name`·`binding` |
 | 3 | 점의 `z`, 객체와 설비 종류의 `height`, 점 객체(`point`) |
+| 4 | 테두리 `opacity`·`pattern`, 원의 `stroke`, 도형의 `fillOpacity`·`fillImage`, `coincident` 구속, 밑그림 `locked` |
 
-버전 1 파일은 열 때 자동으로 변환됩니다. 모든 레이어가 `1층`(`floor-1`)에 들어가고 구조 프리셋 종류가 라이브러리에 추가됩니다. 버전 2 파일은 그대로 열립니다(`z`, `height`가 없으면 기본값). 저장하면 버전 3이 됩니다.
+버전 1 파일은 열 때 자동으로 변환됩니다. 모든 레이어가 `1층`(`floor-1`)에 들어가고 구조 프리셋 종류가 라이브러리에 추가됩니다. 버전 2, 3 파일은 그대로 열립니다(새 필드가 없으면 기본값). 저장하면 버전 4가 됩니다. 버전 4 파일은 이전 버전 편집기에서 열리지 않습니다.
 
 ## 형식을 바꿀 때 (체크리스트)
 
@@ -114,4 +131,4 @@
 2. `src/io/serialize.ts`에서 새 필드를 검증하고, 예전 버전 파일을 새 형식으로 변환합니다. **예전 파일은 계속 열려야 합니다.**
 3. `src/model/document.ts`의 `toData()`/`load()`와, 새 객체 종류라면 `pointIdsOf`·`bboxOf`를 고칩니다.
 4. 이 문서의 표와 예시를 고칩니다.
-5. `tests/serialize.test.ts`에 왕복(저장 → 열기)과 변환 테스트를 추가합니다.
+5. `tests/serialize.test.ts`에 왕복(저장 → 열기)과 변환 테스트를 추가합니다(버전 4 필드는 `tests/borders.test.ts`에도 있습니다).

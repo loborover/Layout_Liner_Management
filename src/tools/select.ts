@@ -4,12 +4,15 @@
  * Selection tool: click/shift-click/window selection, dragging (with constrained drag support), dimension-line
  * drag, double-click value editing and Delete. Clicking right on a vertex selects the point itself (shared by the
  * lines, shapes and dimensions built on it), so a single corner can be dragged or given exact X, Y, Z.
+ * The underlay image is selected and dragged the same way as objects (clicking it where no object is), unless it
+ * is locked; its selection id is UNDERLAY_ID.
  */
 import { type Vec2, boxFromPoints, dist, sub } from '../geom/vec';
 import { dimensionGeometry } from '../geom/dimension';
-import { Batch, type Command, MovePoints, RemoveEntities, SetDimensionOffsets, UpdateEntities } from '../model/commands';
+import { Batch, type Command, MovePoints, RemoveEntities, SetDimensionOffsets, SetUnderlay, UpdateEntities } from '../model/commands';
+import { UNDERLAY_ID } from '../model/selection';
 import { deletionTargets } from '../model/edit';
-import type { Id } from '../model/types';
+import type { Id, Underlay } from '../model/types';
 import type { ConstrainedDrag } from '../constraints/service';
 import type { SnapQuery } from '../snap/snap';
 import { formatLength } from '../view/format';
@@ -27,6 +30,8 @@ type State =
       dims: { id: Id; before: number }[];
       /** Set when the moved points belong to constrained geometry. */
       drag: ConstrainedDrag | null;
+      /** The underlay before the drag, when it is selected and moves along. */
+      underlay: Underlay | null;
     }
   | { kind: 'box'; start: Vec2; end: Vec2; additive: boolean };
 
@@ -47,8 +52,14 @@ export class SelectTool implements Tool {
     if (s.kind === 'move' || (s.kind === 'press' && s.onEntity)) {
       const { doc, selection } = this.ctx;
       // A dragged point must not snap to the entities built on it, which move with it.
+      // Points held on the dragged ones by coincident constraints follow too, so their objects are left out as well.
+      const users = (pid: Id) => [pid, ...doc.coincidentWith(pid)].flatMap((q) => doc.pointUsers(q).map((e) => e.id));
       const exclude = new Set(
-        selection.values().flatMap((id) => (doc.isVertex(id) ? doc.vertexPoints(id).flatMap((pid) => doc.pointUsers(pid).map((e) => e.id)) : [id])),
+        selection.values().flatMap((id) => {
+          if (doc.isVertex(id)) return doc.vertexPoints(id).flatMap(users);
+          const e = doc.entities.get(id);
+          return e ? [id, ...doc.pointIdsOf(e).flatMap((pid) => doc.coincidentWith(pid).flatMap((q) => doc.pointUsers(q).map((x) => x.id)))] : [];
+        }),
       );
       return { from: s.start, exclude };
     }
@@ -79,6 +90,7 @@ export class SelectTool implements Tool {
       if (dist(p.screen, s.startScreen) < DRAG_THRESHOLD_PX) return;
       if (s.onEntity) {
         const pointIds = this.selectedPointIds();
+        const u = ctx.doc.underlay;
         this.state = {
           kind: 'move',
           start: s.start,
@@ -86,6 +98,7 @@ export class SelectTool implements Tool {
           pointIds,
           dims: this.attachedDimensions(pointIds),
           drag: ctx.constraints.beginDrag(pointIds),
+          underlay: u && ctx.selection.has(UNDERLAY_ID) && !u.locked ? { ...u } : null,
         };
       } else {
         this.state = { kind: 'box', start: s.startRaw, end: p.raw, additive: p.shift };
@@ -98,6 +111,10 @@ export class SelectTool implements Tool {
       if (t.drag) t.drag.update(total);
       else ctx.doc.translatePoints(t.pointIds, sub(total, t.applied));
       t.applied = total;
+      if (t.underlay && ctx.doc.underlay) {
+        ctx.doc.underlay.x = t.underlay.x + total.x;
+        ctx.doc.underlay.y = t.underlay.y + total.y;
+      }
       this.applyDimensionOffsets(t.dims, total);
       ctx.doc.changed();
     } else if (t.kind === 'box') {
@@ -115,6 +132,7 @@ export class SelectTool implements Tool {
     } else if (s.kind === 'move') {
       if (s.applied.x !== 0 || s.applied.y !== 0) {
         const steps: Command[] = [s.drag ? s.drag.finish() : new MovePoints(s.pointIds, s.applied)];
+        if (s.underlay && ctx.doc.underlay) steps.push(new SetUnderlay('밑그림 이동', s.underlay, { ...ctx.doc.underlay }));
         if (s.dims.length > 0) steps.push(new SetDimensionOffsets(s.dims.map((d) => ({ ...d, after: this.offsetOf(d.id) }))));
         ctx.history.record(new Batch('이동', steps));
       }
@@ -159,10 +177,15 @@ export class SelectTool implements Tool {
 
   key(e: KeyboardEvent): boolean {
     if (e.key === 'Delete' || e.key === 'Backspace') {
-      const ids = deletionTargets(this.ctx.doc, this.ctx.selection.values());
-      if (ids.length === 0) return false;
-      this.ctx.selection.clear();
-      this.ctx.history.execute(new RemoveEntities(ids));
+      const { doc, selection } = this.ctx;
+      const ids = deletionTargets(doc, selection.values());
+      const underlay = selection.has(UNDERLAY_ID) ? doc.underlay : null;
+      if (ids.length === 0 && !underlay) return false;
+      selection.clear();
+      const steps: Command[] = [];
+      if (ids.length > 0) steps.push(new RemoveEntities(ids));
+      if (underlay) steps.push(new SetUnderlay('밑그림 삭제', underlay, null));
+      this.ctx.history.execute(steps.length === 1 ? steps[0] : new Batch('삭제', steps));
       return true;
     }
     return false;
@@ -175,6 +198,7 @@ export class SelectTool implements Tool {
       // Revert the live preview of the drag; nothing has been recorded yet.
       if (s.drag) s.drag.cancel();
       else this.ctx.doc.translatePoints(s.pointIds, { x: -s.applied.x, y: -s.applied.y });
+      if (s.underlay && this.ctx.doc.underlay) Object.assign(this.ctx.doc.underlay, { x: s.underlay.x, y: s.underlay.y });
       for (const d of s.dims) this.setOffset(d.id, d.before);
       this.ctx.doc.changed();
     } else if (s.kind === 'box') {
@@ -204,7 +228,7 @@ export class SelectTool implements Tool {
 
   /**
    * What a click at p selects: a vertex when the cursor is on one (points win over the lines through them), else an
-   * entity. A point used only by a point object selects that object, so its name and layer can be edited too.
+   * entity, else the underlay image. A point used only by a point object selects that object, so its name and layer can be edited too.
    */
   private hitAt(p: Vec2): Id | null {
     const { doc, index } = this.ctx;
@@ -214,7 +238,12 @@ export class SelectTool implements Tool {
       const users = doc.pointUsers(vertex);
       return users.length === 1 && users[0].kind === 'point' ? users[0].id : vertex;
     }
-    return index.pick(p, tol)?.id ?? null;
+    const hit = index.pick(p, tol)?.id;
+    if (hit) return hit;
+    // The underlay sits under everything: it is picked only where no object is, and never when locked.
+    const u = doc.underlay;
+    if (u?.visible && !u.locked && p.x >= u.x && p.x <= u.x + u.width && p.y >= u.y && p.y <= u.y + u.height) return UNDERLAY_ID;
+    return null;
   }
 
   /** Selected dimensions that stay attached to unmoved points; dragging them moves their dimension line. */

@@ -14,7 +14,7 @@ AI와 스크립트가 편집기를 조작하는 방법입니다. 메서드는 �
 - 좌표와 길이는 mm, Y축은 위쪽, 각도는 도(반시계)입니다. 좌표는 `[x, y]` 또는 `{x, y}`로 줍니다.
 - 새 객체는 **활성 층**의 현재 레이어(또는 `layer` 매개변수)에 그려집니다. 다른 층에 그리려면 먼저 `setActiveFloor`를 부르십시오.
 - 변경 메서드 한 번은 실행 취소 한 단계입니다. 여러 호출을 한 단계로 묶으려면 `batch`를 쓰십시오. 중간에 하나라도 실패하면 전부 되돌립니다.
-- 새 끝점이 같은 층의 기존 점과 0.5 mm 안에 있으면 그 점에 연결됩니다(공유 점).
+- 새 끝점이 같은 층의 기존 점과 0.5 mm 안에 있으면 그 점에 연결됩니다(공유 점). 편집기에서 마우스로 그릴 때는 이와 달리 각 객체가 자기 점을 갖고 `coincident` 구속으로 일치시킵니다(Ctrl을 누르면 공유). 공유 점은 편집기의 "분리"로 나눌 수 있습니다.
 - 오류는 한국어 메시지로 돌아옵니다(`ApiError`). 뷰어 모드인 편집기에서는 변경 메서드가 거부됩니다.
 - 점 좌표 `z`는 층 바닥에서의 높이(mm, 위쪽)입니다. `setPoint`로 X·Y·Z를(선의 중간점 `middle.id`를 주면 선 전체가 이동), `updateEntity`의 `height`로 객체 높이를 고칩니다(`null`이면 기본값). 구속이 걸린 점의 X·Y는 API에서 바꿀 수 없습니다.
 - `addPoint`는 독립 점 객체를 놓습니다. 높이(`height`)의 기본값은 모두 0입니다.
@@ -27,6 +27,10 @@ AI와 스크립트가 편집기를 조작하는 방법입니다. 메서드는 �
 const { call, methods } = window.layoutLiner;
 call('addRectangle', { x: 0, y: 0, width: 12000, height: 8000 });           // 방(선 4개 + 도형)
 call('setStroke', { ids: ['…선 id…'], stroke: { width: 200, align: 'inside' } }); // 벽 두께
+// 바닥 표시 테두리: 설비구역색(노랑:검정 1:1 × 50 mm, 45°). 원과 도형(변 전체)에도 지정할 수 있습니다.
+call('setStroke', { ids: ['…도형 id…'], stroke: { width: 100, align: 'inside', color: '#FFCC00', opacity: 1,
+  pattern: { stripes: [{ color: '#FFCC00', size: 1 }, { color: '#1A1A1A', size: 1 }], unit: 50, angle: 45 } } });
+call('updateEntity', { id: '…도형 id…', fill: '#6D8196', fillOpacity: 0.5 }); // 면 색과 면만의 불투명도
 call('placeEquipment', { type: 'st-stair', x: 2000, y: 3000 });               // 계단 프리셋
 Object.keys(methods);                                                          // 메서드 목록
 ```

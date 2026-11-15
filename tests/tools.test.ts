@@ -4,7 +4,7 @@ import { DocumentModel, midpointId } from '../src/model/document';
 import { Selection } from '../src/model/selection';
 import { SpatialIndex } from '../src/model/spatial';
 import { SnapEngine } from '../src/snap/snap';
-import { DimensionTool, LineTool, PointTool } from '../src/tools/draw';
+import { CircleTool, DimensionTool, LineTool, PointTool } from '../src/tools/draw';
 import { SelectTool } from '../src/tools/select';
 import type { Tool, ToolContext, ToolPointer } from '../src/tools/tool';
 import { ConstraintService } from '../src/constraints/service';
@@ -50,6 +50,28 @@ function setup() {
   return { doc, history, selection, ctx, at, click };
 }
 
+describe('circle tool', () => {
+  it('ties a centre snapped to a line end with a coincident constraint, or shares it with Ctrl', () => {
+    const { doc, ctx, click } = setup();
+    const line = new LineTool(ctx);
+    click(line, 0, 0);
+    click(line, 1000, 0);
+    line.cancel();
+    const circle = new CircleTool(ctx);
+    click(circle, 1000, 0);
+    click(circle, 1500, 0);
+    const c1 = [...doc.entities.values()].find((e) => e.kind === 'circle')!;
+    const k = [...doc.constraints.values()].find((c) => c.kind === 'coincident')!;
+    expect(c1.kind === 'circle' && k.refs).toContain(c1.kind === 'circle' ? c1.center : '');
+    const shared = doc.pointUsers(k.refs.find((r) => r !== (c1.kind === 'circle' ? c1.center : ''))!).map((e) => e.kind);
+    expect(shared).toEqual(['line']);
+    click(circle, 0, 0, true);
+    click(circle, 300, 0);
+    const c2 = [...doc.entities.values()].filter((e) => e.kind === 'circle')[1];
+    expect(c2.kind === 'circle' && doc.pointUsers(c2.center).map((e) => e.kind).sort()).toEqual(['circle', 'line']);
+  });
+});
+
 describe('line tool', () => {
   it('closes a room outline on its first point with shared corners', () => {
     const { doc, ctx, click, history } = setup();
@@ -70,15 +92,52 @@ describe('line tool', () => {
     expect([...doc.entities.values()].some((e) => e.kind === 'shape')).toBe(false);
   });
 
-  it('connects a new line to an existing endpoint instead of duplicating it', () => {
-    const { doc, ctx, click } = setup();
+  it('starts a line on another line end as a separate object held by a coincident constraint', () => {
+    const { doc, ctx, click, history } = setup();
     const line = new LineTool(ctx);
     click(line, 0, 0);
     click(line, 1000, 0);
     line.cancel();
     click(line, 1004, 3);
     click(line, 1000, 1000);
+    // Its own point at the joint (4 points), tied to the first line's end by a coincident constraint.
+    expect(doc.points.size).toBe(4);
+    const [k] = [...doc.constraints.values()];
+    expect(k.kind).toBe('coincident');
+    const [a, b] = k.refs.map((id) => doc.point(id));
+    expect(a).toMatchObject({ x: 1000, y: 0 });
+    expect(b).toMatchObject({ x: 1000, y: 0 });
+    // One undo step removes the line and its constraint together.
+    history.undo();
+    expect(doc.constraints.size).toBe(0);
+    expect(doc.points.size).toBe(2);
+  });
+
+  it('shares the point when Ctrl is held', () => {
+    const { doc, ctx, click } = setup();
+    const line = new LineTool(ctx);
+    click(line, 0, 0);
+    click(line, 1000, 0);
+    line.cancel();
+    click(line, 1004, 3, true);
+    click(line, 1000, 1000);
     expect(doc.points.size).toBe(3);
+    expect(doc.constraints.size).toBe(0);
+  });
+
+  it('closes a chain that started on another object back on its own first point', () => {
+    const { doc, ctx, click } = setup();
+    const line = new LineTool(ctx);
+    click(line, -1000, 0);
+    click(line, 0, 0);
+    line.cancel();
+    click(line, 1, 1); // on the first line's end: own point + coincident
+    click(line, 1000, 0);
+    click(line, 1000, 1000);
+    click(line, 2, -1); // back on the start: closes into a shape
+    const shape = [...doc.entities.values()].find((e) => e.kind === 'shape');
+    expect(shape?.kind === 'shape' && shape.points).toHaveLength(3);
+    expect([...doc.constraints.values()].filter((c) => c.kind === 'coincident')).toHaveLength(1);
   });
 });
 

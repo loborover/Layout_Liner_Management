@@ -45,4 +45,8 @@ export interface UiHost {
   notify: (text: string) => void;
   ask: (question: string, initial: string) => string | null;
   confirm: (question: string) => boolean;
+  /** Runs an editor command by its data-action name (e.g. 'detach', 'underlay-calibrate'). */
+  runAction: (name: string) => void;
+  /** Redraws the canvas (live previews that change the document in place call this). */
+  requestRender: () => void;
 }

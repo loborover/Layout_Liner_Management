@@ -2,21 +2,24 @@
  * @file properties.ts
  *
  * Property panel for the current selection. Shows what an object is and lets edit mode change it:
- * name, layer, monitoring binding (all objects); line style (lines and shapes' edges); fill and area (shapes);
- * radius (circles); tag, rotation and preset properties with design checks (equipment and structures).
+ * name, layer, monitoring binding (all objects); border ("테두리": weight, colour, opacity, stripe pattern with a live
+ * swatch and the three templates) for lines, circles and shapes' edges; face fill (colour or image) and face-only
+ * opacity, area (shapes); radius (circles); the underlay image when it is selected; coincide/detach for points; tag, rotation and preset properties with design checks (equipment and structures).
  * Every object also lists the X, Y, Z of its points (Z = height above the floor) and its 3D height; a selected
  * point (vertex) gets its own X, Y, Z fields. With nothing selected it shows the active floor. In viewer mode the same fields are read-only and live values
  * from the monitoring data source are added. Every change is one undoable UpdateEntities/SetEquipmentTypes command.
  */
-import { UpdateEntities } from '../model/commands';
+import { SetUnderlay, UpdateEntities } from '../model/commands';
 import { cloneEntity, midpointId } from '../model/document';
+import { BORDER_TEMPLATES, TEMPLATE_WIDTH, applyTemplate, borderOpacity, cloneStroke, matchTemplate, patternPeriod, stripePieces } from '../model/borders';
+import { UNDERLAY_ID } from '../model/selection';
 import { defaultHeight } from '../model/heights';
 import { CATEGORY_LABELS, PROP_DEFS, type PropDef, categoryOf, presetInfo, propValue } from '../model/presets';
 import { polygonPerimeter } from '../geom/polygon';
-import type { Entity, Id, LineEntity, PropValue, StrokeStyle } from '../model/types';
+import type { CircleEntity, Entity, Id, LineEntity, PropValue, ShapeEntity, StrokeStyle, Underlay } from '../model/types';
 import { formatArea, formatLength } from '../view/format';
 import type { UiHost } from './host';
-import { LAYER_DEFAULT, SHAPE_FILL } from '../theme';
+import { CANVAS, LAYER_DEFAULT, MARKING, SHAPE_FILL } from '../theme';
 
 const ALIGN_LABELS = { inside: '내측', center: '중심', outside: '외측' } as const;
 
@@ -46,7 +49,11 @@ export class PropertyPanel {
     });
     const points = selection.values().filter((id) => doc.isVertex(id));
     const sets: HTMLElement[] = [];
+    if (selection.has(UNDERLAY_ID) && doc.underlay) sets.push(this.underlaySet());
     if (items.length === 0 && points.length > 0) sets.push(this.pointSet(points));
+    else if (items.length === 0 && sets.length > 0) {
+      // Only the underlay is selected.
+    }
     else if (items.length === 0) sets.push(this.floorInfo());
     else if (items.length === 1) sets.push(...this.single(items[0]));
     else sets.push(...this.multiple(items));
@@ -197,7 +204,16 @@ export class PropertyPanel {
     const users = [...new Set(ids.flatMap((id) => doc.pointUsers(id)))];
     const names = users.slice(0, 6).map((e) => e.name ?? this.kindLabel(e));
     this.row(f, '연결', users.length ? `${names.join(', ')}${users.length > 6 ? ` 외 ${users.length - 6}개` : ''}` : '없음');
-    this.warning(f, '점을 옮기면 이 점을 쓰는 선·도형·치수가 함께 바뀝니다(선의 중간점은 선 전체를 옮깁니다). Delete는 연결된 객체를 지웁니다.');
+    const partners = new Set(ids.filter((id) => doc.points.has(id)).flatMap((id) => doc.coincidentWith(id)));
+    if (partners.size > 0) this.row(f, '일치 구속', `다른 객체의 점 ${partners.size}개와 일치`);
+    const actions = document.createElement('div');
+    actions.className = 'actions';
+    actions.append(
+      this.button('일치', '선택한 점들을 한 위치에 붙입니다(일치 구속, 객체는 따로 유지). Shift+클릭으로 점을 두 개 이상 고르십시오', () => this.host.runAction('coincide')),
+      this.button('분리', '이 점을 공유하거나 일치 구속된 객체들을 서로 떼어 따로 움직이게 합니다', () => this.host.runAction('detach')),
+    );
+    f.append(actions);
+    this.warning(f, '점을 옮기면 이 점을 쓰는 선·도형·치수와 일치 구속된 점이 함께 바뀝니다(선의 중간점은 선 전체를 옮깁니다). 따로 움직이려면 분리하십시오. Delete는 연결된 객체를 지웁니다.');
     return f;
   }
 
@@ -266,17 +282,12 @@ export class PropertyPanel {
       this.row(f, '면적', formatArea(doc.shapeArea(e)));
       this.row(f, '둘레', formatLength(polygonPerimeter(poly), unit));
       this.row(f, '꼭짓점', `${e.points.length}개`);
-      const fill = this.input('color', e.fill ?? doc.layers.get(e.layer)?.color ?? SHAPE_FILL, (v) => this.update('채우기 색', [e], (c) => c.kind === 'shape' && (c.fill = v)));
-      const clear = this.button('없음', '채우기 색 지우기 (레이어 색으로 옅게)', () => this.update('채우기 색', [e], (c) => c.kind === 'shape' && delete c.fill));
-      const box = document.createElement('span');
-      box.className = 'row';
-      box.append(fill, clear);
-      this.row(f, '면 채우기', box);
+      sets.push(this.faceSet(e));
       const lines = e.edges.flatMap((id) => {
         const l = doc.entities.get(id);
         return l?.kind === 'line' ? [l] : [];
       });
-      sets.push(this.strokeSet(lines, '변 선 양식'));
+      sets.push(this.strokeSet(lines, '테두리 (Border, 변 전체)'));
     } else if (e.kind === 'circle') {
       const constrained = doc.constraintsOn([e.id]).length > 0;
       const r = this.input('number', String(Math.round(e.radius * 100) / 100), (v) => {
@@ -287,6 +298,7 @@ export class PropertyPanel {
       r.disabled ||= constrained;
       if (constrained) r.title = '구속된 원은 원을 더블클릭해 반지름을 지정하십시오.';
       this.row(f, '반지름 (mm)', r);
+      sets.push(this.strokeSet([e]));
     } else if (e.kind === 'dimension') {
       const a = doc.point(e.p1);
       const b = doc.point(e.p2);
@@ -387,35 +399,274 @@ export class PropertyPanel {
     }
   }
 
-  /** Line style editor for one or more lines (a shape passes its edges). */
-  private strokeSet(lines: LineEntity[], title = '선 양식'): HTMLElement {
+  /**
+   * Border editor ("테두리": Weight, Color, 투명도, Pattern) for lines and circles (a shape passes its edges).
+   * Typing or picking a colour changes the drawing at once (one undo step when the field is committed); the swatch
+   * shows the pattern as it will look. Templates set colour and pattern in one go.
+   */
+  private strokeSet(items: (LineEntity | CircleEntity)[], title = '테두리 (Border)'): HTMLElement {
+    const { doc } = this.host;
     const f = this.fieldset(title);
-    const first = lines[0]?.stroke;
-    const same = lines.every((l) => JSON.stringify(l.stroke) === JSON.stringify(first));
-    const current: StrokeStyle = same && first ? first : { width: 0, align: 'center' };
-    const apply = (patch: Partial<StrokeStyle>) =>
-      this.update(
-        '선 양식',
-        lines,
-        (c) => c.kind === 'line' && (c.stroke = { ...(c.stroke ?? { width: current.width, align: current.align }), ...patch }),
-      );
-    this.row(f, '위치', this.select(ALIGN_LABELS, current.align, (v) => apply({ align: v as StrokeStyle['align'] })));
-    this.row(
-      f,
-      '두께 (mm)',
-      this.input('number', same ? String(current.width) : '', (v) => {
+    const first = items[0]?.stroke;
+    const same = items.every((l) => JSON.stringify(l.stroke) === JSON.stringify(first));
+    const layerColor = doc.layers.get(items[0]?.layer ?? '')?.color ?? LAYER_DEFAULT;
+    const current: StrokeStyle = same && first ? cloneStroke(first) : { width: 0, align: 'center' };
+    /** Style being edited; inputs change it, then it is applied live and committed. */
+    const draft: StrokeStyle = cloneStroke(current);
+    let before: Entity[] | null = null;
+    const live = () => {
+      before ??= items.map((e) => cloneEntity(doc.entities.get(e.id) ?? e));
+      for (const e of items) {
+        const target = doc.entities.get(e.id);
+        if (target?.kind === 'line' || target?.kind === 'circle') target.stroke = cloneStroke(draft);
+      }
+      doc.changed();
+      preview();
+    };
+    const commit = () => {
+      if (!before) live();
+      const after = items.map((e) => cloneEntity(doc.entities.get(e.id) ?? e));
+      this.host.history.record(new UpdateEntities('테두리', before!, after));
+      before = null;
+      this.render();
+    };
+    /** A field that edits the draft live while typing and commits when done. */
+    const field = (type: string, value: string, set: (v: string) => boolean | void): HTMLInputElement => {
+      const i = document.createElement('input');
+      i.type = type;
+      i.value = value;
+      i.disabled = this.readOnly;
+      i.addEventListener('input', () => set(i.value) !== false && live());
+      i.addEventListener('change', () => set(i.value) !== false && commit());
+      if (type !== 'color') i.addEventListener('keydown', (e) => e.key === 'Enter' && i.blur());
+      return i;
+    };
+
+    const templates: Record<string, string> = { '': '직접 지정' };
+    for (const t of BORDER_TEMPLATES) templates[t.id] = `${t.name} (${t.description})`;
+    const tpl = this.select(templates, matchTemplate(same ? first : undefined)?.id ?? '', (v) => {
+      const t = BORDER_TEMPLATES.find((x) => x.id === v);
+      if (t) this.update('테두리 템플릿', items, (c) => (c.kind === 'line' || c.kind === 'circle') && (c.stroke = applyTemplate(c.stroke, t)));
+    });
+    tpl.title = '구역색·설비구역색·안전구역색: 색과 줄무늬를 한 번에 적용합니다. 두께가 0이면 100 mm로 바꿉니다.';
+    this.row(f, '템플릿', tpl);
+    this.row(f, '위치', this.select(ALIGN_LABELS, current.align, (v) => {
+      draft.align = v as StrokeStyle['align'];
+      commit();
+    }));
+    const width = field('number', same ? String(current.width) : '', (v) => {
+      const n = Number(v);
+      if (v.trim() === '' || !(n >= 0)) return false;
+      draft.width = n;
+    });
+    width.min = '0';
+    width.title = '두께 Weight (mm). 0이면 가는 선';
+    this.row(f, '두께 (mm)', width);
+    this.row(f, '색', field('color', current.color ?? layerColor, (v) => void (draft.color = v)));
+    const opacity = field('number', String(Math.round((1 - borderOpacity(current)) * 100)), (v) => {
+      const n = Number(v);
+      if (v.trim() === '' || !(n >= 0 && n <= 100)) return false;
+      draft.opacity = 1 - n / 100;
+    });
+    opacity.min = '0';
+    opacity.max = '100';
+    opacity.step = '5';
+    opacity.title = '테두리 투명도 (%): 0 불투명, 100 완전 투명';
+    this.row(f, '투명도 (%)', opacity);
+
+    // Pattern
+    const toggle = this.input('checkbox', '', () => {
+      if (toggle.checked) {
+        const base = draft.color ?? layerColor;
+        draft.pattern = { stripes: [{ color: base, size: 1 }, { color: base === MARKING.black ? MARKING.yellow : MARKING.black, size: 1 }], unit: 50, angle: 45 };
+        if (!(draft.width > 0)) draft.width = TEMPLATE_WIDTH;
+      } else delete draft.pattern;
+      commit();
+    });
+    toggle.checked = !!current.pattern;
+    toggle.title = '줄무늬 패턴으로 테두리 띠를 채웁니다';
+    this.row(f, '패턴', toggle);
+    const canvas = document.createElement('canvas');
+    canvas.className = 'pattern-preview';
+    canvas.width = 220;
+    canvas.height = 36;
+    const preview = () => drawBorderPreview(canvas, draft, layerColor);
+    if (current.pattern) {
+      const p = draft.pattern!;
+      const count = field('number', String(p.stripes.length), (v) => {
+        const n = Math.round(Number(v));
+        if (!(n >= 1 && n <= 16)) return false;
+        const old = p.stripes;
+        p.stripes = Array.from({ length: n }, (_, i) => old[i] ?? { ...old[i % old.length] });
+      });
+      count.min = '1';
+      count.max = '16';
+      count.title = '한 번 반복되는 줄무늬의 개수 (1~16)';
+      count.addEventListener('change', () => this.render());
+      this.row(f, '줄무늬 수', count);
+      const angle = field('number', String(p.angle), (v) => {
         const n = Number(v);
-        if (!(n >= 0)) return this.host.notify('두께는 0 이상이어야 합니다.');
-        apply({ width: n });
-      }),
-    );
-    const color = this.input('color', current.color ?? this.host.doc.layers.get(lines[0]?.layer ?? '')?.color ?? LAYER_DEFAULT, (v) => apply({ color: v }));
-    this.row(f, '색', color);
+        if (v.trim() === '' || !Number.isFinite(n)) return false;
+        p.angle = n;
+      });
+      angle.step = '15';
+      angle.title = '줄무늬 기울기 (°): 선 방향 기준, 0은 선과 나란히, 90은 선을 가로질러';
+      this.row(f, '기울기 (°)', angle);
+      const unit = field('number', String(p.unit), (v) => {
+        const n = Number(v);
+        if (!(n > 0)) return false;
+        p.unit = n;
+      });
+      unit.min = '0';
+      unit.title = '크기 1인 줄무늬의 실제 폭 (mm). 줄무늬 폭 = 크기 × 단위 길이';
+      this.row(f, '단위 길이 (mm)', unit);
+      p.stripes.forEach((st, i) => {
+        const box = document.createElement('span');
+        box.className = 'row stripe';
+        const color = field('color', st.color, (v) => void (st.color = v));
+        const size = field('number', String(st.size), (v) => {
+          const n = Number(v);
+          if (!(n > 0 && n <= 1000)) return false;
+          st.size = n;
+        });
+        size.min = '0';
+        size.step = 'any';
+        size.title = `상대 크기: 폭 ${formatLength(st.size * p.unit, 'mm')}`;
+        const mm = document.createElement('span');
+        mm.className = 'muted';
+        mm.textContent = `= ${formatLength(st.size * p.unit, 'mm')}`;
+        box.append(color, size, mm);
+        if (p.stripes.length > 1) {
+          box.append(
+            this.button('×', '이 줄무늬 삭제', () => {
+              p.stripes.splice(i, 1);
+              commit();
+            }),
+          );
+        }
+        this.row(f, `줄무늬 ${i + 1}`, box);
+      });
+    }
+    this.row(f, '미리보기', canvas);
+    preview();
     const actions = document.createElement('div');
     actions.className = 'actions';
-    actions.append(this.button('양식 지우기', '가는 선(레이어 색)으로 되돌립니다', () => this.update('선 양식 지우기', lines, (c) => c.kind === 'line' && delete c.stroke)));
+    actions.append(this.button('테두리 지우기', '가는 선(레이어 색)으로 되돌립니다', () => this.update('테두리 지우기', items, (c) => (c.kind === 'line' || c.kind === 'circle') && delete c.stroke)));
     f.append(actions);
-    if (!same) this.warning(f, '선마다 양식이 다릅니다. 바꾸면 모두 같은 값이 됩니다.');
+    if (!same) this.warning(f, '객체마다 테두리가 다릅니다. 바꾸면 모두 같은 값이 됩니다.');
+    if (current.pattern && !(current.width > 0)) this.warning(f, '두께가 0이면 패턴이 보이지 않습니다. 두께를 지정하십시오.');
+    return f;
+  }
+
+  /** Face of a shape: none, a colour or an image, and the face's own opacity (the border keeps its own). */
+  private faceSet(e: ShapeEntity): HTMLElement {
+    const { doc } = this.host;
+    const f = this.fieldset('면 (채우기)');
+    const kind = e.fillImage ? 'image' : e.fill ? 'color' : 'none';
+    const set = (label: string, edit: (c: ShapeEntity) => void) => this.update(label, [e], (c) => c.kind === 'shape' && edit(c));
+    this.row(
+      f,
+      '채우기',
+      this.select({ none: '없음 (레이어 색, 옅게)', color: '단색', image: '이미지' }, kind, (v) => {
+        if (v === 'none') set('면 채우기', (c) => (delete c.fill, delete c.fillImage));
+        else if (v === 'color') set('면 채우기', (c) => (delete c.fillImage, (c.fill ??= doc.layers.get(e.layer)?.color ?? SHAPE_FILL)));
+        else this.pickImage((src) => set('면 이미지', (c) => (c.fillImage = { src, fit: 'stretch' })));
+      }),
+    );
+    if (kind === 'color') this.row(f, '색', this.input('color', e.fill ?? SHAPE_FILL, (v) => set('채우기 색', (c) => (c.fill = v))));
+    if (e.fillImage) {
+      const img = e.fillImage;
+      const box = document.createElement('span');
+      box.className = 'row';
+      box.append(this.button('바꾸기…', '다른 이미지를 고릅니다', () => this.pickImage((src) => set('면 이미지', (c) => c.fillImage && (c.fillImage.src = src)))));
+      this.row(f, '이미지', box);
+      this.row(f, '맞춤', this.select({ stretch: '늘이기 (도형에 맞춤)', tile: '바둑판 (반복)' }, img.fit, (v) => set('이미지 맞춤', (c) => c.fillImage && (c.fillImage.fit = v as 'stretch' | 'tile'))));
+      if (img.fit === 'tile') {
+        const size = this.input('number', String(img.size ?? 1000), (v) => {
+          const n = Number(v);
+          if (!(n > 0)) return this.host.notify('타일 너비는 0보다 커야 합니다.');
+          set('타일 크기', (c) => c.fillImage && (c.fillImage.size = n));
+        });
+        size.title = '반복되는 이미지 한 장의 실제 너비 (mm)';
+        this.row(f, '타일 너비 (mm)', size);
+      }
+    }
+    const defaultOpacity = e.fill || e.fillImage ? 0.35 : 0.06;
+    const opacity = this.input('number', e.fillOpacity !== undefined ? String(Math.round((1 - e.fillOpacity) * 100)) : '', (v) => {
+      if (v.trim() === '') return set('면 투명도', (c) => delete c.fillOpacity);
+      const n = Number(v);
+      if (!(n >= 0 && n <= 100)) return this.host.notify('투명도는 0~100(%)입니다.');
+      set('면 투명도', (c) => (c.fillOpacity = 1 - n / 100));
+    });
+    opacity.min = '0';
+    opacity.max = '100';
+    opacity.step = '5';
+    opacity.placeholder = `${Math.round((1 - defaultOpacity) * 100)} (기본값)`;
+    opacity.title = '면만의 투명도 (%): 0 불투명, 100 완전 투명. 테두리에는 영향이 없습니다. 비우면 기본값';
+    this.row(f, '면 투명도 (%)', opacity);
+    return f;
+  }
+
+  /** Asks for an image file and hands back its data: URL (embedded, so the drawing stays self-contained). */
+  private pickImage(done: (src: string) => void): void {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/png,image/jpeg,image/gif,image/webp';
+    input.addEventListener('change', () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      if (file.size > 4 * 1024 * 1024) return this.host.notify('면 이미지는 4 MB 이하로 사용하십시오.');
+      if (!/^image\/(png|jpeg|gif|webp)$/.test(file.type)) return this.host.notify('PNG, JPG, GIF, WebP 이미지를 사용하십시오.');
+      const reader = new FileReader();
+      reader.onload = () => done(String(reader.result));
+      reader.onerror = () => this.host.notify('이미지를 읽을 수 없습니다.');
+      reader.readAsDataURL(file);
+    });
+    input.click();
+  }
+
+  /** The underlay image, selected on the canvas like an object: position, size, opacity, lock. */
+  private underlaySet(): HTMLElement {
+    const { doc } = this.host;
+    const u = doc.underlay!;
+    const f = this.fieldset('밑그림 이미지');
+    const set = (label: string, patch: Partial<Underlay>) => {
+      const cur = doc.underlay;
+      if (cur) this.host.history.execute(new SetUnderlay(label, cur, { ...cur, ...patch }));
+    };
+    const num = (value: number, onSet: (n: number) => void, positive = false) => {
+      const i = this.input('number', String(Math.round(value * 100) / 100), (v) => {
+        const n = Number(v);
+        if (v.trim() === '' || !Number.isFinite(n) || (positive && !(n > 0))) return this.host.notify(positive ? '0보다 큰 숫자를 입력하십시오.' : '숫자를 입력하십시오.');
+        onSet(n);
+      });
+      i.step = 'any';
+      return i;
+    };
+    this.row(f, 'X (왼쪽 아래, mm)', num(u.x, (n) => set('밑그림 이동', { x: n })));
+    this.row(f, 'Y (왼쪽 아래, mm)', num(u.y, (n) => set('밑그림 이동', { y: n })));
+    // Width and height keep the image's proportions.
+    this.row(f, '너비 (mm)', num(u.width, (n) => set('밑그림 크기', { width: n, height: (u.height * n) / u.width }), true));
+    this.row(f, '높이 (mm)', num(u.height, (n) => set('밑그림 크기', { height: n, width: (u.width * n) / u.height }), true));
+    const opacity = num(Math.round((1 - u.opacity) * 100), (n) => set('밑그림 투명도', { opacity: Math.min(1, Math.max(0.05, 1 - n / 100)) }));
+    opacity.min = '0';
+    opacity.max = '95';
+    this.row(f, '투명도 (%)', opacity);
+    const lock = this.input('checkbox', '', () => set(lock.checked ? '밑그림 잠금' : '밑그림 잠금 해제', { locked: lock.checked }));
+    lock.checked = !!u.locked;
+    lock.title = '잠그면 도면에서 클릭해도 선택·이동되지 않습니다 (따라 그릴 때 편리)';
+    this.row(f, '잠금', lock);
+    const actions = document.createElement('div');
+    actions.className = 'actions';
+    actions.append(
+      this.button('축척 맞추기', '두 점과 실제 거리로 축척을 맞춥니다', () => this.host.runAction('underlay-calibrate')),
+      this.button('삭제', '밑그림 삭제', () => this.host.runAction('remove-underlay')),
+    );
+    f.append(actions);
+    const hint = document.createElement('div');
+    hint.className = 'warning muted';
+    hint.textContent = '도형처럼 끌어서 옮기고, Delete로 지웁니다. 잠그면 선택되지 않습니다.';
+    f.append(hint);
     return f;
   }
 
@@ -435,14 +686,61 @@ export class PropertyPanel {
     const sets: HTMLElement[] = [f];
     const lineIds = new Set<Id>();
     for (const e of items) {
-      if (e.kind === 'line') lineIds.add(e.id);
+      if (e.kind === 'line' || e.kind === 'circle') lineIds.add(e.id);
       if (e.kind === 'shape') for (const id of e.edges) lineIds.add(id);
     }
     const lines = [...lineIds].flatMap((id) => {
       const l = doc.entities.get(id);
-      return l?.kind === 'line' ? [l] : [];
+      return l?.kind === 'line' || l?.kind === 'circle' ? [l] : [];
     });
-    if (lines.length > 0) sets.push(this.strokeSet(lines, `선 양식 (선 ${lines.length}개)`));
+    if (lines.length > 0) sets.push(this.strokeSet(lines, `테두리 (Border, ${lines.length}개)`));
     return sets;
   }
+}
+
+/**
+ * Draws a border swatch: a band in the border's colour or stripes, at the border's opacity, about four pattern
+ * repeats long, with the pattern angle measured from the band (as on a horizontal line).
+ */
+function drawBorderPreview(canvas: HTMLCanvasElement, s: StrokeStyle, layerColor: string): void {
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+  const w = canvas.width;
+  const h = canvas.height;
+  ctx.clearRect(0, 0, w, h);
+  ctx.fillStyle = CANVAS.background;
+  ctx.fillRect(0, 0, w, h);
+  const bandH = 22;
+  const top = (h - bandH) / 2;
+  ctx.globalAlpha = borderOpacity(s);
+  const p = s.pattern;
+  if (!p || !(patternPeriod(p) > 0)) {
+    ctx.fillStyle = s.color ?? layerColor;
+    if (s.width > 0) ctx.fillRect(4, top, w - 8, bandH);
+    else ctx.fillRect(4, h / 2 - 1, w - 8, 2);
+  } else {
+    // Preview units: k mm per pixel so that about four repeats fit.
+    const k = (patternPeriod(p) * 4) / (w - 8);
+    const region = [
+      { x: 0, y: 0 },
+      { x: (w - 8) * k, y: 0 },
+      { x: (w - 8) * k, y: bandH * k },
+      { x: 0, y: bandH * k },
+    ];
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(4, top, w - 8, bandH);
+    ctx.clip();
+    for (const piece of stripePieces(region, { x: 0, y: 0 }, (p.angle * Math.PI) / 180, p) ?? []) {
+      ctx.beginPath();
+      piece.quad.forEach((q, i) => (i === 0 ? ctx.moveTo(4 + q.x / k, top + bandH - q.y / k) : ctx.lineTo(4 + q.x / k, top + bandH - q.y / k)));
+      ctx.closePath();
+      ctx.fillStyle = piece.color;
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+  ctx.globalAlpha = 1;
+  ctx.strokeStyle = CANVAS.axis;
+  ctx.strokeRect(4.5, top + 0.5, w - 9, bandH);
 }

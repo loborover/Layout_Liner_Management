@@ -32,8 +32,24 @@ const xy: Schema = {
 const ids: Schema = { type: 'array', items: { type: 'string' }, minItems: 1, description: '객체 id 목록' };
 const stroke: Schema = {
   type: ['object', 'null'],
-  description: '선 양식. width(mm, 0=가는 선), align(center|inside|outside: 그린 선 기준 띠 위치), color(#rrggbb). null이면 지움',
-  properties: { width: { type: 'number', minimum: 0 }, align: { enum: ['center', 'inside', 'outside'] }, color: { type: 'string' } },
+  description:
+    '테두리(Border, 선 양식). width(mm, Weight, 0=가는 선), align(center|inside|outside: 그린 선 기준 띠 위치), color(#rrggbb), ' +
+    'opacity(0~1, 불투명도), pattern(줄무늬: stripes[{color, size(상대 크기)}], unit(크기 1의 폭 mm), angle(선 방향 기준 °)). null이면 지움. ' +
+    '템플릿: 구역색 color #FFCC00; 설비구역색 pattern stripes [#FFCC00×1, #1A1A1A×1], unit 50, angle 45; 안전구역색 [#FFFFFF×1, #D32F2F×1], unit 50, angle 45',
+  properties: {
+    width: { type: 'number', minimum: 0 },
+    align: { enum: ['center', 'inside', 'outside'] },
+    color: { type: 'string' },
+    opacity: { type: 'number', minimum: 0, maximum: 1 },
+    pattern: {
+      type: ['object', 'null'],
+      properties: {
+        stripes: { type: 'array', items: { type: 'object', properties: { color: { type: 'string' }, size: { type: 'number' } } } },
+        unit: { type: 'number' },
+        angle: { type: 'number' },
+      },
+    },
+  },
 };
 const obj = (properties: Record<string, Schema>, required: string[] = []): Schema => ({ type: 'object', properties, required, additionalProperties: false });
 
@@ -137,7 +153,8 @@ export const METHODS: Record<string, MethodSpec> = {
     run: (api, p) => api.placeEquipment(p as never),
   },
   updateEntity: {
-    description: '객체 속성 변경: name, layer, binding(모니터링 키), stroke(선), fill(도형), tag/rotation/props(설비·구조), radius(원), height(3D 높이 mm). null은 지움.',
+    description:
+      '객체 속성 변경: name, layer, binding(모니터링 키), stroke(선·원의 테두리), fill/fillOpacity(도형 면 색·면 불투명도 0~1), tag/rotation/props(설비·구조), radius(원), height(3D 높이 mm). null은 지움.',
     params: obj(
       {
         id: str('객체 id'),
@@ -146,6 +163,7 @@ export const METHODS: Record<string, MethodSpec> = {
         binding: { type: ['string', 'null'] },
         stroke,
         fill: { type: ['string', 'null'] },
+        fillOpacity: { type: ['number', 'null'], minimum: 0, maximum: 1, description: '도형 면만의 불투명도(0~1). null이면 기본값' },
         tag: { type: 'string' },
         rotation: { type: 'number' },
         radius: { type: 'number' },
@@ -164,7 +182,7 @@ export const METHODS: Record<string, MethodSpec> = {
     run: (api, p) => api.setPoint(p as never),
   },
   setStroke: {
-    description: '선과 도형의 변에 선 양식(벽 두께 등)을 지정합니다. stroke=null이면 지웁니다.',
+    description: '선·원과 도형의 변에 테두리(벽 두께, 바닥 표시 줄무늬 등)를 지정합니다. stroke=null이면 지웁니다.',
     params: obj({ ids, stroke }, ['ids', 'stroke']),
     mutates: true,
     run: (api, p) => api.setStroke(p as never),

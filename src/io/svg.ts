@@ -1,11 +1,19 @@
 /**
  * @file svg.ts
  *
- * Exports visible layers as an SVG in millimetres; also used for printing.
+ * Exports visible layers as an SVG in millimetres; also used for printing. Borders keep their opacity and stripe
+ * patterns (SVG <pattern> in world millimetres), faces their opacity and pictures. Every export carries a graphic
+ * scale bar, which stays true however the page is scaled; with a fixed print scale (e.g. 1:100) the SVG is sized so
+ * that it prints at that scale and the ratio is written next to the bar.
  */
 import { dimensionGeometry } from '../geom/dimension';
 import type { Box } from '../geom/vec';
 import type { DocumentModel } from '../model/document';
+import { borderOpacity, circleBandRadii, patternPeriod } from '../model/borders';
+import type { StripePattern, StrokeStyle } from '../model/types';
+import { dataImageSize } from './imageSize';
+import { formatScaleLength, scaleBarLength } from '../view/viewport';
+import { CANVAS } from '../theme';
 import { StrokeGeometry } from '../model/strokes';
 import { planSymbol } from '../model/symbols';
 import { COLORS } from '../view/renderer';
@@ -13,23 +21,52 @@ import { COLORS } from '../view/renderer';
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 const n = (v: number) => String(Math.round(v * 100) / 100);
 
+export interface SvgOptions {
+  /** Print scale N of 1:N. The SVG's width and height are then the paper size at that scale; absent: sized 1:1. */
+  scale?: number;
+}
+
 /**
  * The visible drawing as a standalone SVG in millimetres (1 user unit = 1 mm, Y flipped to point down).
  * Strokes keep a constant hairline width whatever the zoom or print scale. Returns null for an empty drawing.
  */
-export function drawingSvg(doc: DocumentModel): string | null {
+export function drawingSvg(doc: DocumentModel, opts: SvgOptions = {}): string | null {
   const ext = visibleExtents(doc);
   if (!ext) return null;
   const size = Math.max(ext.maxX - ext.minX, ext.maxY - ext.minY, 1);
   const margin = size * 0.04;
+  // Room under the drawing for the scale bar.
+  const footer = size * 0.06;
   const minX = ext.minX - margin;
   const minY = -ext.maxY - margin; // SVG y of the top edge
   const w = ext.maxX - ext.minX + 2 * margin;
-  const h = ext.maxY - ext.minY + 2 * margin;
+  const h = ext.maxY - ext.minY + 2 * margin + footer;
   const textSize = size / 90;
   const y = (v: number) => n(-v);
 
   const parts: string[] = [];
+  const defs: string[] = [];
+  /** A <pattern> for stripes running at `deg` (world, counter-clockwise) from `origin`; returns its fill URL. */
+  const stripes = (p: StripePattern, origin: { x: number; y: number }, deg: number): string => {
+    const id = `pat${defs.length}`;
+    const period = patternPeriod(p);
+    let at = 0;
+    const rects = p.stripes.map((st) => {
+      const r = `<rect x="0" y="${n(at)}" width="${n(period)}" height="${n(st.size * p.unit)}" fill="${st.color}"/>`;
+      at += st.size * p.unit;
+      return r;
+    });
+    // Pattern space: stripes along +x, repeating along +y; SVG y points down, so world angles are negated.
+    defs.push(
+      `<pattern id="${id}" patternUnits="userSpaceOnUse" width="${n(period)}" height="${n(period)}" patternTransform="translate(${n(origin.x)} ${y(origin.y)}) rotate(${n(-deg)})">${rects.join('')}</pattern>`,
+    );
+    return `url(#${id})`;
+  };
+  /** Fill attributes of a border band. */
+  const bandFill = (s: StrokeStyle, color: string, origin: { x: number; y: number }, baseDeg: number): string => {
+    const fill = s.pattern && patternPeriod(s.pattern) > 0 ? stripes(s.pattern, origin, baseDeg + s.pattern.angle) : (s.color ?? color);
+    return `fill="${fill}" fill-opacity="${n(borderOpacity(s))}"`;
+  };
   const strokes = new StrokeGeometry(doc);
   const pts = (cs: { x: number; y: number }[]) => cs.map((c) => `${n(c.x)},${y(c.y)}`).join(' ');
   const u = doc.underlay;
@@ -38,25 +75,58 @@ export function drawingSvg(doc: DocumentModel): string | null {
       `<image href="${esc(u.src)}" x="${n(u.x)}" y="${y(u.y + u.height)}" width="${n(u.width)}" height="${n(u.height)}" opacity="${u.opacity}" preserveAspectRatio="none"/>`,
     );
   }
+  const order = doc.paintOrder();
+  const painted = [...doc.entities.values()].sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0));
   for (const layer of doc.layers.values()) {
     if (!doc.isLayerVisible(layer.id)) continue;
     const shapes: string[] = [];
     const labels: string[] = [];
-    for (const e of doc.entities.values()) {
+    for (const e of painted) {
       if (e.layer !== layer.id) continue;
       if (e.kind === 'shape') {
-        shapes.push(`<polygon points="${pts(doc.shapePolygon(e))}" fill="${e.fill ?? layer.color}" fill-opacity="${e.fill ? 0.35 : 0.08}" stroke="none"/>`);
+        const poly = doc.shapePolygon(e);
+        const opacity = e.fillOpacity ?? (e.fill || e.fillImage ? 0.35 : 0.08);
+        if (e.fillImage) {
+          const clip = `clip${defs.length}`;
+          defs.push(`<clipPath id="${clip}"><polygon points="${pts(poly)}"/></clipPath>`);
+          const xs = poly.map((q) => q.x);
+          const ys = poly.map((q) => q.y);
+          const [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
+          if (e.fillImage.fit === 'tile') {
+            // Tiles are `size` mm wide with the picture's own aspect ratio, as on the canvas.
+            const t = e.fillImage.size ?? 1000;
+            const px = dataImageSize(e.fillImage.src);
+            const th = px ? (t * px.height) / px.width : t;
+            const pid = `pat${defs.length}`;
+            defs.push(`<pattern id="${pid}" patternUnits="userSpaceOnUse" width="${n(t)}" height="${n(th)}"><image href="${esc(e.fillImage.src)}" width="${n(t)}" height="${n(th)}" preserveAspectRatio="none"/></pattern>`);
+            shapes.push(`<polygon points="${pts(poly)}" fill="url(#${pid})" fill-opacity="${n(opacity)}" stroke="none"/>`);
+          } else {
+            shapes.push(
+              `<image href="${esc(e.fillImage.src)}" x="${n(x0)}" y="${y(y1)}" width="${n(x1 - x0)}" height="${n(y1 - y0)}" preserveAspectRatio="none" opacity="${n(opacity)}" clip-path="url(#${clip})"/>`,
+            );
+          }
+        } else shapes.push(`<polygon points="${pts(poly)}" fill="${e.fill ?? layer.color}" fill-opacity="${n(opacity)}" stroke="none"/>`);
       } else if (e.kind === 'line') {
         const a = doc.point(e.p1);
         const b = doc.point(e.p2);
-        // Same as the canvas: a styled line is its band (wall thickness) filled in the line colour, over the reference line.
+        // Same as the canvas: a styled line is its band (wall thickness) filled in its colour or stripes, over the reference line.
         const band = strokes.band(e.id);
-        if (band) shapes.push(`<polygon points="${pts(band)}" fill="${e.stroke?.color ?? layer.color}" fill-opacity="0.85"/>`);
+        if (band && e.stroke) {
+          const deg = (Math.atan2(b.y - a.y, b.x - a.x) * 180) / Math.PI;
+          shapes.push(`<polygon points="${pts(band)}" ${bandFill(e.stroke, layer.color, a, deg)}/>`);
+        }
         const own = e.stroke?.color ? ` stroke="${e.stroke.color}"` : '';
-        shapes.push(`<line x1="${n(a.x)}" y1="${y(a.y)}" x2="${n(b.x)}" y2="${y(b.y)}"${own}/>`);
+        const alpha = e.stroke && e.stroke.width === 0 && e.stroke.opacity !== undefined ? ` stroke-opacity="${n(e.stroke.opacity)}"` : '';
+        shapes.push(`<line x1="${n(a.x)}" y1="${y(a.y)}" x2="${n(b.x)}" y2="${y(b.y)}"${own}${alpha}/>`);
       } else if (e.kind === 'circle') {
         const c = doc.point(e.center);
-        shapes.push(`<circle cx="${n(c.x)}" cy="${y(c.y)}" r="${n(e.radius)}"/>`);
+        if (e.stroke && e.stroke.width > 0) {
+          const [r0, r1] = circleBandRadii(e.radius, e.stroke);
+          const ring = (r: number) => `M${n(c.x + r)} ${y(c.y)}A${n(r)} ${n(r)} 0 1 0 ${n(c.x - r)} ${y(c.y)}A${n(r)} ${n(r)} 0 1 0 ${n(c.x + r)} ${y(c.y)}Z`;
+          shapes.push(`<path d="${ring(r1)}${r0 > 0 ? ring(r0) : ''}" fill-rule="evenodd" stroke="none" ${bandFill(e.stroke, layer.color, c, 0)}/>`);
+        }
+        const own = e.stroke?.color ? ` stroke="${e.stroke.color}"` : '';
+        shapes.push(`<circle cx="${n(c.x)}" cy="${y(c.y)}" r="${n(e.radius)}"${own}/>`);
       } else if (e.kind === 'equipment') {
         // Plan symbol shared with the canvas: round columns, stair treads, ramp and lift marks.
         const sym = planSymbol(doc, e);
@@ -105,10 +175,26 @@ export function drawingSvg(doc: DocumentModel): string | null {
     );
   }
 
+  // Graphic scale: a bar of a round length about a sixth of the drawing wide, true at any print size.
+  const bar = scaleBarLength(1, w / 6);
+  const barH = textSize * 0.5;
+  const bx = ext.minX;
+  const by = -ext.minY + margin + footer * 0.5; // SVG y of the bar's top, in the footer under the drawing
+  const segs = [0, 1, 2, 3].map(
+    (i) => `<rect x="${n(bx + (bar / 4) * i)}" y="${n(by)}" width="${n(bar / 4)}" height="${n(barH)}" fill="${i % 2 === 0 ? CANVAS.text : CANVAS.background}"/>`,
+  );
+  const ratio = opts.scale ? ` · 축척 1:${opts.scale}` : '';
+  parts.push(
+    `<g data-role="scale-bar" stroke="${CANVAS.text}">${segs.join('')}<rect x="${n(bx)}" y="${n(by)}" width="${n(bar)}" height="${n(barH)}" fill="none"/></g>`,
+    `<text x="${n(bx)}" y="${n(by - textSize * 0.7)}" font-size="${n(textSize)}" fill="${CANVAS.text}" style="text-anchor:start">${esc(formatScaleLength(bar) + ratio)}</text>`,
+  );
+  // At a print scale the paper size is the drawing size divided by N.
+  const paper = opts.scale ? opts.scale : 1;
   return [
-    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${n(minX)} ${n(minY)} ${n(w)} ${n(h)}" width="${n(w)}mm" height="${n(h)}mm">`,
-    `<style>line,circle,polygon,path{vector-effect:non-scaling-stroke;stroke-width:0.8}text{font-family:system-ui,'Malgun Gothic',sans-serif;text-anchor:middle;dominant-baseline:middle;stroke:none}</style>`,
-    `<rect x="${n(minX)}" y="${n(minY)}" width="${n(w)}" height="${n(h)}" fill="#fff"/>`,
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${n(minX)} ${n(minY)} ${n(w)} ${n(h)}" width="${n(w / paper)}mm" height="${n(h / paper)}mm">`,
+    `<style>line,circle,polygon,path,rect{vector-effect:non-scaling-stroke;stroke-width:0.8}text{font-family:system-ui,'Malgun Gothic',sans-serif;text-anchor:middle;dominant-baseline:middle;stroke:none}</style>`,
+    ...(defs.length > 0 ? [`<defs>${defs.join('')}</defs>`] : []),
+    `<rect x="${n(minX)}" y="${n(minY)}" width="${n(w)}" height="${n(h)}" fill="#fff" stroke="none"/>`,
     ...parts,
     '</svg>',
   ].join('\n');
