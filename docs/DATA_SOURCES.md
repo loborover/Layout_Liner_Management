@@ -18,14 +18,15 @@ Layout Liner는 도면을 그리고 보는 시각 도구입니다. 설비 대장
 
 ## 편집기에서 쓰기
 
-1. 객체(설비, 도형, 선, 점 등)를 선택합니다. 여러 개를 한 번에 선택해도 됩니다.
-2. 속성 패널 아래의 **원본 데이터 (DB, 읽기 전용)** 에서 데이터셋을 고릅니다.
-3. **레코드 키**를 비워 두면 설비는 설비 번호(`MC-1` 등), 다른 객체는 이름이 키가 됩니다. 다르면 키를 직접 입력합니다(입력하는 동안 게이트웨이의 키가 후보로 나옵니다).
-4. 연결되면 같은 칸에 원본 레코드의 필드가 표시됩니다. 뷰어 모드와 모니터링 앱(`viewer.html`)의 정보 카드에도 같은 필드가 나옵니다.
+원본 데이터는 **개체값(Parameter·치수 수식)으로 불러와 쓰는 것**이 목적입니다(2026-11-15 사용자 요청). 개체마다 붙는 설정 칸은 두지 않습니다.
 
-연결과 해제는 실행 취소(Ctrl+Z)가 됩니다. 게이트웨이가 꺼져 있거나 설정되지 않았으면 "연결 안 됨"만 표시되고 편집기는 그대로 동작합니다.
+1. 리본 **외부 연결** 탭의 "원본 데이터 (DB, 읽기 전용)"에서 게이트웨이 주소를 확인하고(기본 `/data`) **DB 연결**을 누릅니다. 상태에 "연결됨: 데이터셋 N개"가 나오고 사이드바의 **외부 데이터** 패널(원통 아이콘)이 열립니다. 주소는 이 브라우저에 기억됩니다.
+2. 외부 데이터 패널에서 데이터셋을 고르고 키를 검색해 레코드를 엽니다. 각 필드의 **참조 복사**를 누르면 `DB("equipment", "MC-1", "정격전력(kW)")` 같은 참조가 클립보드에 복사됩니다.
+3. 복사한 참조를 Parameter 값이나 치수 수식에 붙여 넣으면 원본 값이 쓰입니다. 예: `DB("equipment", "MC-1", "폭(mm)") + 600`. 숫자처럼 보이는 글자(CSV의 `"22"`, `"1,200"`)는 숫자로 바뀝니다.
 
-AI·스크립트에서는 API `linkRecords({ ids, dataset, key? })`, `updateEntity({ id, record: { dataset, key? } })`를 씁니다([API-METHODS.md](API-METHODS.md)). `getEntity` 결과의 `recordKey`가 실제로 쓰이는 키입니다.
+`DB()` 값은 게이트웨이에서 비동기로 가져옵니다. 아직 도착하지 않았거나 게이트웨이가 꺼져 있으면 "값 없음"으로 처리되고 Parameter는 마지막으로 계산된 값을 유지합니다. 값이 도착하면 다시 계산됩니다. Parameter·수식 문법과 저장 형식은 치수 구속 문서를 따릅니다(`src/model/params.ts`).
+
+AI·스크립트에서는 객체 하나를 레코드에 연결하는 `linkRecords({ ids, dataset, key? })`, `updateEntity({ id, record })`도 쓸 수 있습니다([API-METHODS.md](API-METHODS.md)). 연결된 객체는 뷰어 모드와 모니터링 앱의 정보 카드에 원본 필드가 함께 나옵니다.
 
 ### 모니터링 키와의 차이
 
@@ -139,7 +140,8 @@ npm run dev                                                      # /data/ 가 �
 | 파일 | 역할 |
 | --- | --- |
 | [`src/data/records.ts`](../src/data/records.ts) | 참조 형식(`RecordRef`) 검증, 키 규칙(`recordKey`), 응답 형식, 브라우저·Node 공용 클라이언트 `RecordStore`(같은 틱의 조회를 묶고 60초 캐시). DOM 없음 |
-| [`src/ui/recordPanel.ts`](../src/ui/recordPanel.ts) | 속성 패널의 "원본 데이터" 칸, 정보 카드에 붙는 필드 목록 |
+| [`src/data/recordValues.ts`](../src/data/recordValues.ts) | 수식 함수 `DB(dataset, key, field)`, 참조 서식·수집, 미리 가져오기. DOM 없음 |
+| [`src/ui/recordPanel.ts`](../src/ui/recordPanel.ts) | 사이드바 "외부 데이터" 탐색기(`DataBrowser`), 정보 카드에 붙는 필드 목록 |
 | [`gateway/server.ts`](../gateway/server.ts) | 게이트웨이 HTTP 서버(GET만) |
 | [`gateway/datasets.ts`](../gateway/datasets.ts) | 설정 검증, 데이터셋 캐시와 주기적 갱신 |
 | [`gateway/drivers.ts`](../gateway/drivers.ts) | 원본별 읽기(CSV, JSON, SQLite, PostgreSQL, MySQL, SQL Server, HTTP), 조회문 검사 |

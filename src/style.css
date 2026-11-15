@@ -466,6 +466,26 @@ button.wide {
   justify-content: center;
 }
 
+/* External data browser (side bar "외부 데이터"): scrolling key list, record fields with copy buttons. */
+.list.data-keys {
+  max-height: 240px;
+  overflow: auto;
+}
+
+.list.data-keys button {
+  width: 100%;
+  justify-content: flex-start;
+}
+
+.list.data-keys button[aria-pressed='true'] {
+  border-color: var(--accent);
+}
+
+#data-browser .props .v button {
+  padding: 0 6px;
+  font-size: 11px;
+}
+
 .list .lib-head {
   font-size: 11px;
   color: var(--ink-muted);

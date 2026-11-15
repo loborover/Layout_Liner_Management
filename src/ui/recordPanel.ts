@@ -1,48 +1,22 @@
 /**
  * @file recordPanel.ts
  *
- * Widgets of the source data link ("원본 데이터", docs/DATA_SOURCES.md): the property panel section that links
- * selected objects to a dataset of the data gateway and shows the linked record's fields, and the block the
- * information card (viewer mode, monitoring viewer app) appends for a linked object. Records are read-only here:
- * the panel only stores the link (dataset and optional key) in the drawing, as one undoable command.
+ * Widgets of the source data link ("외부 데이터", docs/DATA_SOURCES.md):
+ * - `DataBrowser`, the side bar section opened from the ribbon's "외부 연결" tab: pick a dataset of the data
+ *   gateway, search its records and copy a field as a `DB("dataset", "key", "field")` reference to use in a
+ *   parameter or formula (src/data/recordValues.ts). Read-only: nothing here changes the source.
+ * - `appendRecordInfo`, the block the information card (viewer mode, monitoring viewer app) adds for an object
+ *   that links to a record (`entity.record`, set through the API).
  * Lookups go through RecordStore (src/data/records.ts) and fill in asynchronously.
  */
-import { type RecordState, type RecordStore, defaultRecordKey, formatField, recordKey } from '../data/records';
-import { UpdateEntities } from '../model/commands';
-import { cloneEntity } from '../model/document';
+import { type DatasetInfo, type RecordState, type RecordStore, formatField, recordKey } from '../data/records';
+import { formatFieldRef } from '../data/recordValues';
 import type { Entity } from '../model/types';
-import type { UiHost } from './host';
 
 /** Fields shown before "더 보기"; a record can have dozens of columns. */
 const MAX_SHOWN_FIELDS = 12;
-
-function row(f: HTMLElement, key: string, value: Node | string, cls = ''): void {
-  const k = document.createElement('span');
-  k.className = 'k';
-  k.textContent = key;
-  const v = document.createElement('span');
-  v.className = `v ${cls}`;
-  v.append(value);
-  f.append(k, v);
-}
-
-function note(f: HTMLElement, text: string, warn = false): HTMLElement {
-  const n = document.createElement('div');
-  n.className = warn ? 'warning' : 'warning muted';
-  n.textContent = text;
-  f.append(n);
-  return n;
-}
-
-/** Applies a link change to `items` as one undo step. */
-function relink(host: UiHost, label: string, items: Entity[], edit: (c: Entity) => void): void {
-  const after = items.map((e) => {
-    const c = cloneEntity(e);
-    edit(c);
-    return c;
-  });
-  host.history.execute(new UpdateEntities(label, items, after));
-}
+/** Keys listed per search. */
+const KEY_LIST_LIMIT = 100;
 
 /** Text for a lookup that did not produce a record. */
 function stateText(s: RecordState, key: string): string {
@@ -50,128 +24,6 @@ function stateText(s: RecordState, key: string): string {
   if (s.status === 'missing') return `원본에 '${key}' 레코드가 없습니다.`;
   if (s.status === 'error') return s.message;
   return '';
-}
-
-/**
- * Property panel section "원본 데이터" for one or more selected objects: dataset picker, record key (one
- * object) and the linked record's fields.
- */
-export function recordSet(host: UiHost, items: Entity[], readOnly: boolean): HTMLFieldSetElement {
-  const f = document.createElement('fieldset');
-  const legend = document.createElement('legend');
-  legend.textContent = '원본 데이터 (DB, 읽기 전용)';
-  f.append(legend);
-  const store = host.records;
-  if (!store) {
-    note(f, '데이터 게이트웨이 주소가 설정되지 않았습니다.');
-    return f;
-  }
-  const first = items[0];
-  const shared = items.every((e) => e.record?.dataset === first.record?.dataset) ? (first.record?.dataset ?? '') : null;
-
-  // Dataset picker: filled when the gateway answers; the current value is kept even if the gateway is down.
-  const select = document.createElement('select');
-  select.disabled = readOnly;
-  const base = [new Option('(연결 안 함)', '')];
-  if (shared === null) base.unshift(new Option('(여러 데이터셋)', '\u0000'));
-  if (shared) base.push(new Option(shared, shared));
-  select.replaceChildren(...base);
-  select.value = shared ?? '\u0000';
-  select.addEventListener('change', () => {
-    const v = select.value;
-    if (v === '\u0000') return;
-    relink(host, v ? '원본 데이터 연결' : '원본 데이터 연결 해제', items, (c) => {
-      if (!v) delete c.record;
-      else c.record = { dataset: v, ...(c.record?.dataset === v && c.record.key ? { key: c.record.key } : {}) };
-    });
-  });
-  row(f, '데이터셋', select);
-  const status = note(f, '데이터셋 목록을 불러오는 중…');
-  store.datasets().then(
-    (list) => {
-      for (const d of list) {
-        if (d.name === shared) {
-          select.querySelector<HTMLOptionElement>(`option[value="${CSS.escape(d.name)}"]`)!.text = d.label ? `${d.label} (${d.name})` : d.name;
-          continue;
-        }
-        select.append(new Option(d.label ? `${d.label} (${d.name})` : d.name, d.name));
-      }
-      const current = list.find((d) => d.name === shared);
-      if (list.length === 0) status.textContent = '게이트웨이에 설정된 데이터셋이 없습니다(docs/DATA_SOURCES.md).';
-      else if (shared && !current) status.textContent = `게이트웨이에 '${shared}' 데이터셋이 없습니다.`;
-      else if (current?.error) {
-        status.textContent = `원본 읽기 오류: ${current.error}`;
-        status.className = 'warning';
-      } else status.remove();
-    },
-    (err: unknown) => {
-      status.textContent = `데이터 게이트웨이 연결 안 됨: ${err instanceof Error ? err.message : String(err)}`;
-    },
-  );
-
-  if (items.length > 1) {
-    const linked = items.filter((e) => recordKey(e) !== undefined).length;
-    row(f, '연결', `${linked} / ${items.length}개`);
-    note(f, '여러 객체를 한 번에 연결하면 각 객체의 설비 번호(없으면 이름)가 레코드 키가 됩니다.');
-    return f;
-  }
-
-  const e = first;
-  const key = document.createElement('input');
-  key.type = 'text';
-  key.value = e.record?.key ?? '';
-  key.disabled = readOnly || !e.record;
-  const fallback = defaultRecordKey(e);
-  key.placeholder = fallback ? `${fallback} (기본: ${e.kind === 'equipment' && e.tag.trim() ? '설비 번호' : '이름'})` : '레코드 키';
-  key.title = '원본 레코드의 키 값. 비워 두면 설비 번호, 없으면 이름을 키로 씁니다.';
-  key.addEventListener('keydown', (ev) => ev.key === 'Enter' && key.blur());
-  key.addEventListener('change', () =>
-    relink(host, '원본 레코드 키 변경', [e], (c) => {
-      if (!c.record) return;
-      const v = key.value.trim();
-      c.record = { dataset: c.record.dataset, ...(v ? { key: v } : {}) };
-    }),
-  );
-  // Suggest keys from the gateway while typing.
-  const list = document.createElement('datalist');
-  list.id = `record-keys-${Math.random().toString(36).slice(2)}`;
-  key.setAttribute('list', list.id);
-  let asked = '';
-  key.addEventListener('input', () => {
-    const q = key.value.trim();
-    if (!e.record || q === asked) return;
-    asked = q;
-    store.keys(e.record.dataset, q, 30).then(
-      (keys) => list.replaceChildren(...keys.map((k) => new Option(k, k))),
-      () => undefined,
-    );
-  });
-  const keyCell = document.createElement('span');
-  keyCell.append(key, list);
-  row(f, '레코드 키', keyCell);
-  if (!e.record) {
-    if (!readOnly) note(f, '데이터셋을 고르면 이 객체가 원본 레코드를 참조합니다. 값은 원본에서만 고칩니다.');
-    return f;
-  }
-  const k = recordKey(e);
-  if (!k) {
-    note(f, '레코드 키가 없습니다. 키를 입력하거나 이름(설비 번호)을 지정하십시오.', true);
-    return f;
-  }
-  const body = document.createElement('div');
-  body.style.display = 'contents';
-  f.append(body);
-  const show = (s: RecordState) => {
-    body.replaceChildren();
-    if (s.status !== 'ok') {
-      note(body, stateText(s, k), s.status !== 'loading');
-      return;
-    }
-    fieldRows(body, s.fields, (name, value) => row(body, name, value));
-  };
-  show(store.peek(e.record.dataset, k) ?? { status: 'loading' });
-  void store.get(e.record.dataset, k).then(show);
-  return f;
 }
 
 /** Adds up to MAX_SHOWN_FIELDS rows of a record, with a toggle for the rest. */
@@ -220,4 +72,155 @@ export function appendRecordInfo(card: HTMLElement, store: RecordStore | undefin
   const cached = store.peek(e.record.dataset, key);
   if (cached && cached.status !== 'loading') return fill(cached);
   void store.get(e.record.dataset, key).then(fill);
+}
+
+/**
+ * Side bar section "외부 데이터": datasets of the gateway, their records, and copyable field references.
+ * `notify` shows a status bar message (copy results, errors).
+ */
+export class DataBrowser {
+  private dataset = '';
+  private key = '';
+  private datasets: DatasetInfo[] = [];
+  private status: HTMLElement;
+  private select: HTMLSelectElement;
+  private search: HTMLInputElement;
+  private keys: HTMLUListElement;
+  private record: HTMLElement;
+  private searchSeq = 0;
+
+  constructor(
+    root: HTMLElement,
+    private readonly store: RecordStore,
+    private readonly notify: (text: string) => void,
+  ) {
+    this.status = el('p', 'muted');
+    this.select = document.createElement('select');
+    this.select.addEventListener('change', () => this.pickDataset(this.select.value));
+    this.search = document.createElement('input');
+    this.search.type = 'search';
+    this.search.placeholder = '키 검색 (예: MC)';
+    this.search.addEventListener('input', () => this.listKeys());
+    this.keys = el('ul', 'list data-keys') as HTMLUListElement;
+    this.record = el('div', 'props');
+    const pick = el('label', 'row');
+    pick.append('데이터셋 ', this.select);
+    root.replaceChildren(this.status, pick, this.search, this.keys, this.record);
+    store.onChange(() => {
+      if (this.key) void this.showRecord();
+    });
+  }
+
+  /** Reloads the dataset list (after opening the section or changing the gateway address). */
+  async refresh(): Promise<void> {
+    this.status.textContent = `불러오는 중… (${this.store.base})`;
+    try {
+      this.datasets = await this.store.datasets(true);
+    } catch (err) {
+      this.datasets = [];
+      this.status.textContent = `데이터 게이트웨이 연결 안 됨: ${message(err)}`;
+      this.select.replaceChildren();
+      this.keys.replaceChildren();
+      this.record.replaceChildren();
+      return;
+    }
+    this.status.textContent = this.datasets.length
+      ? `${this.store.base} · 데이터셋 ${this.datasets.length}개 (읽기 전용)`
+      : '게이트웨이에 설정된 데이터셋이 없습니다(docs/DATA_SOURCES.md).';
+    this.select.replaceChildren(...this.datasets.map((d) => new Option(`${d.label ?? d.name} (${d.count}건)`, d.name)));
+    const keep = this.datasets.some((d) => d.name === this.dataset) ? this.dataset : (this.datasets[0]?.name ?? '');
+    this.select.value = keep;
+    this.pickDataset(keep);
+  }
+
+  private pickDataset(name: string): void {
+    if (name !== this.dataset) this.key = '';
+    this.dataset = name;
+    const info = this.datasets.find((d) => d.name === name);
+    if (info?.error) this.status.textContent = `원본 읽기 오류: ${info.error}`;
+    void this.listKeys();
+    void this.showRecord();
+  }
+
+  private async listKeys(): Promise<void> {
+    const seq = ++this.searchSeq;
+    if (!this.dataset) return this.keys.replaceChildren();
+    let keys: string[];
+    try {
+      keys = await this.store.keys(this.dataset, this.search.value.trim(), KEY_LIST_LIMIT);
+    } catch (err) {
+      if (seq === this.searchSeq) this.keys.replaceChildren(el('li', 'muted', message(err)));
+      return;
+    }
+    if (seq !== this.searchSeq) return;
+    this.keys.replaceChildren(
+      ...keys.map((k) => {
+        const li = document.createElement('li');
+        const b = document.createElement('button');
+        b.textContent = k;
+        b.setAttribute('aria-pressed', String(k === this.key));
+        b.addEventListener('click', () => {
+          this.key = k;
+          this.keys.querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+          void this.showRecord();
+        });
+        li.append(b);
+        return li;
+      }),
+    );
+    if (keys.length === 0) this.keys.append(el('li', 'muted', '일치하는 레코드가 없습니다.'));
+  }
+
+  private async showRecord(): Promise<void> {
+    const { dataset, key } = this;
+    if (!dataset || !key) return this.record.replaceChildren();
+    const s = await this.store.get(dataset, key);
+    if (dataset !== this.dataset || key !== this.key) return;
+    const f = document.createElement('fieldset');
+    const legend = document.createElement('legend');
+    legend.textContent = key;
+    f.append(legend);
+    if (s.status !== 'ok') {
+      f.append(el('div', 'warning', stateText(s, key)));
+    } else {
+      for (const [field, v] of Object.entries(s.fields)) {
+        const k = el('span', 'k', field);
+        const value = el('span', 'v');
+        const text = el('span', '', formatField(v));
+        const copy = document.createElement('button');
+        copy.textContent = '참조 복사';
+        const ref = formatFieldRef({ dataset, key, field });
+        copy.title = `${ref}\nParameter 값이나 수식에 붙여 넣으면 이 값을 씁니다`;
+        copy.addEventListener('click', () => void this.copy(ref));
+        value.append(text, ' ', copy);
+        f.append(k, value);
+      }
+      const hint = el('div', 'muted', '참조를 Parameter·치수 수식에 붙여 넣으면 원본 값이 개체값으로 쓰입니다. 값은 원본에서만 고칩니다.');
+      hint.style.gridColumn = '1 / -1';
+      hint.style.fontSize = '11.5px';
+      f.append(hint);
+    }
+    this.record.replaceChildren(f);
+  }
+
+  private async copy(ref: string): Promise<void> {
+    try {
+      await navigator.clipboard.writeText(ref);
+      this.notify(`복사됨: ${ref}`);
+    } catch {
+      // Clipboard needs a secure context (https or localhost); show the text to copy by hand instead.
+      this.notify(`복사할 수 없습니다. 직접 복사하십시오: ${ref}`);
+    }
+  }
+}
+
+function el(tag: string, cls = '', text?: string): HTMLElement {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text !== undefined) e.textContent = text;
+  return e;
+}
+
+function message(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }

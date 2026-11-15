@@ -1,7 +1,7 @@
 /**
  * @file bridge.ts
  *
- * Browser side of the MCP live bridge. When the user presses "AI 연결" (ribbon AI·API tab), the editor opens a
+ * Browser side of the MCP live bridge. When the user presses "AI 연결" (ribbon "외부 연결" tab), the editor opens a
  * WebSocket to the MCP server (mcp/server.ts, default ws://127.0.0.1:7820) and answers its JSON-RPC requests
  * with the editor's own EditorApi, so an AI's edits appear live and are undoable like the user's.
  * Protocol: the server sends {jsonrpc:'2.0', id, method, params}; the editor replies with handleJsonRpc's result.

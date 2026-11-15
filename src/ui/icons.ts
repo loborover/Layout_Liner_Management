@@ -46,6 +46,7 @@ const PATHS = {
   edit: '<path d="M4 20h4L19 9l-4-4L4 16Z"/>',
   view: '<path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/>',
   ai: '<rect x="4" y="7" width="16" height="12" rx="3"/><path d="M12 3v4M9 12h0M15 12h0M9 16h6"/>',
+  database: '<ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/>',
   pulse: '<path d="M3 12h4l2-6 4 12 2-6h6"/>',
 } as const;
 
