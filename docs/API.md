@@ -19,6 +19,7 @@ AI와 스크립트가 편집기를 조작하는 방법입니다. 메서드는 �
 - 점 좌표 `z`는 층 바닥에서의 높이(mm, 위쪽)입니다. `setPoint`로 X·Y·Z를(선의 중간점 `middle.id`를 주면 선 전체가 이동), `updateEntity`의 `height`로 객체 높이를 고칩니다(`null`이면 기본값). 구속이 걸린 점의 X·Y는 API에서 바꿀 수 없습니다.
 - `addPoint`는 독립 점 객체를 놓습니다. 높이(`height`)의 기본값은 모두 0입니다.
 - `addLabel`은 "제목: 내용" 행의 독립 라벨을, `updateEntity`의 `label`은 도형 라벨(배치 기준·이동·추가 행·투명도·표시)이나 라벨 객체 설정을 바꿉니다. 도형 라벨은 기본으로 이름·면적을 면적 중심에 표시합니다.
+- `linkRecords`와 `updateEntity`의 `record`는 객체를 원본 데이터(DB) 레코드에 읽기 전용으로 연결합니다(`{ dataset, key? }`, key를 생략하면 설비 번호나 이름). 원본 값은 API로 바꾸지 않으며, 값 조회는 데이터 게이트웨이의 HTTP API로 합니다([DATA_SOURCES.md](DATA_SOURCES.md)).
 - `editCorner`(필렛·모따기), `insertVertex`, `removeVertex`는 두 선이 만나는 꼭짓점과 선을 2D CAD처럼 편집합니다. 필렛은 호를 따라 짧은 선들로 만듭니다.
 - `placeColumn`은 기둥 생성기입니다(사각·원형·H형강). 같은 크기의 라이브러리 종류를 재사용하고 없으면 추가합니다.
 - 테두리 `stroke.join`(`miter`, `round`, `bevel`)은 다른 띠와 만나는 모서리 바깥쪽 처리입니다. 안쪽은 늘 정확히 만나므로 `inside` 테두리는 기준선 밖으로 나가지 않습니다.

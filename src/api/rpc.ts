@@ -204,13 +204,19 @@ export const METHODS: Record<string, MethodSpec> = {
   },
   updateEntity: {
     description:
-      '객체 속성 변경: name, layer, binding(모니터링 키), stroke(선·원의 테두리), fill/fillOpacity(도형 면 색·면 불투명도 0~1), tag/rotation/props(설비·구조), radius(원), height(3D 높이 mm), label(도형 라벨·라벨 객체 설정). null은 지움.',
+      '객체 속성 변경: name, layer, binding(모니터링 키), record(원본 데이터 연결 {dataset, key?}), stroke(선·원의 테두리), fill/fillOpacity(도형 면 색·면 불투명도 0~1), tag/rotation/props(설비·구조), radius(원), height(3D 높이 mm), label(도형 라벨·라벨 객체 설정). null은 지움.',
     params: obj(
       {
         id: str('객체 id'),
         name: { type: ['string', 'null'] },
         layer: str('같은 층의 레이어 id'),
         binding: { type: ['string', 'null'] },
+        record: {
+          type: ['object', 'null'],
+          description: '원본 데이터(DB) 레코드 참조. dataset은 데이터 게이트웨이의 데이터셋 이름, key를 생략하면 설비 번호(없으면 이름)가 키. null이면 연결 해제',
+          properties: { dataset: { type: 'string' }, key: { type: 'string' } },
+          required: ['dataset'],
+        },
         stroke,
         fill: { type: ['string', 'null'] },
         fillOpacity: { type: ['number', 'null'], minimum: 0, maximum: 1, description: '도형 면만의 불투명도(0~1). null이면 기본값' },
@@ -236,6 +242,20 @@ export const METHODS: Record<string, MethodSpec> = {
     params: obj({ id: str('점 id'), x: num('X (mm)'), y: num('Y (mm)'), z: num('Z: 층 바닥 기준 높이 (mm)') }, ['id']),
     mutates: true,
     run: (api, p) => api.setPoint(p as never),
+  },
+  linkRecords: {
+    description:
+      '객체들을 원본 데이터(DB) 데이터셋의 레코드에 연결합니다(읽기 전용 참조, docs/DATA_SOURCES.md). key를 생략하면 각 객체의 설비 번호(없으면 이름)가 레코드 키입니다. dataset: null이면 연결을 해제합니다.',
+    params: obj(
+      {
+        ids,
+        dataset: { type: ['string', 'null'], description: '데이터셋 이름(영문·숫자·_-.). null은 연결 해제' },
+        key: str('레코드 키 (객체 하나일 때만)'),
+      },
+      ['ids', 'dataset'],
+    ),
+    mutates: true,
+    run: (api, p) => api.linkRecords(p as never),
   },
   setStroke: {
     description: '선·원과 도형의 변에 테두리(벽 두께, 바닥 표시 줄무늬 등)를 지정합니다. stroke=null이면 지웁니다.',

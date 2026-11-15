@@ -7,7 +7,8 @@
  * by severity, and an information card on click. It reuses the editor's model, renderer and InspectTool but has
  * no editing code paths, so it can be deployed for monitoring screens on its own.
  *
- * Configuration (docs/VIEWER.md): URL parameters drawing, source, interval, floor, or config=<json url> with
+ * Configuration (docs/VIEWER.md): URL parameters drawing, source, interval, floor, data (data gateway address,
+ * docs/DATA_SOURCES.md), or config=<json url> with
  * { drawing, source, interval, thresholds, staleMs }.
  */
 import { DocumentModel } from '../model/document';
@@ -22,6 +23,8 @@ import type { ToolContext, ToolPointer } from '../tools/tool';
 import { hydrateIcons } from '../ui/icons';
 import type { LiveValue } from '../ui/host';
 import { fillInspector } from '../ui/inspector';
+import { appendRecordInfo } from '../ui/recordPanel';
+import { RecordStore, gatewayAddress } from '../data/records';
 import { Sidebar } from '../ui/sidebar';
 import { showVersion } from '../ui/version';
 import { type EntityStatus, Renderer } from '../view/renderer';
@@ -57,6 +60,8 @@ class ViewerApp {
   readonly view = new Viewport();
   readonly index = new SpatialIndex(this.doc);
   readonly values = new Map<string, LiveValue>();
+  /** Source data links shown on the information card (docs/DATA_SOURCES.md); `?data=` sets the gateway address. */
+  readonly records = new RecordStore(gatewayAddress(location.search));
   private renderer: Renderer;
   private tool: InspectTool;
   private canvas = $<HTMLCanvasElement>('#canvas');
@@ -299,6 +304,7 @@ class ViewerApp {
       this.selection.clear();
       this.inspect(null, { x: 0, y: 0 });
     });
+    appendRecordInfo(this.card, this.records, e);
   }
 
   // ---------- UI ----------

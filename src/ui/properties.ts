@@ -22,6 +22,7 @@ import { ANCHOR_LABELS, MAX_LABEL_ITEMS, MAX_LABEL_TEXT, labelOpacity, labelSize
 import type { CircleEntity, Entity, Id, LabelAnchor, LabelEntity, LabelItem, LineEntity, PropValue, ShapeEntity, ShapeLabel, StrokeJoin, StrokeStyle, Underlay } from '../model/types';
 import { formatArea, formatLength } from '../view/format';
 import type { UiHost } from './host';
+import { recordSet } from './recordPanel';
 import { CANVAS, LAYER_DEFAULT, MARKING, SHAPE_FILL } from '../theme';
 
 const ALIGN_LABELS = { inside: '내측', center: '중심', outside: '외측' } as const;
@@ -80,6 +81,7 @@ export class PropertyPanel {
     else if (items.length === 0) sets.push(this.floorInfo());
     else if (items.length === 1) sets.push(...this.single(items[0]));
     else sets.push(...this.multiple(items));
+    if (items.length > 0) sets.push(recordSet(this.host, items, this.readOnly));
     this.root.replaceChildren(...sets);
   }
 

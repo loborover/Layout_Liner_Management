@@ -57,6 +57,7 @@
 - 구조 프리셋: 기둥(사각·원형), 계단, 경사로, 리프트. 계단 단수·단높이, 경사로 기울기, 리프트 운행 층 같은 특성을 계산·검토하고, 연결된 다른 층에는 점선으로 보여 줍니다
 - 뷰어 모드: 빠른 실행 바에서 편집/뷰어를 전환합니다. 뷰어에서는 편집이 막히고 클릭하면 정보 카드가 뜹니다
 - 모니터링 앱(`viewer.html`): 호스트 서버의 값을 WebSocket 또는 REST 폴링으로 받아 객체를 상태 색(정상·주의·경보·수신 없음)으로 표시합니다. 자세한 내용은 [docs/VIEWER.md](docs/VIEWER.md)
+- 원본 데이터(DB) 연결: 설비·도형 등 객체가 외부 DB(PostgreSQL, MySQL/MariaDB, SQL Server, SQLite, CSV, JSON, 기존 API)의 레코드를 읽기 전용으로 참조해 속성 패널과 정보 카드에 원본 필드를 보여 줍니다. 호스트 서버의 데이터 게이트웨이를 거치므로 브라우저는 DB에 직접 접속하지 않습니다. 자세한 내용은 [docs/DATA_SOURCES.md](docs/DATA_SOURCES.md)
 - AI용 API와 MCP 서버: AI가 도면을 읽고 편집하도록 MCP 도구, HTTP JSON-RPC, 브라우저 실시간 연결을 제공합니다. 자세한 내용은 [docs/API.md](docs/API.md)
 
 ### 7단계: 테마·점 편집·3D
@@ -75,6 +76,7 @@ npm test         # 단위 테스트
 npm run build    # 배포용 빌드 (dist/: 편집기 index.html + 모니터링 앱 viewer.html)
 npm run mcp -- --file drawing.json   # AI용 MCP 서버 (docs/API.md)
 npm run demo:host                    # 모니터링 앱 시험용 예제 호스트 서버 (docs/VIEWER.md)
+npm run data:gateway -- --config gateway/example/datasets.json  # 원본 데이터(DB) 게이트웨이 (docs/DATA_SOURCES.md)
 npm run docs:api                     # docs/API-METHODS.md 다시 만들기
 ```
 
@@ -97,6 +99,7 @@ Claude Code에서는 저장소의 `.mcp.json`으로 MCP 서버가 자동 등록�
 | `src/ui/` | 리본, 사이드바, 객체 트리, 속성 패널, 라이브러리, 정보 카드 |
 | `src/api/` | AI·스크립트용 편집 API, JSON-RPC 메서드 표, 브라우저 브리지 |
 | `src/viewer/` | 모니터링 앱과 데이터 소스(WebSocket, REST 폴링, 모의) |
+| `src/data/`, `gateway/` | 원본 데이터(DB) 읽기 전용 연결: 클라이언트와 호스트용 데이터 게이트웨이 |
 | `mcp/` | MCP 서버(Node) |
 | `scripts/` | 문서 생성, 예제 호스트 서버 |
 | `docs/` | [아키텍처](docs/ARCHITECTURE.md), [데이터 모델](docs/DATA_MODEL.md), [API](docs/API.md), [뷰어](docs/VIEWER.md) |

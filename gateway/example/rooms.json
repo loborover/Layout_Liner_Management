@@ -1,0 +1,7 @@
+{
+  "items": [
+    { "roomNo": "A-101", "name": "가공동", "department": "생산1팀", "cleanClass": "", "manager": "김기술" },
+    { "roomNo": "A-102", "name": "조립동", "department": "생산2팀", "cleanClass": "", "manager": "박조립" },
+    { "roomNo": "B-201", "name": "검사실", "department": "품질팀", "cleanClass": "ISO 7", "manager": "정품질" }
+  ]
+}

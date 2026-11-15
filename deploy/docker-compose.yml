@@ -7,3 +7,19 @@ services:
     ports:
       - "${LAYOUT_LINER_PORT:-8080}:80"
     restart: unless-stopped
+
+  # Read-only data gateway for source data links (docs/DATA_SOURCES.md). The editor reaches it at /data/ through
+  # the container above; it publishes no port of its own. Put datasets.json (and CSV/JSON/SQLite files) in ./data
+  # and database passwords in ./data.env (see deploy/README.md). Without datasets.json it starts empty.
+  layout-liner-data:
+    image: ghcr.io/loborover/layout-liner-data:${LAYOUT_LINER_VERSION:-latest}
+    container_name: layout-liner-data
+    volumes:
+      - ./data:/config:ro
+    env_file:
+      - path: ./data.env
+        required: false
+    extra_hosts:
+      # Lets datasets.json reach a database on the Docker host itself as host.docker.internal.
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped

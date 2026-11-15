@@ -35,6 +35,7 @@ import { hasHeight, heightOf } from '../model/heights';
 import { type CornerMode, editCorner, insertVertex, removeVertex } from '../model/corners';
 import { labelRows, shapeLabelPlacement } from '../model/labels';
 import { buildScene } from '../model/scene3d';
+import { MAX_RECORD_KEY, parseRecordRef, recordKey } from '../data/records';
 import { newId } from '../model/ids';
 import { CATEGORY_LABELS, COLUMN_SECTIONS, type ColumnSection, PROP_DEFS, categoryOf, cleanProps, columnTypeFor, presetInfo } from '../model/presets';
 import type { CircleEntity, DocumentData, Entity, EquipmentType, Floor, Folder, Id, Layer, LineEntity, Point, ShapeEntity, StructureCategory } from '../model/types';
@@ -128,7 +129,12 @@ export class EditorApi {
       const pt = doc.point(id);
       return { id, x: pt.x, y: pt.y, z: pt.z ?? 0 };
     };
-    const base = { ...cloneEntity(e), floor: doc.floorOf(e), ...(hasHeight(e) ? { effectiveHeight: heightOf(doc, e) } : {}) };
+    const base = {
+      ...cloneEntity(e),
+      floor: doc.floorOf(e),
+      ...(hasHeight(e) ? { effectiveHeight: heightOf(doc, e) } : {}),
+      ...(e.record ? { recordKey: recordKey(e) ?? null } : {}),
+    };
     switch (e.kind) {
       case 'point':
         return { ...base, position: at(e.at) };
@@ -351,6 +357,7 @@ export class EditorApi {
     name?: string | null;
     layer?: Id;
     binding?: string | null;
+    record?: { dataset: string; key?: string } | null;
     stroke?: unknown;
     fill?: string | null;
     fillOpacity?: number | null;
@@ -379,6 +386,10 @@ export class EditorApi {
     if (p.binding !== undefined) {
       if (p.binding) c.binding = String(p.binding);
       else delete c.binding;
+    }
+    if (p.record !== undefined) {
+      if (p.record === null) delete c.record;
+      else c.record = this.recordRef(p.record);
     }
     if (p.layer !== undefined) {
       const layer = this.doc.layers.get(p.layer);
@@ -438,6 +449,25 @@ export class EditorApi {
     }
     this.history.execute(new UpdateEntities('속성 변경', [e], [c]));
     return this.describe(this.doc.entities.get(e.id)!);
+  }
+
+  /**
+   * Links objects to records of a data gateway dataset (read-only source data, docs/DATA_SOURCES.md), or unlinks
+   * them with `dataset: null`. Without `key` each object's equipment number (else its name) is the record key.
+   */
+  linkRecords(p: { ids: Id[]; dataset: string | null; key?: string }) {
+    const items = this.ids(p.ids).map((id) => this.entity(id));
+    if (p.key !== undefined && items.length > 1) throw new ApiError('key는 객체 하나에만 지정합니다. 여러 객체는 각자의 번호·이름이 키가 됩니다.');
+    const ref = p.dataset === null ? null : this.recordRef({ dataset: p.dataset, key: p.key });
+    const after = items.map((e) => {
+      const c = cloneEntity(e);
+      if (ref) c.record = { ...ref };
+      else delete c.record;
+      return c;
+    });
+    this.history.execute(new UpdateEntities(ref ? '원본 데이터 연결' : '원본 데이터 연결 해제', items, after));
+    const linked = after.filter((e) => recordKey(e) !== undefined).length;
+    return { count: items.length, linked, withoutKey: after.filter((e) => e.record && recordKey(e) === undefined).map((e) => e.id) };
   }
 
   /** Border for lines, circles and the edges of shapes among `ids`; `stroke: null` clears it. */
@@ -726,6 +756,15 @@ export class EditorApi {
   }
 
   /** Runs a file-format validator, turning its FormatError into an ApiError for the caller. */
+  private recordRef(v: unknown) {
+    const ref = parseRecordRef(v);
+    if (!ref) throw new ApiError('record는 { dataset, key? } 형식이며 dataset은 영문·숫자·_-. 64자 이내입니다.');
+    if (v && typeof v === 'object' && (v as { key?: unknown }).key !== undefined && !ref.key && (v as { key?: unknown }).key !== '') {
+      throw new ApiError(`key는 ${MAX_RECORD_KEY}자 이내의 문자열이어야 합니다.`);
+    }
+    return ref;
+  }
+
   private parse<T>(fn: () => T): T {
     try {
       return fn();

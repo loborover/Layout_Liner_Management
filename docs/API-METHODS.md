@@ -20,8 +20,9 @@
 | [`addCircle`](#addcircle) | 예 | 원을 그립니다. |
 | [`addDimension`](#adddimension) | 예 | 두 점 사이 정렬 치수를 추가합니다. 기존 끝점에 붙으면 형상을 따라 값이 바뀝니다. |
 | [`placeEquipment`](#placeequipment) | 예 | 설비 또는 구조 프리셋(기둥·계단·경사로·리프트)을 중심 (x, y)에 배치합니다. type은 라이브러리 id나 이름. |
-| [`updateEntity`](#updateentity) | 예 | 객체 속성 변경: name, layer, binding(모니터링 키), stroke(선·원의 테두리), fill/fillOpacity(도형 면 색·면 불투명도 0~1), tag/rotation/props(설비·구조), radius(원), height(3D 높이 mm), label(도형 라벨·라벨 객체 설정). null은 지움. |
+| [`updateEntity`](#updateentity) | 예 | 객체 속성 변경: name, layer, binding(모니터링 키), record(원본 데이터 연결 {dataset, key?}), stroke(선·원의 테두리), fill/fillOpacity(도형 면 색·면 불투명도 0~1), tag/rotation/props(설비·구조), radius(원), height(3D 높이 mm), label(도형 라벨·라벨 객체 설정). null은 지움. |
 | [`setPoint`](#setpoint) | 예 | 점(꼭짓점)을 X·Y·Z(mm) 위치로 옮깁니다. 이 점을 쓰는 선·도형·치수가 함께 바뀝니다. Z는 층 바닥 기준 높이. 점 id는 getEntity의 start/middle/end/position/polygon에 있습니다. 선의 중간점(middle)을 옮기면 선 전체가 옮겨집니다. |
+| [`linkRecords`](#linkrecords) | 예 | 객체들을 원본 데이터(DB) 데이터셋의 레코드에 연결합니다(읽기 전용 참조, docs/DATA_SOURCES.md). key를 생략하면 각 객체의 설비 번호(없으면 이름)가 레코드 키입니다. dataset: null이면 연결을 해제합니다. |
 | [`setStroke`](#setstroke) | 예 | 선·원과 도형의 변에 테두리(벽 두께, 바닥 표시 줄무늬 등)를 지정합니다. stroke=null이면 지웁니다. |
 | [`moveEntities`](#moveentities) | 예 | 객체를 (dx, dy)만큼 옮깁니다. 공유된 점에 연결된 형상도 따라 움직입니다. |
 | [`rotateEntities`](#rotateentities) | 예 | 90° 단위로 회전합니다. 설비만 선택하면 제자리 회전입니다. |
@@ -203,7 +204,7 @@
 
 ## updateEntity
 
-객체 속성 변경: name, layer, binding(모니터링 키), stroke(선·원의 테두리), fill/fillOpacity(도형 면 색·면 불투명도 0~1), tag/rotation/props(설비·구조), radius(원), height(3D 높이 mm), label(도형 라벨·라벨 객체 설정). null은 지움.
+객체 속성 변경: name, layer, binding(모니터링 키), record(원본 데이터 연결 {dataset, key?}), stroke(선·원의 테두리), fill/fillOpacity(도형 면 색·면 불투명도 0~1), tag/rotation/props(설비·구조), radius(원), height(3D 높이 mm), label(도형 라벨·라벨 객체 설정). null은 지움.
 
 | 매개변수 | 형식 | 필수 | 설명 |
 | --- | --- | --- | --- |
@@ -211,6 +212,7 @@
 | `name` | string \| null |  |  |
 | `layer` | string |  | 같은 층의 레이어 id |
 | `binding` | string \| null |  |  |
+| `record` | object \| null |  | 원본 데이터(DB) 레코드 참조. dataset은 데이터 게이트웨이의 데이터셋 이름, key를 생략하면 설비 번호(없으면 이름)가 키. null이면 연결 해제 |
 | `stroke` | object \| null |  | 테두리(Border, 선 양식). width(mm, Weight, 0=가는 선), align(center\|inside\|outside: 그린 선 기준 띠 위치), color(#rrggbb), opacity(0~1, 불투명도), join(miter\|round\|bevel: 다른 띠와 만나는 모서리의 바깥쪽 처리), pattern(줄무늬: stripes[{color, size(상대 크기)}], unit(크기 1의 폭 mm), angle(선 방향 기준 °)). null이면 지움. 템플릿: 구역색 color #FFCC00; 설비구역색 pattern stripes [#FFCC00×1, #1A1A1A×1], unit 50, angle 45; 안전구역색 [#FFFFFF×1, #D32F2F×1], unit 50, angle 45 |
 | `fill` | string \| null |  |  |
 | `fillOpacity` | number \| null |  | 도형 면만의 불투명도(0~1). null이면 기본값 |
@@ -231,6 +233,16 @@
 | `x` | number |  | X (mm) |
 | `y` | number |  | Y (mm) |
 | `z` | number |  | Z: 층 바닥 기준 높이 (mm) |
+
+## linkRecords
+
+객체들을 원본 데이터(DB) 데이터셋의 레코드에 연결합니다(읽기 전용 참조, docs/DATA_SOURCES.md). key를 생략하면 각 객체의 설비 번호(없으면 이름)가 레코드 키입니다. dataset: null이면 연결을 해제합니다.
+
+| 매개변수 | 형식 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `ids` | string[] | 예 | 객체 id 목록 |
+| `dataset` | string \| null | 예 | 데이터셋 이름(영문·숫자·_-.). null은 연결 해제 |
+| `key` | string |  | 레코드 키 (객체 하나일 때만) |
 
 ## setStroke
 

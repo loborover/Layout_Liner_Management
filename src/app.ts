@@ -32,6 +32,8 @@ import { Sidebar } from './ui/sidebar';
 import { ObjectTree } from './ui/tree';
 import { PropertyPanel } from './ui/properties';
 import { fillInspector } from './ui/inspector';
+import { appendRecordInfo } from './ui/recordPanel';
+import { RecordStore, gatewayAddress } from './data/records';
 import { hydrateIcons } from './ui/icons';
 import type { LiveValue, Mode, UiHost } from './ui/host';
 import { buildScene } from './model/scene3d';
@@ -107,6 +109,8 @@ export class App implements UiHost {
   readonly api: EditorApi;
   /** Live monitoring values by binding key, fed by a data source (the viewer app uses the same shape). */
   readonly liveValues = new Map<string, LiveValue>();
+  /** Source data links: client of the host's read-only data gateway (docs/DATA_SOURCES.md), `?data=` overrides. */
+  readonly records = new RecordStore(gatewayAddress(location.search));
   private constraintStatus: ClusterStatus | null = null;
   private statusTimer: number | undefined;
   private messageTimer: number | undefined;
@@ -1103,6 +1107,7 @@ export class App implements UiHost {
       this.selection.clear();
       this.showInspector(null, at);
     });
+    appendRecordInfo(card, this.records, e);
     card.hidden = false;
     const stage = this.canvas.parentElement!.getBoundingClientRect();
     const w = card.offsetWidth;
@@ -1121,6 +1126,7 @@ export class App implements UiHost {
       this.selection.clear();
       this.showInspector(null, { x: 0, y: 0 });
     });
+    appendRecordInfo(this.inspectorEl, this.records, e);
   }
 
   private bridgeState(state: 'closed' | 'connecting' | 'open', detail?: string): void {

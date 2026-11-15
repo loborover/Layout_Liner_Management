@@ -1,0 +1,21 @@
+{
+  "host": "127.0.0.1",
+  "port": 7840,
+  "datasets": {
+    "equipment": {
+      "label": "설비 대장 (예제 CSV)",
+      "driver": "csv",
+      "file": "equipment.csv",
+      "key": "설비번호",
+      "refreshMs": 30000
+    },
+    "rooms": {
+      "label": "실 목록 (예제 JSON)",
+      "driver": "json",
+      "file": "rooms.json",
+      "path": "items",
+      "key": "roomNo",
+      "fields": ["roomNo", "name", "department", "cleanClass", "manager"]
+    }
+  }
+}

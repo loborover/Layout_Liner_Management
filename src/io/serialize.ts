@@ -24,6 +24,7 @@ import {
   type Folder,
   type Layer,
   type Point,
+  type RecordRef,
   type StripePattern,
   type StrokeJoin,
   type StrokeStyle,
@@ -31,6 +32,7 @@ import {
   type Underlay,
 } from '../model/types';
 import { LAYER_DEFAULT } from '../theme';
+import { parseRecordRef } from '../data/records';
 
 const CONSTRAINT_KINDS: ConstraintKind[] = ['horizontal', 'vertical', 'parallel', 'perpendicular', 'equal', 'fixed', 'radius', 'coincident'];
 /** Embedded images only: a URL would make opening a drawing fetch from wherever the file points. */
@@ -52,11 +54,13 @@ const isStr = (v: unknown): v is string => typeof v === 'string' && v.length > 0
 // Raw JSON: fields are checked one by one below, so treat every record as loosely typed.
 type Raw = any;
 
-/** Optional name and monitoring binding shared by every entity. */
-function common(e: Raw): { name?: string; binding?: string } {
-  const out: { name?: string; binding?: string } = {};
+/** Optional name, monitoring binding and source data link shared by every entity. */
+function common(e: Raw): { name?: string; binding?: string; record?: RecordRef } {
+  const out: { name?: string; binding?: string; record?: RecordRef } = {};
   if (typeof e.name === 'string' && e.name) out.name = e.name;
   if (typeof e.binding === 'string' && e.binding) out.binding = e.binding;
+  const record = parseRecordRef(e.record);
+  if (record) out.record = record;
   return out;
 }
 

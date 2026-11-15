@@ -39,7 +39,8 @@
 
 ## 객체 (entities)
 
-모든 객체의 공통 필드: `id`, `kind`, `layer`, `name?`(사용자 이름), `binding?`(모니터링 키, [VIEWER.md](VIEWER.md)).
+모든 객체의 공통 필드: `id`, `kind`, `layer`, `name?`(사용자 이름), `binding?`(모니터링 키, [VIEWER.md](VIEWER.md)), `record?`(원본 데이터 참조 `{ dataset, key? }`, [DATA_SOURCES.md](DATA_SOURCES.md)).
+`record`는 데이터 게이트웨이의 데이터셋 이름(영문·숫자·`_-.` 64자 이내)과 레코드 키(200자 이내)입니다. `key`가 없으면 설비 번호(`tag`), 없으면 `name`이 키입니다. 원본 값은 파일에 저장하지 않습니다. 형식이 잘못된 `record`는 열 때 버려집니다. 버전 5에 더해진 선택 필드라 `version`은 그대로이며, 이전 편집기는 이 필드를 무시합니다.
 `line`, `circle`, `equipment`, `shape`와 설비 종류(`equipmentTypes`)에는 3D 보기용 `height?`(mm, 0 이상)가 있습니다. 점 객체, 라벨, 치수에는 높이가 없습니다(점의 높이는 `z`).
 
 | kind | 필드 | 설명 |

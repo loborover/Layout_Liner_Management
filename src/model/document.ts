@@ -432,6 +432,7 @@ export class DocumentModel {
 /** Deep enough copy of an entity: arrays and nested objects are copied so commands' snapshots stay intact. */
 export function cloneEntity<T extends Entity>(e: T): T {
   const c = { ...e };
+  if (c.record) c.record = { ...c.record };
   if (c.kind === 'shape') {
     c.points = [...c.points];
     c.edges = [...c.edges];

@@ -36,6 +36,7 @@
 | UI | `src/ui/`, `src/app.ts` | 사용 | 리본, 사이드바, 트리, 속성 패널, 정보 카드. `App`이 모든 것을 묶습니다. |
 | 뷰어 앱 | `src/viewer/` | 사용 | 읽기 전용 모니터링 페이지. |
 | MCP | `mcp/` | 없음(Node) | MCP 서버, 라우터, HTTP JSON-RPC. |
+| 원본 데이터 | `src/data/`, `gateway/` | 없음 | 객체가 외부 DB 레코드를 참조하는 읽기 전용 연결. `src/data/records.ts`는 참조 형식과 클라이언트(`RecordStore`), `gateway/`는 호스트에서 도는 Node 데이터 게이트웨이([DATA_SOURCES.md](DATA_SOURCES.md)). |
 
 DOM을 쓰지 않는 계층(geom, model, constraints, io, api)은 Node에서 그대로 실행되므로 테스트와 MCP 헤드리스 모드가 같은 코드를 씁니다. 이 경계를 지키십시오.
 
@@ -71,6 +72,7 @@ DOM을 쓰지 않는 계층(geom, model, constraints, io, api)은 Node에서 그
 - **눈금자.** `Renderer.showRulers`가 켜지면 위·왼쪽 가장자리에 눈금자를 그리고 큰 격자선마다 원점(0,0)에서의 거리를 적습니다(`rulerTicks`, `rulerUnit`, `src/view/viewport.ts`). 단위는 큰 격자 간격이 정수가 되는 가장 큰 단위(mm·cm·m)로 모서리에 표시합니다. 표시 여부는 보기 탭 "눈금자"이며 브라우저에 기억합니다.
 - **축척 표시.** 캔버스 왼쪽 아래에 축척 막대(1-2-5 단위 길이)와 화면 축척 근삿값 1:N(96 px/inch 기준)을 그립니다(`scaleBarLength`, `screenScaleRatio`, `src/view/viewport.ts`). SVG·인쇄에는 항상 축척 막대가 들어가고, 파일 탭에서 1:50~1:1000을 고르면 그 축척 크기로 출력하며 축척 값을 적습니다.
 - **좁은 화면과 터치.** 720 px 이하에서는 빠른 실행 바와 리본이 한 줄 가로 스크롤이 되고, 사이드바는 캔버스 아래 시트가 됩니다(`src/style.css` 끝의 반응형 규칙). 터치는 손가락을 떼거나 움직일 때까지 도구에 넘기지 않아, 두 번째 손가락이 닿으면 그리기 대신 두 손가락 확대·이동이 됩니다(`App.bindCanvas`).
+- **원본 데이터 연결.** 객체의 `record`(`{ dataset, key? }`)는 데이터 게이트웨이의 레코드를 가리킵니다. 브라우저는 `RecordStore`(`src/data/records.ts`)로 `/data/`(Nginx가 게이트웨이로 프록시)에 키만 물어 보고, 게이트웨이는 설정 파일의 `SELECT`로 읽어 둔 메모리 캐시에서 답합니다. 읽기 전용이며(2026-11-15 사용자 결정) 도면에는 참조만 저장합니다. 화면은 `src/ui/recordPanel.ts`(속성 패널 칸, 정보 카드).
 - **모드.** 편집 모드와 뷰어 모드(`App.setMode`). 뷰어 모드에서는 `InspectTool`만 쓰이고, 변경 API 호출이 막히며, `.edit-only` UI가 숨겨집니다.
 
 ## 확장 지점
@@ -81,6 +83,7 @@ DOM을 쓰지 않는 계층(geom, model, constraints, io, api)은 Node에서 그
 | 새 도구 | `tools/`에 `Tool` 구현 → `app.ts`의 도구 표 → `index.html` 리본 버튼(`data-tool`) |
 | 새 구조 프리셋 범주 | `StructureCategory` → `PROP_DEFS`, `CATEGORY_LABELS`, `DEFAULT_STRUCTURE_TYPES` → `presetInfo` → `model/symbols.ts`의 평면 기호 |
 | 새 API 메서드 | `api/editorApi.ts` → `api/rpc.ts`의 `METHODS` → `npm run docs:api` → `tests/api.test.ts` |
+| 새 원본 데이터 종류(DB 등) | `gateway/drivers.ts`(`readRows`) → `gateway/datasets.ts`(`parseConfig`) → `gateway/gateway.test.ts` → `docs/DATA_SOURCES.md` |
 | 새 데이터 소스(뷰어) | `viewer/sources.ts`에 `DataSource` 구현 → `sourceFor` → `docs/VIEWER.md` |
 | 새 3D 모양 | `model/scene3d.ts`(입체·선 만들기) → 필요하면 `model/heights.ts`의 기본 높이 → `tests/scene3d.test.ts` |
 | 색 바꾸기 | `src/theme.ts` → `style.css`의 `:root`(테스트가 알려 줍니다) |
@@ -89,4 +92,4 @@ DOM을 쓰지 않는 계층(geom, model, constraints, io, api)은 Node에서 그
 
 ## 테스트
 
-`npm test`(Vitest)는 모델·기하·입출력·API·뷰어 데이터 파싱을 Node에서 검사하고, `mcp/router.test.ts`는 MCP 라우터를 검사합니다. 화면은 Playwright로 스크린샷을 찍어 확인합니다(Chromium이 설치된 환경에서 `npm run dev` 후). `docs/API-METHODS.md`는 자동 생성 파일이며 오래되면 테스트가 실패합니다.
+`npm test`(Vitest)는 모델·기하·입출력·API·뷰어 데이터 파싱을 Node에서 검사하고, `mcp/router.test.ts`는 MCP 라우터를, `gateway/gateway.test.ts`는 데이터 게이트웨이(CSV·JSON·SQLite, HTTP)를 검사합니다. 화면은 Playwright로 스크린샷을 찍어 확인합니다(Chromium이 설치된 환경에서 `npm run dev` 후). `docs/API-METHODS.md`는 자동 생성 파일이며 오래되면 테스트가 실패합니다.

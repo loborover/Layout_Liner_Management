@@ -10,6 +10,8 @@ on:
 
 env:
   IMAGE: ghcr.io/loborover/layout-liner-management
+  # Read-only data gateway for source data links (gateway/Dockerfile, docs/DATA_SOURCES.md).
+  DATA_IMAGE: ghcr.io/loborover/layout-liner-data
 
 jobs:
   build:
@@ -68,3 +70,25 @@ jobs:
             BUILD_TIME=${{ steps.time.outputs.now }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Data gateway image tags
+        id: datameta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.DATA_IMAGE }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=${{ steps.pkg.outputs.version }},enable={{is_default_branch}}
+            type=sha,prefix=sha-
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: gateway/Dockerfile
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.datameta.outputs.tags }}
+          labels: ${{ steps.datameta.outputs.labels }}
+          cache-from: type=gha,scope=data
+          cache-to: type=gha,mode=max,scope=data

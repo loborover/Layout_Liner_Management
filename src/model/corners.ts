@@ -118,6 +118,7 @@ export function editCorner(doc: DocumentModel, pid: Id, mode: CornerMode, size: 
     const l: LineEntity = { ...cloneEntity(style), id: newId('e'), p1: chain[k], p2: chain[k + 1] };
     delete l.name;
     delete l.binding;
+    delete l.record;
     lines.push(l);
   }
   const end = chain[chain.length - 1];
@@ -163,6 +164,7 @@ export function insertVertex(doc: DocumentModel, lineId: Id, at: Vec2): { comman
   const rest: LineEntity = { ...cloneEntity(line), id: newId('e'), p1: q.id, p2: line.p2 };
   delete rest.name;
   delete rest.binding;
+  delete rest.record;
   const first = { ...cloneEntity(line), p2: q.id };
   const shapes = doc.shapesUsing([lineId]).map((s) => {
     const out = cloneEntity(s);

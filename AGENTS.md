@@ -21,6 +21,7 @@ npm run build        # 배포 빌드 (dist/), typecheck 포함
 npm run mcp          # MCP 서버 실행 (stdio), docs/API.md 참고
 npm run docs:api     # src/api/rpc.ts에서 docs/API-METHODS.md 생성 (API를 바꾸면 필수)
 npm run demo:host    # 모니터링 앱 시험용 예제 호스트 서버
+npm run data:gateway -- --config gateway/example/datasets.json  # 원본 데이터(DB) 읽기 전용 게이트웨이
 ```
 
 변경을 마치기 전에 **반드시 `npm run typecheck`와 `npm test`를 통과**시키십시오. 실패를 남긴 채 끝내지 마십시오.
@@ -41,6 +42,8 @@ npm run demo:host    # 모니터링 앱 시험용 예제 호스트 서버
 | `src/api/` | 외부 조작 API(`EditorApi`, JSON-RPC 디스패처). DOM 없음, 브라우저·Node 공용 |
 | `src/viewer/` | 모니터링 뷰어 앱과 데이터 소스 어댑터 |
 | `mcp/` | Node용 MCP 서버(파일 편집 + 브라우저 실시간 연결 브리지) |
+| `src/data/` | 원본 데이터(DB) 참조 형식과 게이트웨이 클라이언트 `RecordStore`. DOM 없음 |
+| `gateway/` | 호스트에서 도는 읽기 전용 데이터 게이트웨이(Node, 설정된 SELECT만 실행), 자체 Dockerfile |
 | `tests/` | vitest 단위 테스트 |
 | `scripts/` | 문서 자동 생성(`apiReference.ts`), 예제 호스트 서버(`demoHost.ts`) |
 | `docs/` | 아키텍처, 데이터 모델, API(자동 생성 메서드 목록 포함), 뷰어 문서 |
@@ -78,6 +81,7 @@ npm run demo:host    # 모니터링 앱 시험용 예제 호스트 서버
 - 도면 파일·API 입력은 모두 `deserialize`/`EditorApi` 검증을 거칩니다. 검증을 우회하는 경로를 만들지 마십시오.
 - 밑그림 이미지는 `data:` URL만 허용합니다(파일을 열 때 외부 URL을 불러오지 않도록).
 - MCP 브리지는 기본적으로 `127.0.0.1`에만 바인딩합니다.
+- 원본 데이터 연결은 읽기 전용입니다. 브라우저가 DB에 직접 붙거나, 브라우저 입력이 SQL에 들어가는 경로를 만들지 마십시오. DB 접속 정보는 게이트웨이의 환경 변수(`env:NAME`)에만 둡니다.
 
 ## 8. 더 읽을 문서
 
@@ -85,4 +89,5 @@ npm run demo:host    # 모니터링 앱 시험용 예제 호스트 서버
 - [docs/DATA_MODEL.md](docs/DATA_MODEL.md): 도면 파일 형식(층·폴더·레이어·객체)
 - [docs/API.md](docs/API.md): 브라우저 API, JSON-RPC, MCP 도구
 - [docs/VIEWER.md](docs/VIEWER.md): 모니터링 뷰어와 데이터 소스 형식
+- [docs/DATA_SOURCES.md](docs/DATA_SOURCES.md): 원본 데이터(DB) 연결, 데이터 게이트웨이 설정
 - [docs/VIEW3D.md](docs/VIEW3D.md): 3D 보기, 높이 규칙, 호스트 서버 처리
