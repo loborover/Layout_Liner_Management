@@ -4,12 +4,13 @@
  * Property panel for the current selection. Shows what an object is and lets edit mode change it:
  * name, layer, monitoring binding (all objects); border ("테두리": weight, colour, opacity, stripe pattern with a live
  * swatch and the three templates) for lines, circles and shapes' edges; face fill (colour or image) and face-only
- * opacity, area (shapes); radius (circles); the underlay image when it is selected; coincide/detach for points; tag, rotation and preset properties with design checks (equipment and structures).
+ * opacity, area (shapes); radius (circles); distance and angle constraints on the selected lines and points (치수 구속); the underlay image when it is selected; coincide/detach for points; tag, rotation and preset properties with design checks (equipment and structures).
  * Every object also lists the X, Y, Z of its points (Z = height above the floor) and its 3D height; a selected
  * point (vertex) gets its own X, Y, Z fields. With nothing selected it shows the active floor. In viewer mode the same fields are read-only and live values
  * from the monitoring data source are added. Every change is one undoable UpdateEntities/SetEquipmentTypes command.
  */
-import { SetUnderlay, UpdateEntities } from '../model/commands';
+import { RemoveConstraints, SetUnderlay, UpdateEntities } from '../model/commands';
+import { dimensionText, isDimensionConstraint } from '../constraints/dimensions';
 import { editEntities } from '../model/edit';
 import { cloneEntity, midpointId } from '../model/document';
 import { BORDER_TEMPLATES, TEMPLATE_WIDTH, applyTemplate, borderOpacity, cloneStroke, matchTemplate, patternPeriod, stripePieces } from '../model/borders';
@@ -81,8 +82,42 @@ export class PropertyPanel {
     else if (items.length === 0) sets.push(this.floorInfo());
     else if (items.length === 1) sets.push(...this.single(items[0]));
     else sets.push(...this.multiple(items));
+    const dimensions = this.dimensionSet(items, points);
+    if (dimensions) sets.push(dimensions);
     if (items.length > 0) sets.push(recordSet(this.host, items, this.readOnly));
     this.root.replaceChildren(...sets);
+  }
+
+  /**
+   * Distance and angle constraints on the selected lines and points (a point object stands for its point), each
+   * with its value to edit and a button to remove just that one. Null when there are none.
+   */
+  private dimensionSet(items: Entity[], points: Id[]): HTMLElement | null {
+    const { doc } = this.host;
+    const ids = new Set<Id>([...points, ...items.flatMap((e) => (e.kind === 'point' ? [e.id, e.at] : [e.id]))]);
+    const found = doc.constraintsOn(ids).filter(isDimensionConstraint);
+    if (found.length === 0) return null;
+    const f = this.fieldset('치수 구속');
+    const unit = this.host.unit();
+    const name = (r: Id) => {
+      if (doc.points.has(r)) return '점';
+      const e = doc.entities.get(r);
+      return e?.name || (e?.kind === 'line' ? '선' : '객체');
+    };
+    for (const c of found) {
+      const angle = c.kind === 'angle';
+      const key = `${angle ? '각도 (°)' : '거리 (mm)'} · ${c.refs.map(name).join('–')}`;
+      const value = this.input('number', String(c.value ?? ''), (v) => this.host.setConstraintValue?.(c.id, Number(v)));
+      value.title = angle ? '0보다 크고 180보다 작은 각도' : `현재 ${dimensionText(c, (mm) => formatLength(mm, unit))}`;
+      const wrap = document.createElement('span');
+      wrap.className = 'dim-value';
+      wrap.append(
+        value,
+        this.button('삭제', '이 치수 구속만 지웁니다', () => this.host.history.execute(new RemoveConstraints([c.id]))),
+      );
+      this.row(f, key, wrap);
+    }
+    return f;
   }
 
   private get readOnly(): boolean {

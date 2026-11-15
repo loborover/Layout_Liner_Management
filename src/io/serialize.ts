@@ -34,7 +34,18 @@ import {
 import { LAYER_DEFAULT } from '../theme';
 import { parseRecordRef } from '../data/records';
 
-const CONSTRAINT_KINDS: ConstraintKind[] = ['horizontal', 'vertical', 'parallel', 'perpendicular', 'equal', 'fixed', 'radius', 'coincident'];
+const CONSTRAINT_KINDS: ConstraintKind[] = [
+  'horizontal',
+  'vertical',
+  'parallel',
+  'perpendicular',
+  'equal',
+  'fixed',
+  'radius',
+  'coincident',
+  'distance',
+  'angle',
+];
 /** Embedded images only: a URL would make opening a drawing fetch from wherever the file points. */
 const DATA_IMAGE = /^data:image\/(png|jpeg|gif|webp);base64,/;
 /** Upper bounds that keep a hostile file from asking for absurd work (stripe counts are drawn every frame). */
@@ -186,8 +197,8 @@ const isHeight = (v: unknown): v is number => typeof v === 'number' && Number.is
 
 /**
  * Parses and validates a saved drawing. Throws FormatError with a readable message.
- * Versions 2 to 4 load as they are (later versions only added optional fields, the coincident constraint and label
- * objects; Z and heights default to 0); files before version 5 also get the H-beam column preset added to their
+ * Versions 2 to 5 load as they are (later versions only added optional fields, the coincident, distance and angle
+ * constraints and label objects; Z and heights default to 0); files before version 5 also get the H-beam column preset added to their
  * library. Version 1 files (before floors, folders and shapes) are upgraded: everything goes on one floor "1층" and
  * the structural presets are added to the library.
  */
@@ -205,7 +216,7 @@ export function deserialize(text: string): DocumentData {
 export function validate(raw: unknown): DocumentData {
   const obj = raw as Raw;
   if (!obj || obj.format !== 'layout-liner') throw new FormatError('Layout Liner 도면 파일이 아닙니다.');
-  if (![1, 2, 3, 4, 5].includes(obj.version)) throw new FormatError(`지원하지 않는 파일 버전입니다: ${String(obj.version)}`);
+  if (![1, 2, 3, 4, 5, 6].includes(obj.version)) throw new FormatError(`지원하지 않는 파일 버전입니다: ${String(obj.version)}`);
   if (!Array.isArray(obj.points) || !Array.isArray(obj.entities)) throw new FormatError('points/entities 항목이 없습니다.');
 
   const points: Point[] = obj.points.map((p: Raw, i: number) => {
@@ -363,6 +374,13 @@ export function validate(raw: unknown): DocumentData {
       throw new FormatError(`구속 #${i}는 점만 참조할 수 있습니다.`);
     }
     if (c.kind === 'coincident' && c.refs.length < 2) throw new FormatError(`일치 구속 #${i}에는 점이 두 개 이상 필요합니다.`);
+    if (c.kind === 'distance' || c.kind === 'angle') {
+      const shape = c.refs.map((r: string) => (pointIds.has(r) ? 'p' : byId.get(r)?.kind === 'line' ? 'l' : '?')).join('');
+      const allowed = c.kind === 'distance' ? ['pp', 'pl', 'll'] : ['ll'];
+      if (!allowed.includes(shape)) throw new FormatError(`치수 구속 #${i}가 참조하는 점·선이 잘못되었습니다.`);
+      if (c.value === undefined) throw new FormatError(`치수 구속 #${i}에 값이 없습니다.`);
+      if (c.kind === 'angle' && !(c.value < 180)) throw new FormatError(`각도 구속 #${i}의 값은 180° 보다 작아야 합니다.`);
+    }
     const out: Constraint = { id: c.id, kind: c.kind, refs: [...c.refs] };
     if (c.value !== undefined) {
       if (!isNum(c.value) || c.value <= 0) throw new FormatError(`구속 #${i}의 값이 잘못되었습니다.`);
@@ -384,7 +402,7 @@ export function validate(raw: unknown): DocumentData {
 
   return {
     format: 'layout-liner',
-    version: 5,
+    version: 6,
     units: 'mm',
     points,
     entities,

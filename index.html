@@ -54,7 +54,7 @@
       <div class="tabs" role="tablist">
         <button role="tab" data-tab="home" class="edit-only">홈</button>
         <button role="tab" data-tab="insert" class="edit-only">구조·설비</button>
-        <button role="tab" data-tab="constrain" class="edit-only">구속</button>
+        <button role="tab" data-tab="constrain" class="edit-only">치수·구속</button>
         <button role="tab" data-tab="measure">측정</button>
         <button role="tab" data-tab="view">보기</button>
         <button role="tab" data-tab="file">파일</button>
@@ -70,7 +70,6 @@
             <button data-tool="line" data-icon="line" title="선 (L): 시작점에서 닫으면 도형이 됩니다">선</button>
             <button data-tool="rect" data-icon="rect" title="사각형 (R): 네 선과 도형으로 그립니다">사각형</button>
             <button data-tool="circle" data-icon="circle" title="원 (C)">원</button>
-            <button data-tool="dimension" data-icon="dimension" title="치수 (D)">치수</button>
             <button data-tool="label" data-icon="label" title="라벨 (T): 도형과 별개인 글 객체. 클릭한 자리에 &quot;제목: 내용&quot; 행을 씁니다">라벨</button>
           </div>
           <span class="glabel">그리기</span>
@@ -196,6 +195,14 @@
       <div class="panel-row" role="tabpanel" data-panel="constrain">
         <div class="rgroup">
           <div class="items">
+            <button data-tool="dimension" data-icon="dimension" title="치수선 (D): 두 점을 찍고 치수선 위치를 정합니다. 더블클릭해 값을 넣으면 그 거리로 구속됩니다">치수선</button>
+            <button data-constraint="distance" title="거리 구속: 점 두 개, 점과 선(변), 또는 평행한 선 두 개를 선택하고 거리를 지정합니다. 값은 더블클릭해 바꿉니다">거리</button>
+            <button data-constraint="angle" title="각도 구속: 선(변) 두 개를 선택하고 사이 각도를 지정합니다. 값은 더블클릭해 바꿉니다">각도</button>
+          </div>
+          <span class="glabel">치수 구속</span>
+        </div>
+        <div class="rgroup">
+          <div class="items">
             <button data-constraint="horizontal" title="수평 구속: 선택한 선">수평</button>
             <button data-constraint="vertical" title="수직 구속: 선택한 선">수직</button>
             <button data-constraint="parallel" title="평행 구속: 선 두 개">평행</button>
@@ -204,7 +211,7 @@
             <button data-constraint="fixed" title="위치 고정: 선택한 객체의 점">고정</button>
             <button data-constraint="coincident" title="일치 구속: 선택한 점 두 개 이상을 한 위치에 붙입니다 (객체는 따로 유지)">일치</button>
           </div>
-          <span class="glabel">구속 추가</span>
+          <span class="glabel">기하 구속</span>
         </div>
         <div class="rgroup">
           <div class="items">

@@ -17,10 +17,14 @@ import { UNDERLAY_ID } from '../model/selection';
 import { deletionTargets, duplicateItems } from '../model/edit';
 import type { Id, Underlay } from '../model/types';
 import type { ConstrainedDrag } from '../constraints/service';
+import { dimensionAt, dimensionScale } from '../constraints/dimensions';
 import type { SnapQuery } from '../snap/snap';
 import { formatLength } from '../view/format';
 import { COLORS, type Painter } from '../view/renderer';
 import type { Tool, ToolContext, ToolPointer } from './tool';
+
+/** How close (px) a double-click must be to a dimension constraint's value to edit it. */
+const LABEL_PICK_PX = 14;
 
 type State =
   | { kind: 'idle' }
@@ -175,9 +179,22 @@ export class SelectTool implements Tool {
     ctx.requestRender();
   }
 
-  /** Double-click a dimension to drive it with a value, a circle to set its radius, or equipment to renumber it. */
+  /**
+   * Double-click a distance or angle constraint's value to change it, a dimension to drive it with a value, a circle
+   * to set its radius, or equipment to renumber it.
+   */
   doubleClick(p: ToolPointer): void {
     const { ctx } = this;
+    const constraint = dimensionAt(ctx.doc, p.raw, dimensionScale(ctx.view.pxToMm(1)), ctx.view.pxToMm(LABEL_PICK_PX));
+    if (constraint) {
+      const angle = constraint.kind === 'angle';
+      const answer = ctx.ask(angle ? '각도(°)를 입력하십시오.' : '거리(mm)를 입력하십시오.', String(constraint.value ?? ''));
+      if (answer === null) return;
+      void ctx.constraints.setValue(constraint.id, Number(answer)).then((r) => {
+        if (!r.ok) ctx.notify(r.message);
+      });
+      return;
+    }
     const hit = ctx.index.pick(p.raw, ctx.pickTolerance());
     if (hit?.kind === 'dimension') {
       const a = ctx.doc.point(hit.p1);

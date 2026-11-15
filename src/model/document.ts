@@ -394,7 +394,7 @@ export class DocumentModel {
   toData(): DocumentData {
     return {
       format: 'layout-liner',
-      version: 5,
+      version: 6,
       units: 'mm',
       points: [...this.points.values()].map((p) => ({ ...p })),
       entities: [...this.entities.values()].map(cloneEntity),
