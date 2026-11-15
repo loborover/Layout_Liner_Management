@@ -26,6 +26,7 @@ const PATHS = {
   rect: '<rect x="4" y="6" width="16" height="12"/>',
   circle: '<circle cx="12" cy="12" r="8"/>',
   shape: '<path d="M4 18 7 5l11 3 2 10Z" fill="currentColor" fill-opacity=".15"/>',
+  param: '<path d="M5 6h6M5 12h4M5 18h6"/><path d="m14 8 6 8M20 8l-6 8"/>',
   dimension: '<path d="M4 8v8M20 8v8M4 12h16"/><path d="m7 10-3 2 3 2M17 10l3 2-3 2"/>',
   equipment: '<rect x="4" y="7" width="16" height="10" rx="1"/><path d="M12 17v-3"/>',
   column: '<rect x="7" y="7" width="10" height="10" fill="currentColor" fill-opacity=".5"/>',

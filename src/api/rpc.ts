@@ -387,6 +387,35 @@ export const METHODS: Record<string, MethodSpec> = {
     mutates: false,
     run: (api, p) => api.scene3d(p as never),
   },
+  listParameters: {
+    description:
+      '파라미터 목록: 이름, 수식, 현재 값(계산할 수 없으면 error), 쓰는 치수 수(usedBy). 파라미터는 치수 값에 "폭 / 2"처럼 쓰는 이름 붙은 값입니다.',
+    params: obj({}),
+    mutates: false,
+    run: (api) => api.listParameters(),
+  },
+  setParameter: {
+    description:
+      '파라미터를 추가하거나 바꿉니다(같은 이름이 있으면 그 값을 바꿈, id를 주면 이름 변경). expression은 숫자나 수식(+ - * / ^ %, 괄호, 다른 파라미터 이름, ' +
+      'min·max·abs·sqrt·round·floor·ceil·sin·cos·tan(도)). 그 파라미터를 쓰는 치수와 형상은 편집기에서 다시 풀립니다.',
+    params: obj(
+      {
+        name: str('이름: 글자(한글 가능)나 _로 시작, 글자·숫자·_'),
+        expression: { type: ['string', 'number'], description: '값 또는 수식, 예: 12000, "폭 * 2 + 300"' },
+        id: str('바꿀 파라미터 id (이름을 바꿀 때)'),
+        note: { type: ['string', 'null'], description: '설명, null이면 지움' },
+      },
+      ['name', 'expression'],
+    ),
+    mutates: true,
+    run: (api, p) => api.setParameter(p as never),
+  },
+  removeParameter: {
+    description: '파라미터를 지웁니다. 그 파라미터를 쓰던 치수는 지금 값으로 남습니다.',
+    params: obj({ name: str('파라미터 이름') }, ['name']),
+    mutates: true,
+    run: (api, p) => api.removeParameter(p as never),
+  },
   undo: { description: '실행 취소.', params: obj({}), mutates: true, run: (api) => api.undo() },
   redo: { description: '다시 실행.', params: obj({}), mutates: true, run: (api) => api.redo() },
   batch: {

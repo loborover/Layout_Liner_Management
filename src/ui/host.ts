@@ -45,8 +45,11 @@ export interface UiHost {
   records?: RecordStore;
   /** Moves a point to an exact X, Y, Z (through the constraint solver when its geometry is constrained). */
   setPoint: (id: Id, to: { x: number; y: number; z?: number }) => void;
-  /** Changes a distance or angle constraint's value through the solver (the panel's 치수 구속 rows). */
-  setConstraintValue?: (id: Id, value: number) => void;
+  /**
+   * Sets a driving constraint's or dimension line's value from what the user typed: a number, a parameter
+   * expression ("폭 / 2"), or blank (a dimension line becomes a reference dimension). Solves the geometry.
+   */
+  setDrivingText?: (id: Id, text: string) => void;
   notify: (text: string) => void;
   ask: (question: string, initial: string) => string | null;
   confirm: (question: string) => boolean;

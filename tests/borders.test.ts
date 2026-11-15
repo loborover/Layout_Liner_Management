@@ -122,7 +122,7 @@ describe('file format 4', () => {
     }
     doc.underlay = { src: 'data:image/png;base64,AAAA', x: 0, y: 0, width: 10, height: 10, opacity: 0.5, visible: true, locked: true };
     const data = deserialize(serialize(doc.toData()));
-    expect(data.version).toBe(7);
+    expect(data.version).toBe(8);
     const line = data.entities.find((e) => e.id === 'free');
     expect(line?.kind === 'line' && line.stroke?.pattern?.stripes).toHaveLength(2);
     const shape = data.entities.find((e) => e.id === 's');

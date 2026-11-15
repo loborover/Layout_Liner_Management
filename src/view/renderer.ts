@@ -825,7 +825,11 @@ export class Renderer {
         const b = doc.point(e.p2);
         ctx.textAlign = 'left';
         ctx.textBaseline = 'alphabetic';
-        labelDimension(ctx, view, a, b, e.offset, formatLength(Math.hypot(b.x - a.x, b.y - a.y), state.unit), color);
+        const measured = formatLength(Math.hypot(b.x - a.x, b.y - a.y), state.unit);
+        // Driving dimensions show what they hold (and the expression behind it); a reference dimension only
+        // measures, so its value is in parentheses as in CAD drawings.
+        const text = e.value === undefined ? `(${measured})` : e.expression ? `${e.expression} = ${measured}` : measured;
+        labelDimension(ctx, view, a, b, e.offset, text, color);
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
       }

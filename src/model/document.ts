@@ -14,6 +14,7 @@ import { labelBox } from './labels';
 import { DEFAULT_STRUCTURE_TYPES } from './presets';
 import {
   type Constraint,
+  type Parameter,
   DEFAULT_FLOOR_ID,
   DEFAULT_LAYER_ID,
   type DocumentData,
@@ -53,6 +54,8 @@ export class DocumentModel {
   readonly points = new Map<Id, Point>();
   readonly entities = new Map<Id, Entity>();
   readonly constraints = new Map<Id, Constraint>();
+  /** Named values for dimension expressions (src/model/params.ts), in the order the user added them. */
+  readonly parameters = new Map<Id, Parameter>();
   readonly floors = new Map<Id, Floor>();
   readonly folders = new Map<Id, Folder>();
   readonly layers = new Map<Id, Layer>();
@@ -85,6 +88,7 @@ export class DocumentModel {
     this.points.clear();
     this.entities.clear();
     this.constraints.clear();
+    this.parameters.clear();
     this.floors.clear();
     this.folders.clear();
     this.layers.clear();
@@ -420,7 +424,7 @@ export class DocumentModel {
   toData(): DocumentData {
     return {
       format: 'layout-liner',
-      version: 7,
+      version: 8,
       units: 'mm',
       points: [...this.points.values()].map((p) => ({ ...p })),
       entities: [...this.entities.values()].map(cloneEntity),
@@ -431,6 +435,7 @@ export class DocumentModel {
       activeFloor: this.activeFloor,
       equipmentTypes: [...this.equipmentTypes.values()].map((t) => structuredClone(t)),
       ...(this.underlay ? { underlay: { ...this.underlay } } : {}),
+      ...(this.parameters.size > 0 ? { parameters: [...this.parameters.values()].map((p) => ({ ...p })) } : {}),
     };
   }
 
@@ -438,6 +443,8 @@ export class DocumentModel {
     this.points.clear();
     this.entities.clear();
     this.constraints.clear();
+    this.parameters.clear();
+    for (const p of data.parameters ?? []) this.parameters.set(p.id, { ...p });
     this.layers.clear();
     this.floors.clear();
     this.folders.clear();

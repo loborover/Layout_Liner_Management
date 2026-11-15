@@ -195,11 +195,17 @@
       <div class="panel-row" role="tabpanel" data-panel="constrain">
         <div class="rgroup">
           <div class="items">
-            <button data-tool="dimension" data-icon="dimension" title="치수선 (D): 두 점을 찍고 치수선 위치를 정합니다. 더블클릭해 값을 넣으면 그 거리로 구속됩니다">치수선</button>
-            <button data-constraint="distance" title="거리 구속: 점 두 개, 점과 선(변), 또는 평행한 선 두 개를 선택하고 거리를 지정합니다. 값은 더블클릭해 바꿉니다">거리</button>
-            <button data-constraint="angle" title="각도 구속: 선(변) 두 개를 선택하고 사이 각도를 지정합니다. 값은 더블클릭해 바꿉니다">각도</button>
+            <button data-constraint="distance" data-icon="dimension" title="치수 구속: 선 하나(길이), 점 두 개, 점과 선, 선 두 개(평행이면 거리, 아니면 각도), 원(반지름)을 선택하고 값을 지정합니다. 값은 도면의 치수를 더블클릭하거나 속성에서 바꿉니다">치수</button>
+            <button data-constraint="angle" title="각도 구속: 선(변) 두 개를 선택하고 사이 각도를 지정합니다">각도</button>
+            <button data-tool="dimension" title="치수선 (D): 두 점을 찍고 치수선 위치를 정합니다. 형상의 점에 붙이면 그 거리로 구속됩니다. 값을 비우면 참조 치수(측정 표시만)가 됩니다">치수선</button>
           </div>
-          <span class="glabel">치수 구속</span>
+          <span class="glabel">치수 구속 (값을 고정)</span>
+        </div>
+        <div class="rgroup">
+          <div class="items">
+            <button data-action="parameters" data-icon="param" title="파라미터 패널 열기: 이름 붙은 값을 만들고 치수 값에 '폭 / 2'처럼 씁니다">파라미터</button>
+          </div>
+          <span class="glabel">파라미터</span>
         </div>
         <div class="rgroup">
           <div class="items">
@@ -225,11 +231,11 @@
       <div class="panel-row" role="tabpanel" data-panel="measure">
         <div class="rgroup">
           <div class="items">
-            <button data-tool="measure-distance" title="거리 측정 (M)">거리</button>
-            <button data-tool="measure-angle" title="각도 측정 (N)">각도</button>
-            <button data-tool="measure-area" title="면적 측정 (A)">면적</button>
+            <button data-tool="measure-distance" title="거리 측정 (M): 재기만 하고 도면에 남기거나 형상을 고정하지 않습니다. 고정하려면 치수·구속 탭의 치수를 쓰십시오">거리</button>
+            <button data-tool="measure-angle" title="각도 측정 (N): 재기만 하고 도면에 남기거나 형상을 고정하지 않습니다">각도</button>
+            <button data-tool="measure-area" title="면적 측정 (A): 재기만 하고 도면에 남기지 않습니다">면적</button>
           </div>
-          <span class="glabel">측정</span>
+          <span class="glabel">측정 (재기만 함)</span>
         </div>
       </div>
 
@@ -351,6 +357,13 @@
             <header><h2>속성</h2></header>
             <div id="props" class="props"></div>
           </section>
+          <section data-section="params">
+            <header>
+              <h2>파라미터</h2>
+              <button data-action="add-parameter" class="edit-only" title="이름 붙은 값을 추가합니다. 치수 값에 그 이름이나 수식(예: 폭 / 2)을 쓰면 값이 바뀔 때 치수와 형상이 함께 바뀝니다">+ 추가</button>
+            </header>
+            <div id="params" class="params"></div>
+          </section>
           <section data-section="library">
             <header>
               <h2>라이브러리</h2>
@@ -379,6 +392,7 @@
         <nav class="rail" aria-label="사이드바 아이콘">
           <button data-rail="tree" data-icon="layers" title="객체 트리 (층·폴더·레이어·객체)"></button>
           <button data-rail="props" data-icon="sliders" title="속성"></button>
+          <button data-rail="params" data-icon="param" title="파라미터 (치수에 쓰는 이름 붙은 값)"></button>
           <button data-rail="library" data-icon="box" title="라이브러리 (설비·구조)"></button>
           <button data-rail="underlay" data-icon="image" title="밑그림"></button>
           <span class="spacer"></span>

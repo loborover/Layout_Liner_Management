@@ -6,6 +6,7 @@
  */
 import { MAX_LABEL_ITEMS, MAX_LABEL_TEXT } from '../model/labels';
 import { DEFAULT_STRUCTURE_TYPES, cleanProps } from '../model/presets';
+import { NAME, parseExpression } from '../model/params';
 import {
   type Constraint,
   type ConstraintKind,
@@ -23,6 +24,7 @@ import {
   type Floor,
   type Folder,
   type Layer,
+  type Parameter,
   type Point,
   type RecordRef,
   type StripePattern,
@@ -228,7 +230,7 @@ export function deserialize(text: string): DocumentData {
 export function validate(raw: unknown): DocumentData {
   const obj = raw as Raw;
   if (!obj || obj.format !== 'layout-liner') throw new FormatError('Layout Liner 도면 파일이 아닙니다.');
-  if (![1, 2, 3, 4, 5, 6, 7].includes(obj.version)) throw new FormatError(`지원하지 않는 파일 버전입니다: ${String(obj.version)}`);
+  if (![1, 2, 3, 4, 5, 6, 7, 8].includes(obj.version)) throw new FormatError(`지원하지 않는 파일 버전입니다: ${String(obj.version)}`);
   if (!Array.isArray(obj.points) || !Array.isArray(obj.entities)) throw new FormatError('points/entities 항목이 없습니다.');
 
   const points: Point[] = obj.points.map((p: Raw, i: number) => {
@@ -346,7 +348,16 @@ export function validate(raw: unknown): DocumentData {
       delete (base as { height?: number }).height;
       if (!isNum(e.offset)) throw new FormatError(`치수 #${i}의 간격 값이 잘못되었습니다.`);
       if (e.value !== undefined && (!isNum(e.value) || e.value <= 0)) throw new FormatError(`치수 #${i}의 값이 잘못되었습니다.`);
-      return { ...base, kind: 'dimension', p1: ref(e.p1, i), p2: ref(e.p2, i), offset: e.offset, ...(e.value !== undefined ? { value: e.value } : {}) };
+      const expression = e.value !== undefined ? parseExpressionField(e.expression, `치수 #${i}`) : undefined;
+      return {
+        ...base,
+        kind: 'dimension',
+        p1: ref(e.p1, i),
+        p2: ref(e.p2, i),
+        offset: e.offset,
+        ...(e.value !== undefined ? { value: e.value } : {}),
+        ...(expression ? { expression } : {}),
+      };
     }
     if (e.kind === 'equipment') {
       const type = isStr(e.type) ? typeById.get(e.type) : undefined;
@@ -399,7 +410,7 @@ export function validate(raw: unknown): DocumentData {
     if (c.kind === 'coincident' && c.refs.length < 2) throw new FormatError(`일치 구속 #${i}에는 점이 두 개 이상 필요합니다.`);
     if (c.kind === 'distance' || c.kind === 'angle') {
       const shape = c.refs.map((r: string) => (pointIds.has(r) ? 'p' : byId.get(r)?.kind === 'line' ? 'l' : '?')).join('');
-      const allowed = c.kind === 'distance' ? ['pp', 'pl', 'll'] : ['ll'];
+      const allowed = c.kind === 'distance' ? ['l', 'pp', 'pl', 'll'] : ['ll'];
       if (!allowed.includes(shape)) throw new FormatError(`치수 구속 #${i}가 참조하는 점·선이 잘못되었습니다.`);
       if (c.value === undefined) throw new FormatError(`치수 구속 #${i}에 값이 없습니다.`);
       if (c.kind === 'angle' && !(c.value < 180)) throw new FormatError(`각도 구속 #${i}의 값은 180° 보다 작아야 합니다.`);
@@ -408,9 +419,28 @@ export function validate(raw: unknown): DocumentData {
     if (c.value !== undefined) {
       if (!isNum(c.value) || c.value <= 0) throw new FormatError(`구속 #${i}의 값이 잘못되었습니다.`);
       out.value = c.value;
+      const expression = parseExpressionField(c.expression, `구속 #${i}`);
+      if (expression) out.expression = expression;
     }
     return out;
   });
+
+  const parameters: Parameter[] = [];
+  if (Array.isArray(obj.parameters)) {
+    const names = new Set<string>();
+    obj.parameters.forEach((p: Raw, i: number) => {
+      if (!isStr(p?.id) || typeof p.name !== 'string' || !NAME.test(p.name) || names.has(p.name)) {
+        throw new FormatError(`파라미터 #${i}의 이름이 잘못되었거나 겹칩니다.`);
+      }
+      names.add(p.name);
+      const expression = parseExpressionField(p.expression, `파라미터 #${i}`);
+      if (!expression) throw new FormatError(`파라미터 #${i}에 수식이 없습니다.`);
+      const out: Parameter = { id: p.id, name: p.name, expression };
+      if (isNum(p.value)) out.value = p.value;
+      if (typeof p.note === 'string' && p.note.trim()) out.note = p.note.slice(0, MAX_EXPRESSION);
+      parameters.push(out);
+    });
+  }
 
   let underlay: Underlay | undefined;
   if (obj.underlay !== undefined && obj.underlay !== null) {
@@ -425,7 +455,7 @@ export function validate(raw: unknown): DocumentData {
 
   return {
     format: 'layout-liner',
-    version: 7,
+    version: 8,
     units: 'mm',
     points,
     entities,
@@ -436,5 +466,22 @@ export function validate(raw: unknown): DocumentData {
     activeFloor: floorOr(obj.activeFloor),
     equipmentTypes,
     ...(underlay ? { underlay } : {}),
+    ...(parameters.length > 0 ? { parameters } : {}),
   };
+}
+
+/** Longest expression or parameter note kept, characters. */
+const MAX_EXPRESSION = 500;
+
+/** An optional expression field: undefined when absent or blank; a syntax error is a format error. */
+function parseExpressionField(v: unknown, what: string): string | undefined {
+  if (v === undefined || v === null) return undefined;
+  if (typeof v !== 'string' || v.length > MAX_EXPRESSION) throw new FormatError(`${what}의 수식이 잘못되었습니다.`);
+  if (v.trim() === '') return undefined;
+  try {
+    parseExpression(v);
+  } catch (err) {
+    throw new FormatError(`${what}의 수식이 잘못되었습니다: ${(err as Error).message}`);
+  }
+  return v.trim();
 }

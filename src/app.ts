@@ -16,9 +16,9 @@
 import type { Box, Vec2 } from './geom/vec';
 import { FormatError, deserialize, serialize } from './io/serialize';
 import { hasConstraints } from './constraints/components';
-import { angleFromSelection, distanceFromSelection } from './constraints/dimensions';
+import { angleFromSelection, smartDimension } from './constraints/dimensions';
 import { type ClusterStatus, ConstraintService } from './constraints/service';
-import { Batch, type Command, History, RemoveConstraints, RemoveEntities, SetDimensionValue, SetEquipmentTypes, SetUnderlay, UpdateEntities } from './model/commands';
+import { Batch, type Command, History, RemoveConstraints, RemoveEntities, SetDriving, SetEquipmentTypes, SetUnderlay, UpdateEntities, drivingOf } from './model/commands';
 import { type ColumnSection, columnTypeFor } from './model/presets';
 import { newId } from './model/ids';
 import { DocumentModel, cloneEntity } from './model/document';
@@ -32,6 +32,7 @@ import { Ribbon } from './ui/ribbon';
 import { Sidebar } from './ui/sidebar';
 import { ObjectTree } from './ui/tree';
 import { PropertyPanel } from './ui/properties';
+import { ParameterPanel } from './ui/parameters';
 import { fillInspector } from './ui/inspector';
 import { appendRecordInfo } from './ui/recordPanel';
 import { RecordStore, gatewayAddress } from './data/records';
@@ -127,6 +128,7 @@ export class App implements UiHost {
   private library: Library;
   private tree: ObjectTree;
   private props: PropertyPanel;
+  private params: ParameterPanel;
   private ribbon: Ribbon;
   private sidebar: Sidebar;
   private bridge: BridgeClient;
@@ -157,7 +159,10 @@ export class App implements UiHost {
     hydrateIcons();
     this.renderer = new Renderer(this.canvas, this.view, this.doc, this.index, this.selection);
     this.renderer.onImageLoad = () => this.requestRender();
-    this.api = new EditorApi(this.doc, this.history, { currentLayer: () => this.currentLayer() });
+    this.api = new EditorApi(this.doc, this.history, {
+      currentLayer: () => this.currentLayer(),
+      onParametersChanged: () => void this.constraints.reapplyParameters().then((r) => !r.ok && this.notify(r.message)),
+    });
     const ctx: ToolContext = {
       doc: this.doc,
       history: this.history,
@@ -199,6 +204,7 @@ export class App implements UiHost {
     this.tree = new ObjectTree(this, $<HTMLDivElement>('#tree'));
     this.props = new PropertyPanel(this, $<HTMLDivElement>('#props'));
     this.props.bind();
+    this.params = new ParameterPanel(this, this.constraints, $<HTMLDivElement>('#params'));
     this.ribbon = new Ribbon($<HTMLElement>('.ribbon'));
     this.sidebar = new Sidebar($<HTMLElement>('.sidebar'), () => this.resize());
     this.bridge = new BridgeClient(
@@ -247,6 +253,7 @@ export class App implements UiHost {
     this.refreshPanels();
     this.tree.render();
     this.props.render();
+    this.params.render();
     this.setMode(new URLSearchParams(location.search).get('mode') === 'view' ? 'view' : 'edit');
     this.updateButtons();
   }
@@ -268,9 +275,9 @@ export class App implements UiHost {
     });
   }
 
-  setConstraintValue(id: Id, value: number): void {
+  setDrivingText(id: Id, text: string): void {
     if (this.currentMode !== 'edit') return this.notify('뷰어 모드에서는 편집할 수 없습니다.');
-    void this.constraints.setValue(id, value).then((r) => {
+    void this.constraints.setDrivingText(id, text).then((r) => {
       if (!r.ok) this.notify(r.message);
     });
   }
@@ -434,6 +441,7 @@ export class App implements UiHost {
     this.library?.refresh();
     this.tree?.refresh();
     this.props?.refresh();
+    this.params?.refresh();
   }
 
   private resize(): void {
@@ -727,6 +735,11 @@ export class App implements UiHost {
       }),
       'underlay-calibrate': e(() => this.setTool('underlay')),
       coincide: e(() => void this.applyConstraint('coincident')),
+      'add-parameter': e(() => {
+        this.sidebar.open('params');
+        void this.params.add();
+      }),
+      parameters: () => this.sidebar.open('params'),
     });
     document.querySelectorAll<HTMLButtonElement>('[data-constraint]').forEach((b) => {
       b.addEventListener('click', e(() => void this.applyConstraint(b.dataset.constraint as ConstraintKind)));
@@ -1341,25 +1354,10 @@ export class App implements UiHost {
     const lines = selected.filter((e) => e.kind === 'line').map((e) => e.id);
     const circles = selected.filter((e) => e.kind === 'circle').map((e) => e.id);
     let refs: Id[][] = [];
-    let value: number | undefined;
     switch (kind) {
       case 'distance':
-      case 'angle': {
-        const pick = kind === 'distance' ? distanceFromSelection(this.doc, this.selection.values()) : angleFromSelection(this.doc, this.selection.values());
-        if (!pick.ok) return this.notify(pick.message);
-        const angle = kind === 'angle';
-        const answer = this.ask(
-          angle ? '각도(°)를 입력하십시오. 0보다 크고 180보다 작아야 합니다.' : '거리(mm)를 입력하십시오.',
-          String(Math.round(pick.value * (angle ? 100 : 10)) / (angle ? 100 : 10)),
-        );
-        if (answer === null) return;
-        value = Number(answer);
-        if (!(value > 0) || (angle && !(value < 180))) {
-          return this.notify(angle ? '각도는 0°보다 크고 180°보다 작아야 합니다.' : '0보다 큰 숫자를 입력하십시오.');
-        }
-        refs = [pick.refs];
-        break;
-      }
+      case 'angle':
+        return this.applyDimension(kind);
       case 'horizontal':
       case 'vertical':
         if (lines.length === 0) return this.notify('선을 하나 이상 선택하십시오.');
@@ -1399,10 +1397,37 @@ export class App implements UiHost {
         return;
     }
     try {
+      const r = await this.constraints.add(kind, refs);
+      if (!r.ok) this.notify(r.message);
+    } catch (err) {
+      this.notify(`구속 솔버를 불러오지 못했습니다: ${String(err)}`);
+    }
+  }
+
+  /**
+   * The 치수 button (smart dimension: length, distance, angle or radius, whichever the selection calls for) and
+   * the 각도 button. Asks for the value, which may be an expression of parameters, and constrains the geometry.
+   */
+  private async applyDimension(kind: 'distance' | 'angle'): Promise<void> {
+    const selected = this.selection.values();
+    const pick = kind === 'distance' ? smartDimension(this.doc, selected) : angleFromSelection(this.doc, selected);
+    if (!pick.ok) return this.notify(pick.message);
+    const what: 'distance' | 'angle' | 'radius' = 'kind' in pick ? (pick.kind as 'distance' | 'angle' | 'radius') : 'angle';
+    const label = { distance: pick.refs.length === 1 ? '길이(mm)' : '거리(mm)', angle: '각도(°)', radius: '반지름(mm)' }[what];
+    const answer = this.ask(
+      `${label}를 입력하십시오. 숫자 또는 파라미터 수식(예: 폭 / 2)을 쓸 수 있습니다.`,
+      String(Math.round(pick.value * 100) / 100),
+    );
+    if (answer === null) return;
+    const input = this.constraints.resolveInput(answer);
+    if (!input.ok) return this.notify(input.message);
+    const { value, expression } = input.driving;
+    if (value === undefined) return this.notify('값을 입력하십시오.');
+    try {
       const r =
-        (kind === 'distance' || kind === 'angle') && value !== undefined
-          ? await this.constraints.addDimension(kind, refs[0], value)
-          : await this.constraints.add(kind, refs, value);
+        what === 'radius'
+          ? await this.constraints.add('radius', [pick.refs], value, expression)
+          : await this.constraints.addDimension(what, pick.refs, value, expression);
       if (!r.ok) this.notify(r.message);
     } catch (err) {
       this.notify(`구속 솔버를 불러오지 못했습니다: ${String(err)}`);
@@ -1422,7 +1447,7 @@ export class App implements UiHost {
     if (constraints.length > 0) steps.push(new RemoveConstraints(constraints.map((c) => c.id)));
     for (const id of ids) {
       const e = this.doc.entities.get(id);
-      if (e?.kind === 'dimension' && e.value !== undefined) steps.push(new SetDimensionValue(id, e.value, undefined));
+      if (e?.kind === 'dimension' && e.value !== undefined) steps.push(new SetDriving(id, drivingOf(this.doc, id), {}, '구속 해제'));
     }
     if (steps.length === 0) return this.notify('선택한 객체에 구속이 없습니다.');
     this.history.execute(new Batch('구속 해제', steps));
@@ -1487,6 +1512,8 @@ export class App implements UiHost {
       this.doc.load(data);
       this.history.clear();
       this.fitAll();
+      // Dimensions follow parameters changed while the file was edited elsewhere (e.g. by the MCP server).
+      if (this.doc.parameters.size > 0) void this.constraints.reapplyParameters().then((r) => !r.ok && this.notify(r.message));
     } catch (err) {
       alert(err instanceof FormatError ? `파일을 열 수 없습니다: ${err.message}` : `파일을 열 수 없습니다: ${String(err)}`);
     }

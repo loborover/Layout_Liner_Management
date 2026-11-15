@@ -190,7 +190,7 @@ export class LineTool implements Tool {
 /** Axis-aligned rectangle from two corners, stored as four connected lines and a shape over them. */
 export class RectTool implements Tool {
   readonly id = 'rect';
-  readonly hint = '클릭: 첫 모서리 → 클릭: 반대 모서리 · Esc: 취소';
+  readonly hint = '클릭: 첫 모서리 → 클릭: 반대 모서리 · 네 모서리는 직각으로 구속됩니다 · Esc: 취소';
   readonly cursor = 'crosshair';
   private corner: Vec2 | null = null;
   /** Existing point the first corner was snapped onto (it gets a coincident constraint). */
@@ -226,7 +226,10 @@ export class RectTool implements Tool {
       ...(this.cornerLink && this.ctx.doc.points.has(this.cornerLink) ? [coincident(pts[0].id, this.cornerLink)] : []),
       ...(endLink ? [coincident(pts[2].id, endLink)] : []),
     ];
-    this.ctx.history.execute(addWithLinks(pts, [...lines, shape], links));
+    // A rectangle keeps its right angles (the user's request, 2026-11-15): three corners are enough, the fourth
+    // follows (a fourth constraint would be redundant and the solver would refuse the drawing).
+    const square = [0, 1, 2].map((i): Constraint => ({ id: newId('k'), kind: 'perpendicular', refs: [lines[i].id, lines[i + 1].id] }));
+    this.ctx.history.execute(addWithLinks(pts, [...lines, shape], [...square, ...links]));
     this.corner = null;
     this.cornerLink = null;
   }
@@ -381,10 +384,16 @@ export class CircleTool implements Tool {
   }
 }
 
-/** Aligned dimension: two measured points, then the dimension line position. */
+/**
+ * Dimension line: two points, then where the line goes. A dimension placed on existing points drives them: it
+ * holds the distance it was drawn at (a constraint, not a measurement) until its value is changed or it is
+ * turned into a reference dimension (blank value). One placed on empty space has nothing to hold, so it stays a
+ * reference dimension. Measuring without changing anything is the 측정 tab's job.
+ */
 export class DimensionTool implements Tool {
   readonly id = 'dimension';
-  readonly hint = '클릭: 첫 점 → 클릭: 둘째 점 → 클릭: 치수선 위치 · 기존 끝점에 붙이면 형상을 따라 값이 갱신됨 · Esc: 취소';
+  readonly hint =
+    '클릭: 첫 점 → 클릭: 둘째 점 → 클릭: 치수선 위치 · 형상의 점에 붙이면 그 거리로 구속됩니다(값은 더블클릭해 수정) · Esc: 취소';
   readonly cursor = 'crosshair';
   private p1: Point | null = null;
   private p2: Point | null = null;
@@ -414,9 +423,14 @@ export class DimensionTool implements Tool {
     const { doc } = this.ctx;
     const fresh = [this.p1, this.p2].filter((pt) => !doc.points.has(pt.id));
     const offset = offsetThrough(this.p1, this.p2, p.world);
-    this.ctx.history.execute(
-      new AddItems(fresh, [{ id: newId('e'), kind: 'dimension', p1: this.p1.id, p2: this.p2.id, offset, layer: this.ctx.layer() }]),
-    );
+    const id = newId('e');
+    this.ctx.history.execute(new AddItems(fresh, [{ id, kind: 'dimension', p1: this.p1.id, p2: this.p2.id, offset, layer: this.ctx.layer() }]));
+    if (fresh.length === 0) {
+      const length = dist(this.p1, this.p2);
+      void this.ctx.constraints.setDimensionValue(id, length).then((r) => {
+        if (!r.ok) this.ctx.notify(`${r.message} 이 치수는 참조 치수(측정값 표시)로 남깁니다.`);
+      });
+    }
     this.p1 = this.p2 = null;
   }
 

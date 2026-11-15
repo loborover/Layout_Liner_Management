@@ -95,7 +95,7 @@ describe('serialize', () => {
       { id: 'k3', kind: 'distance', refs: ['a', 'c'], value: 5000 },
     ]);
     const data = deserialize(serialize(doc.toData()));
-    expect(data.version).toBe(7);
+    expect(data.version).toBe(8);
     expect(data.constraints).toEqual(doc.toData().constraints);
     const raw = JSON.parse(serialize(doc.toData()));
     const withConstraint = (c: object) => () => deserialize(JSON.stringify({ ...raw, constraints: [c] }));
@@ -104,7 +104,7 @@ describe('serialize', () => {
     expect(withConstraint({ id: 'x', kind: 'distance', refs: ['ab', 'p'], value: 30 })).toThrow(FormatError);
     expect(withConstraint({ id: 'x', kind: 'distance', refs: ['a', 'b'] })).toThrow(/값이 없습니다/);
     // A version 5 file (no dimension constraints) still opens and saves as version 7.
-    expect(deserialize(JSON.stringify({ ...raw, version: 5, constraints: [] })).version).toBe(7);
+    expect(deserialize(JSON.stringify({ ...raw, version: 5, constraints: [] })).version).toBe(8);
   });
 });
 
@@ -130,7 +130,7 @@ describe('nested folders (version 7)', () => {
 
   it('keeps a folder inside a folder through a save and load', () => {
     const data = deserialize(base([folder('a'), folder('b', 'a'), folder('c', 'b')]));
-    expect(data.version).toBe(7);
+    expect(data.version).toBe(8);
     expect(data.folders.map((f) => f.parent)).toEqual([undefined, 'a', 'b']);
     const doc = new DocumentModel();
     doc.load(data);
@@ -159,3 +159,39 @@ describe('nested folders (version 7)', () => {
     expect(deserialize(JSON.stringify(v5)).folders[0].parent).toBeUndefined();
   });
 });
+
+describe('parameters and dimension expressions (version 8)', () => {
+  const file = (extra: object) => {
+    const doc = new DocumentModel();
+    doc.addPoints([
+      { id: 'a', x: 0, y: 0 },
+      { id: 'b', x: 4000, y: 0 },
+    ]);
+    doc.addEntities([
+      { id: 'ab', kind: 'line', p1: 'a', p2: 'b', layer: 'layer-0' },
+      { id: 'dm', kind: 'dimension', p1: 'a', p2: 'b', offset: 500, value: 4000, expression: '폭', layer: 'layer-0' },
+    ]);
+    doc.addConstraints([{ id: 'k', kind: 'distance', refs: ['ab'], value: 4000, expression: '폭' }]);
+    doc.parameters.set('w', { id: 'w', name: '폭', expression: '4000', value: 4000 });
+    return JSON.stringify({ ...JSON.parse(serialize(doc.toData())), ...extra });
+  };
+
+  it('round-trips parameters, a line length and expressions', () => {
+    const data = deserialize(file({}));
+    expect(data.version).toBe(8);
+    expect(data.parameters).toEqual([{ id: 'w', name: '폭', expression: '4000', value: 4000 }]);
+    expect(data.constraints).toEqual([{ id: 'k', kind: 'distance', refs: ['ab'], value: 4000, expression: '폭' }]);
+    expect(data.entities.find((e) => e.id === 'dm')).toMatchObject({ value: 4000, expression: '폭' });
+  });
+
+  it('rejects bad names, duplicate names and broken expressions; older files open without parameters', () => {
+    expect(() => deserialize(file({ parameters: [{ id: 'x', name: '1폭', expression: '1' }] }))).toThrow(FormatError);
+    expect(() =>
+      deserialize(file({ parameters: [{ id: 'x', name: '폭', expression: '1' }, { id: 'y', name: '폭', expression: '2' }] })),
+    ).toThrow(/겹칩니다/);
+    expect(() => deserialize(file({ parameters: [{ id: 'x', name: '폭', expression: '1 +' }] }))).toThrow(/수식/);
+    const old = deserialize(file({ version: 7, parameters: undefined }));
+    expect(old.parameters).toBeUndefined();
+  });
+});
+
